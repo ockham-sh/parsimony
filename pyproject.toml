@@ -1,6 +1,6 @@
 [project]
 name = "ockham"
-version = "0.1.0"
+version = "0.1.0a1"
 description = "Connector framework for financial data — search, fetch, and catalog series from FRED, SDMX, FMP, SEC Edgar, and more"
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"

@@ -19,7 +19,7 @@ from ockham.catalog.models import (
     code_token,
     normalize_code,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 from ockham.connector import Connectors, enumerator
 from ockham.connectors.sdmx import institution_source_from_dataset_key
 from ockham.result import (

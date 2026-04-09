@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import pandas as pd
 
 from ockham.catalog.models import catalog_key
-from ockham.data_store import DataStore
+from ockham.stores.data_store import DataStore
 
 
 class InMemoryDataStore(DataStore):

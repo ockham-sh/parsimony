@@ -14,7 +14,7 @@ from ockham.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 
 __all__ = [
     "Catalog",

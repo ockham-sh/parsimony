@@ -24,7 +24,7 @@ from ockham.catalog.models import (
     normalize_code,
     series_match_from_entry,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS series_catalog (

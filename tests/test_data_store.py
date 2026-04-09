@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from ockham.connector import Connectors, loader
-from ockham.data_store import DataStore, LoadResult, _data_from_table_result
+from ockham.stores.data_store import DataStore, LoadResult, _data_from_table_result
 from ockham.stores.memory_data import InMemoryDataStore
 from ockham.result import (
     Column,

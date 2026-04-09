@@ -16,7 +16,7 @@ from ockham.catalog.models import (
     normalize_code,
     normalize_entity_code,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 from ockham.result import ColumnRole, SemanticTableResult
 
 logger = logging.getLogger(__name__)

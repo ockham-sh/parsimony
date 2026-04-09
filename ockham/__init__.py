@@ -45,7 +45,7 @@ from ockham.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 from ockham.result import (
     Column,
     ColumnRole,
@@ -139,11 +139,11 @@ def __getattr__(name: str) -> Any:
 
         return InMemoryDataStore
     if name == "DataStore":
-        from ockham.data_store import DataStore
+        from ockham.stores.data_store import DataStore
 
         return DataStore
     if name == "LoadResult":
-        from ockham.data_store import LoadResult
+        from ockham.stores.data_store import LoadResult
 
         return LoadResult
     if name == "code_token":

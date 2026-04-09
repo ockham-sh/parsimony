@@ -1,0 +1,72 @@
+site_name: ockham
+site_url: https://docs.ockham.sh
+site_description: Typed, composable data connectors with searchable catalogs for Python
+site_author: Ockham.sh
+repo_url: https://github.com/ockham-sh/ockham
+repo_name: ockham-sh/ockham
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+nav:
+  - Home: index.md
+  - User Guide: user-guide.md
+  - Guides:
+      - Building Connectors: connector-implementation-guide.md
+      - SEC Edgar: sec-edgar-connectors.md
+  - API Reference: api-reference.md
+  - Architecture: architecture.md
+  - Deployment: deployment.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ockham-sh/ockham
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/ockham/

@@ -253,9 +253,9 @@ async def test_enumerate_destatis():
 @pytest.mark.asyncio
 async def test_build_and_search_treasury_catalog(tmp_path):
     """Full pipeline: enumerate → index → SQLite FTS search."""
-    from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
+    from ockham.catalog.catalog import Catalog, _entries_from_table_result
     from ockham.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
-    from ockham.stores.sqlite import SQLiteCatalogStore
+    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
     # 1) Enumerate
     result = await enumerate_treasury(TreasuryEnumerateParams())
@@ -265,7 +265,7 @@ async def test_build_and_search_treasury_catalog(tmp_path):
     # 2) Index into SQLite
     db_path = tmp_path / "treasury_catalog.db"
     store = SQLiteCatalogStore(db_path)
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     idx = await catalog.ingest(entries, embed=False, force=True)
     assert idx.indexed > 10
 
@@ -288,9 +288,9 @@ async def test_build_and_search_bls_catalog(tmp_path):
     if not _has_key("BLS_API_KEY"):
         pytest.skip("BLS_API_KEY not set")
 
-    from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
+    from ockham.catalog.catalog import Catalog, _entries_from_table_result
     from ockham.connectors.bls import BlsEnumerateParams, enumerate_bls
-    from ockham.stores.sqlite import SQLiteCatalogStore
+    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_bls.bind_deps(api_key=os.environ["BLS_API_KEY"])
     result = await conn(BlsEnumerateParams())
@@ -299,7 +299,7 @@ async def test_build_and_search_bls_catalog(tmp_path):
 
     db_path = tmp_path / "bls_catalog.db"
     store = SQLiteCatalogStore(db_path)
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     idx = await catalog.ingest(entries, embed=False, force=True)
     assert idx.indexed > 30
 
@@ -313,9 +313,9 @@ async def test_build_and_search_bls_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_build_and_search_riksbank_catalog(tmp_path):
     """Full pipeline: Riksbank enumerate → index → search."""
-    from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
+    from ockham.catalog.catalog import Catalog, _entries_from_table_result
     from ockham.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
-    from ockham.stores.sqlite import SQLiteCatalogStore
+    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_riksbank.bind_deps(api_key="")
     result = await conn(RiksbankEnumerateParams())
@@ -324,7 +324,7 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
 
     db_path = tmp_path / "riksbank_catalog.db"
     store = SQLiteCatalogStore(db_path)
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     idx = await catalog.ingest(entries, embed=False, force=True)
     assert idx.indexed > 5
 
@@ -341,14 +341,14 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_multi_provider_catalog_search(tmp_path):
     """Build a catalog from multiple providers and search across all."""
-    from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
+    from ockham.catalog.catalog import Catalog, _entries_from_table_result
     from ockham.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
     from ockham.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
-    from ockham.stores.sqlite import SQLiteCatalogStore
+    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
     db_path = tmp_path / "multi_catalog.db"
     store = SQLiteCatalogStore(db_path)
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
 
     # Index Treasury
     result = await enumerate_treasury(TreasuryEnumerateParams())

@@ -36,7 +36,7 @@ class Column(BaseModel):
     description: str | None = None
     exclude_from_llm_view: bool = False
     #: Catalog namespace for the entity code when ``role`` is :attr:`ColumnRole.KEY`.
-    #: Set when using :meth:`~ockham.catalog.SeriesCatalog.index_result` so the table is self-describing.
+    #: Set when using :meth:`~ockham.catalog.Catalog.index_result` so the table is self-describing.
     namespace: str | None = None
 
     @model_validator(mode="after")

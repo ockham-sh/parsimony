@@ -4,7 +4,7 @@ import math
 
 import litellm
 
-from ockham.catalog.embeddings import EmbeddingProvider
+from ockham.catalog.models import EmbeddingProvider
 
 _EMBED_BATCH_SIZE = 100
 

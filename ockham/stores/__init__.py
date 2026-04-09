@@ -1,6 +1,5 @@
-"""Catalog store implementations."""
+"""Store implementations."""
 
-from ockham.stores.memory import InMemoryCatalogStore
-from ockham.stores.sqlite import SQLiteCatalogStore
+from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
-__all__ = ["InMemoryCatalogStore", "SQLiteCatalogStore"]
+__all__ = ["SQLiteCatalogStore"]

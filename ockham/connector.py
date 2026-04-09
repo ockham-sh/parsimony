@@ -9,7 +9,7 @@ factory-built connectors where the wrapped function is not the public contract.
 The :func:`enumerator` decorator is a constrained :func:`connector` for **catalog population**:
 ``output=`` is required, the schema must have no DATA columns, exactly one KEY with
 ``namespace=...``, exactly one TITLE, and optional METADATA columns. Results are indexed by
-:class:`~ockham.catalog.catalog.SeriesCatalog`.
+:class:`~ockham.catalog.catalog.Catalog`.
 
 The :func:`loader` decorator is a constrained :func:`connector` for **observation persistence**:
 ``output=`` is required, the schema must have only KEY (with ``namespace=...``) and DATA columns
@@ -472,7 +472,7 @@ def _validate_enumerator_output(output: OutputConfig) -> None:
     if key.namespace is None or not str(key.namespace).strip():
         raise ValueError(
             "Enumerator KEY column must declare a non-empty namespace=... "
-            "(required by SeriesCatalog.index_result)"
+            "(required by Catalog.index_result)"
         )
     title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
     if len(title_cols) != 1:
@@ -563,7 +563,7 @@ def enumerator(
     **Validation:** ``output`` must have no :attr:`~ockham.result.ColumnRole.DATA` columns,
     exactly one :attr:`~ockham.result.ColumnRole.KEY` column, exactly one
     :attr:`~ockham.result.ColumnRole.TITLE` column, and that KEY must set
-    ``namespace=...`` for :meth:`~ockham.catalog.catalog.SeriesCatalog.index_result`.
+    ``namespace=...`` for :meth:`~ockham.catalog.catalog.Catalog.index_result`.
     """
 
     _validate_enumerator_output(output)

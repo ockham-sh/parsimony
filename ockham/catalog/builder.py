@@ -15,8 +15,8 @@ import asyncio
 import sys
 from pathlib import Path
 
-from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
-from ockham.stores.sqlite import SQLiteCatalogStore
+from ockham.catalog.catalog import Catalog, _entries_from_table_result
+from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 async def build_catalog(db_path: Path, *, env: dict[str, str] | None = None) -> int:
@@ -29,7 +29,7 @@ async def build_catalog(db_path: Path, *, env: dict[str, str] | None = None) -> 
     _env = env if env is not None else dict(os.environ)
 
     store = SQLiteCatalogStore(db_path)
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     total = 0
 
     enumerators = _collect_enumerators(_env)

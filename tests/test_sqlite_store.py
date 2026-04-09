@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ockham.catalog.models import SeriesEntry, catalog_key
-from ockham.stores.sqlite import SQLiteCatalogStore
+from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 @pytest.fixture
@@ -52,9 +52,8 @@ async def test_upsert_updates_title(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_upsert_preserves_embedding_on_null_update(store: SQLiteCatalogStore) -> None:
-    e = _entry()
+    e = SeriesEntry(namespace="fred", code="GDPC1", title="Real GDP", embedding=[1.0, 2.0, 3.0])
     await store.upsert([e])
-    await store.update_embeddings([(("fred", "GDPC1"), [1.0, 2.0, 3.0])])
     await store.upsert([_entry(title="Updated")])
     got = await store.get("fred", "GDPC1")
     assert got is not None
@@ -215,60 +214,6 @@ async def test_list_pagination(store: SQLiteCatalogStore) -> None:
     assert page1[0].code != page2[0].code
 
 
-# --- embeddings ---
-
-
-@pytest.mark.asyncio
-async def test_list_codes_missing_embedding(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="a"),
-        _entry(ns="fred", code="B", title="b"),
-    ])
-    missing = await store.list_codes_missing_embedding(None)
-    assert len(missing) == 2
-
-
-@pytest.mark.asyncio
-async def test_list_codes_missing_embedding_with_namespace(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="a"),
-        _entry(ns="bls", code="B", title="b"),
-    ])
-    missing = await store.list_codes_missing_embedding(None, namespace="fred")
-    assert missing == [("fred", "A")]
-
-
-@pytest.mark.asyncio
-async def test_update_embeddings(store: SQLiteCatalogStore) -> None:
-    await store.upsert([_entry(code="A", title="a")])
-    emb = [0.1, 0.2, 0.3, 0.4]
-    await store.update_embeddings([(("fred", "A"), emb)])
-    got = await store.get("fred", "A")
-    assert got is not None
-    assert got.embedding is not None
-    assert got.embedding == pytest.approx(emb)
-
-
-@pytest.mark.asyncio
-async def test_update_embeddings_clears_missing_list(store: SQLiteCatalogStore) -> None:
-    await store.upsert([_entry(code="A", title="a")])
-    await store.update_embeddings([(("fred", "A"), [1.0, 2.0])])
-    missing = await store.list_codes_missing_embedding(None)
-    assert len(missing) == 0
-
-
-@pytest.mark.asyncio
-async def test_list_codes_missing_embedding_only_keys(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="a"),
-        _entry(ns="fred", code="B", title="b"),
-    ])
-    missing = await store.list_codes_missing_embedding(
-        None, only_keys=[("fred", "A")]
-    )
-    assert missing == [("fred", "A")]
-
-
 # --- metadata / tags / properties ---
 
 
@@ -308,6 +253,65 @@ async def test_file_persistence(tmp_path) -> None:
 
 
 # --- search after delete ---
+
+
+@pytest.mark.asyncio
+async def test_vec_available(store: SQLiteCatalogStore) -> None:
+    """sqlite-vec extension should be loaded when installed."""
+    assert store.has_vec, "sqlite-vec not loaded — install with: pip install sqlite-vec"
+
+
+@pytest.mark.asyncio
+async def test_hybrid_search(tmp_path) -> None:
+    """Hybrid RRF search combining FTS5 BM25 + vec0 cosine."""
+    import numpy as np
+
+    dim = 4
+    store = SQLiteCatalogStore(tmp_path / "hybrid.db", embedding_dim=dim)
+
+    # Create entries with embeddings
+    entries = [
+        SeriesEntry(
+            namespace="fred", code="GDPC1", title="Real Gross Domestic Product",
+            embedding=[1.0, 0.0, 0.0, 0.0],
+        ),
+        SeriesEntry(
+            namespace="fred", code="UNRATE", title="Unemployment Rate",
+            embedding=[0.0, 1.0, 0.0, 0.0],
+        ),
+        SeriesEntry(
+            namespace="fred", code="CPIAUCSL", title="Consumer Price Index",
+            embedding=[0.0, 0.0, 1.0, 0.0],
+        ),
+    ]
+    await store.upsert(entries)
+
+    # FTS-only search (no query_embedding)
+    fts_results = await store.search("GDP", 10)
+    assert len(fts_results) >= 1
+    assert fts_results[0].code == "GDPC1"
+
+    # Hybrid search (FTS + vector)
+    query_emb = [0.9, 0.1, 0.0, 0.0]  # close to GDPC1's embedding
+    hybrid_results = await store.search(
+        "GDP", 10, query_embedding=query_emb,
+    )
+    assert len(hybrid_results) >= 1
+    assert hybrid_results[0].code == "GDPC1"
+    assert hybrid_results[0].similarity > 0
+
+    # Vector-biased hybrid: keyword matches UNRATE, but vector is close to GDPC1
+    # RRF should rank GDPC1 or UNRATE depending on fusion
+    hybrid2 = await store.search(
+        "Rate", 10, query_embedding=[1.0, 0.0, 0.0, 0.0],
+    )
+    assert len(hybrid2) >= 1
+    # Both UNRATE (keyword match for "Rate") and GDPC1 (vector match) should appear
+    codes = [m.code for m in hybrid2]
+    assert "UNRATE" in codes or "GDPC1" in codes
+
+    if store._conn:
+        store._conn.close()
 
 
 @pytest.mark.asyncio

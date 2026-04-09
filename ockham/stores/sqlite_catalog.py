@@ -1,7 +1,11 @@
-"""SQLite-backed catalog store with FTS5 keyword search.
+"""SQLite-backed catalog store with FTS5 keyword search and sqlite-vec vector search.
 
-Uses stdlib ``sqlite3`` wrapped in ``asyncio.to_thread`` — zero extra
-dependencies.  The database file is created (with tables) on first access.
+Uses stdlib ``sqlite3`` wrapped in ``asyncio.to_thread``.  The database file
+is created (with tables) on first access.
+
+When ``sqlite-vec`` is installed (``pip install sqlite-vec``), vector search
+and hybrid (BM25 + cosine RRF) are available.  Without it, search falls back
+to FTS5 keyword-only — graceful degradation, zero hard dependencies.
 """
 
 from __future__ import annotations
@@ -61,6 +65,18 @@ CREATE TRIGGER IF NOT EXISTS series_catalog_au AFTER UPDATE ON series_catalog BE
 END;
 """
 
+# vec0 virtual table — created only when sqlite-vec is loaded.
+_VEC_SCHEMA = """\
+CREATE VIRTUAL TABLE IF NOT EXISTS series_catalog_vec USING vec0(
+    embedding float[{dim}],
+    namespace text,
+    +code text
+);
+"""
+
+# RRF constant (standard value from "Reciprocal Rank Fusion" paper).
+_RRF_K = 60
+
 
 def _encode_embedding(emb: builtins.list[float]) -> bytes:
     return struct.pack(f"<{len(emb)}f", *emb)
@@ -85,19 +101,48 @@ def _row_to_entry(row: sqlite3.Row) -> SeriesEntry:
     )
 
 
+def _try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
+    """Load the sqlite-vec extension if available. Returns True on success."""
+    try:
+        import sqlite_vec  # type: ignore[import-untyped]
+
+        conn.enable_load_extension(True)
+        sqlite_vec.load(conn)
+        conn.enable_load_extension(False)
+        return True
+    except (ImportError, Exception):
+        return False
+
+
 class SQLiteCatalogStore(CatalogStore):
-    """File-backed catalog store using SQLite + FTS5 for keyword search.
+    """File-backed catalog store using SQLite + FTS5 + optional sqlite-vec.
 
     Parameters
     ----------
     db_path:
         Path to the SQLite database file. Created (with parent dirs) on first
         access. Use ``":memory:"`` for an ephemeral in-process store.
+    embedding_dim:
+        Dimension of embedding vectors for the vec0 table. Only used when
+        sqlite-vec is available. Defaults to 768.
     """
 
-    def __init__(self, db_path: str | Path = ":memory:") -> None:
+    def __init__(
+        self,
+        db_path: str | Path = ":memory:",
+        *,
+        embedding_dim: int = 768,
+    ) -> None:
         self._db_path = str(db_path)
+        self._embedding_dim = embedding_dim
         self._conn: sqlite3.Connection | None = None
+        self._has_vec: bool = False
+
+    @property
+    def has_vec(self) -> bool:
+        """Whether sqlite-vec is loaded and the vec0 table is available."""
+        self._get_conn()  # ensure initialized
+        return self._has_vec
 
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -106,6 +151,14 @@ class SQLiteCatalogStore(CatalogStore):
             conn = sqlite3.connect(self._db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
             conn.executescript(_SCHEMA)
+
+            # Try loading sqlite-vec for vector search
+            self._has_vec = _try_load_sqlite_vec(conn)
+            if self._has_vec:
+                conn.executescript(
+                    _VEC_SCHEMA.format(dim=self._embedding_dim)
+                )
+
             self._conn = conn
         return self._conn
 
@@ -120,6 +173,9 @@ class SQLiteCatalogStore(CatalogStore):
     # ------------------------------------------------------------------
 
     async def upsert(self, entries: builtins.list[SeriesEntry]) -> None:
+        has_vec = self._has_vec
+        dim = self._embedding_dim
+
         def _upsert(conn: sqlite3.Connection, entries: builtins.list[SeriesEntry]) -> None:
             with conn:
                 conn.executemany(
@@ -151,6 +207,26 @@ class SQLiteCatalogStore(CatalogStore):
                         for e in entries
                     ],
                 )
+
+                # Sync vec0 table for entries with correctly-dimensioned embeddings
+                if has_vec:
+                    vec_rows = [
+                        (
+                            _encode_embedding(e.embedding),
+                            e.namespace,
+                            e.code,
+                        )
+                        for e in entries
+                        if e.embedding is not None and len(e.embedding) == dim
+                    ]
+                    if vec_rows:
+                        conn.executemany(
+                            """
+                            INSERT OR REPLACE INTO series_catalog_vec(embedding, namespace, code)
+                            VALUES (?, ?, ?)
+                            """,
+                            vec_rows,
+                        )
 
         await self._run(_upsert, entries)
 
@@ -184,6 +260,7 @@ class SQLiteCatalogStore(CatalogStore):
 
     async def delete(self, namespace: str, code: str) -> None:
         ns, c = catalog_key(namespace, code)
+        has_vec = self._has_vec
 
         def _delete(conn: sqlite3.Connection) -> None:
             with conn:
@@ -191,6 +268,11 @@ class SQLiteCatalogStore(CatalogStore):
                     "DELETE FROM series_catalog WHERE namespace = ? AND code = ?",
                     (ns, c),
                 )
+                if has_vec:
+                    conn.execute(
+                        "DELETE FROM series_catalog_vec WHERE namespace = ? AND code = ?",
+                        (ns, c),
+                    )
 
         await self._run(_delete)
 
@@ -200,11 +282,19 @@ class SQLiteCatalogStore(CatalogStore):
         limit: int,
         *,
         namespaces: builtins.list[str] | None = None,
+        query_embedding: builtins.list[float] | None = None,
     ) -> builtins.list[SeriesMatch]:
+        """Search the catalog.
+
+        When *query_embedding* is provided and sqlite-vec is loaded, uses
+        hybrid RRF (Reciprocal Rank Fusion) combining FTS5 BM25 keyword
+        scores with vec0 cosine distance.  Otherwise falls back to FTS5-only.
+        """
         if not query or not query.strip():
             return []
+        if namespaces is not None and len(namespaces) == 0:
+            return []
 
-        # Build FTS5 query: each token becomes a prefix match joined by AND
         tokens = query.strip().split()
         fts_query = " AND ".join(f'"{tok}"*' for tok in tokens if tok)
         if not fts_query:
@@ -213,6 +303,25 @@ class SQLiteCatalogStore(CatalogStore):
         ns_filter: set[str] | None = None
         if namespaces is not None:
             ns_filter = {normalize_code(n) for n in namespaces}
+
+        use_hybrid = (
+            query_embedding is not None
+            and self._has_vec
+        )
+
+        if use_hybrid:
+            return await self._search_hybrid(
+                fts_query, query_embedding, limit, ns_filter
+            )
+        return await self._search_fts(fts_query, limit, ns_filter)
+
+    async def _search_fts(
+        self,
+        fts_query: str,
+        limit: int,
+        ns_filter: set[str] | None,
+    ) -> builtins.list[SeriesMatch]:
+        """FTS5-only keyword search with BM25 ranking."""
 
         def _search(conn: sqlite3.Connection) -> builtins.list[SeriesMatch]:
             if ns_filter:
@@ -242,10 +351,113 @@ class SQLiteCatalogStore(CatalogStore):
             results: builtins.list[SeriesMatch] = []
             for row in rows:
                 entry = _row_to_entry(row)
-                # BM25 returns negative scores (lower = better); normalize to 0..1
                 raw_rank = row["rank"]
                 similarity = max(0.0, min(1.0, 1.0 / (1.0 - raw_rank)))
                 results.append(series_match_from_entry(entry, similarity=similarity))
+            return results
+
+        return await self._run(_search)
+
+    async def _search_hybrid(
+        self,
+        fts_query: str,
+        query_embedding: builtins.list[float],
+        limit: int,
+        ns_filter: set[str] | None,
+    ) -> builtins.list[SeriesMatch]:
+        """Hybrid search: FTS5 BM25 + vec0 cosine via Reciprocal Rank Fusion."""
+        emb_bytes = _encode_embedding(query_embedding)
+        # Fetch more candidates from each source for better RRF merging
+        candidate_limit = limit * 5
+
+        def _search(conn: sqlite3.Connection) -> builtins.list[SeriesMatch]:
+            # --- FTS5 candidates ---
+            if ns_filter:
+                ns_placeholders = ",".join(["?"] * len(ns_filter))
+                fts_sql = f"""
+                    SELECT sc.namespace, sc.code, bm25(series_catalog_fts) AS fts_rank
+                    FROM series_catalog_fts
+                    JOIN series_catalog sc ON sc.rowid = series_catalog_fts.rowid
+                    WHERE series_catalog_fts MATCH ?
+                      AND sc.namespace IN ({ns_placeholders})
+                    ORDER BY fts_rank
+                    LIMIT ?
+                """  # noqa: S608
+                fts_params: builtins.list = [fts_query, *ns_filter, candidate_limit]
+            else:
+                fts_sql = """
+                    SELECT sc.namespace, sc.code, bm25(series_catalog_fts) AS fts_rank
+                    FROM series_catalog_fts
+                    JOIN series_catalog sc ON sc.rowid = series_catalog_fts.rowid
+                    WHERE series_catalog_fts MATCH ?
+                    ORDER BY fts_rank
+                    LIMIT ?
+                """
+                fts_params = [fts_query, candidate_limit]
+
+            fts_rows = conn.execute(fts_sql, fts_params).fetchall()
+
+            # --- Vec0 candidates ---
+            if ns_filter:
+                ns_placeholders = ",".join(["?"] * len(ns_filter))
+                vec_sql = f"""
+                    SELECT namespace, code, distance
+                    FROM series_catalog_vec
+                    WHERE embedding MATCH ? AND k = ?
+                      AND namespace IN ({ns_placeholders})
+                """  # noqa: S608
+                vec_params: builtins.list = [emb_bytes, candidate_limit, *ns_filter]
+            else:
+                vec_sql = """
+                    SELECT namespace, code, distance
+                    FROM series_catalog_vec
+                    WHERE embedding MATCH ? AND k = ?
+                """
+                vec_params = [emb_bytes, candidate_limit]
+
+            vec_rows = conn.execute(vec_sql, vec_params).fetchall()
+
+            # --- RRF merge ---
+            # Build rank maps (1-indexed position)
+            fts_ranks: dict[tuple[str, str], int] = {}
+            for i, row in enumerate(fts_rows):
+                key = (row["namespace"], row["code"])
+                fts_ranks[key] = i + 1
+
+            vec_ranks: dict[tuple[str, str], int] = {}
+            for i, row in enumerate(vec_rows):
+                key = (row["namespace"], row["code"])
+                vec_ranks[key] = i + 1
+
+            all_keys = set(fts_ranks.keys()) | set(vec_ranks.keys())
+            scored: builtins.list[tuple[float, tuple[str, str]]] = []
+            for key in all_keys:
+                fts_r = fts_ranks.get(key)
+                vec_r = vec_ranks.get(key)
+                rrf = 0.0
+                if fts_r is not None:
+                    rrf += 1.0 / (_RRF_K + fts_r)
+                if vec_r is not None:
+                    rrf += 1.0 / (_RRF_K + vec_r)
+                scored.append((rrf, key))
+
+            scored.sort(key=lambda t: -t[0])
+            top_keys = scored[:limit]
+
+            # Fetch full entries for top results
+            results: builtins.list[SeriesMatch] = []
+            for rrf_score, (ns, code) in top_keys:
+                row = conn.execute(
+                    "SELECT * FROM series_catalog WHERE namespace = ? AND code = ?",
+                    (ns, code),
+                ).fetchone()
+                if row:
+                    entry = _row_to_entry(row)
+                    # Normalize RRF score to 0..1 range
+                    max_rrf = 2.0 / (_RRF_K + 1)  # perfect score in both
+                    similarity = min(1.0, rrf_score / max_rrf)
+                    results.append(series_match_from_entry(entry, similarity=similarity))
+
             return results
 
         return await self._run(_search)
@@ -297,58 +509,6 @@ class SQLiteCatalogStore(CatalogStore):
             return ([_row_to_entry(r) for r in rows], total)
 
         return await self._run(_list)
-
-    async def list_codes_missing_embedding(
-        self,
-        limit: int | None,
-        *,
-        only_keys: builtins.list[tuple[str, str]] | None = None,
-        namespace: str | None = None,
-    ) -> builtins.list[tuple[str, str]]:
-        lim = limit if limit is not None else 10_000
-        ns_filter = normalize_code(namespace) if namespace is not None else None
-
-        def _missing(conn: sqlite3.Connection) -> builtins.list[tuple[str, str]]:
-            conditions = ["embedding IS NULL"]
-            params: builtins.list = []
-
-            if ns_filter is not None:
-                conditions.append("namespace = ?")
-                params.append(ns_filter)
-
-            if only_keys is not None:
-                normalized = [catalog_key(ns, c) for ns, c in only_keys]
-                placeholders = ",".join(["(?, ?)"] * len(normalized))
-                conditions.append(f"(namespace, code) IN (VALUES {placeholders})")
-                params.extend(v for pair in normalized for v in pair)
-
-            where = " AND ".join(conditions)
-            params.append(lim)
-            rows = conn.execute(
-                f"SELECT namespace, code FROM series_catalog WHERE {where} ORDER BY namespace, code LIMIT ?",  # noqa: S608
-                params,
-            ).fetchall()
-            return [(r["namespace"], r["code"]) for r in rows]
-
-        return await self._run(_missing)
-
-    async def update_embeddings(
-        self, updates: builtins.list[tuple[tuple[str, str], builtins.list[float]]]
-    ) -> None:
-        if not updates:
-            return
-
-        def _update(conn: sqlite3.Connection) -> None:
-            with conn:
-                conn.executemany(
-                    "UPDATE series_catalog SET embedding = ? WHERE namespace = ? AND code = ?",
-                    [
-                        (_encode_embedding(emb), catalog_key(ns, c)[0], catalog_key(ns, c)[1])
-                        for (ns, c), emb in updates
-                    ],
-                )
-
-        await self._run(_update)
 
     async def close(self) -> None:
         """Close the underlying SQLite connection."""

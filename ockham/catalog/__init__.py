@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ockham.catalog.embeddings import EmbeddingProvider
 from ockham.catalog.models import (
+    EmbeddingProvider,
     IndexResult,
     SeriesEntry,
     SeriesMatch,
@@ -14,14 +14,13 @@ from ockham.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from ockham.catalog.series_pipeline import build_embedding_text
 from ockham.catalog.store import CatalogStore
 
 __all__ = [
+    "Catalog",
     "CatalogStore",
     "EmbeddingProvider",
     "IndexResult",
-    "SeriesCatalog",
     "SeriesEntry",
     "SeriesMatch",
     "build_embedding_text",
@@ -33,8 +32,12 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
-    if name == "SeriesCatalog":
-        from ockham.catalog.catalog import SeriesCatalog
+    if name == "Catalog":
+        from ockham.catalog.catalog import Catalog
 
-        return SeriesCatalog
+        return Catalog
+    if name == "build_embedding_text":
+        from ockham.catalog.catalog import build_embedding_text
+
+        return build_embedding_text
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

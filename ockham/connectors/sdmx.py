@@ -789,7 +789,7 @@ async def enumerate_sdmx_dataset_codelists(
     """Return one :class:`~ockham.result.SemanticTableResult` per dimension codelist.
 
     Each result uses the same schema as :func:`sdmx_codelist` (KEY ``namespace`` from
-    :func:`sdmx_codelist_namespace`). Suitable for :meth:`~ockham.catalog.catalog.SeriesCatalog.index_result`.
+    :func:`sdmx_codelist_namespace`). Suitable for :meth:`~ockham.catalog.catalog.Catalog.index_result`.
     """
     return await asyncio.to_thread(_build_dataset_codelists_tables_sync, params.dataset_key)
 

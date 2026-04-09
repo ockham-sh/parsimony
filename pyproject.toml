@@ -54,3 +54,6 @@ build-backend = "hatchling.build"
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "integration: hits live APIs (may be slow, requires env vars)",
+]

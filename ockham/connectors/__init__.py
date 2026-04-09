@@ -62,6 +62,31 @@ def build_fetch_connectors_from_env(
 
         result = result + FR_FETCH.bind_deps(api_key=fr_key)
 
+    # --- Public data connectors (no or optional API key) ---
+    from ockham.connectors.boe import FETCH_CONNECTORS as BOE_FETCH
+    from ockham.connectors.rba import FETCH_CONNECTORS as RBA_FETCH
+    from ockham.connectors.snb import FETCH_CONNECTORS as SNB_FETCH
+    from ockham.connectors.treasury import FETCH_CONNECTORS as TREASURY_FETCH
+
+    result = result + TREASURY_FETCH + SNB_FETCH + BOE_FETCH + RBA_FETCH
+
+    from ockham.connectors.riksbank import FETCH_CONNECTORS as RIKSBANK_FETCH
+
+    result = result + RIKSBANK_FETCH.bind_deps(api_key=_env.get("RIKSBANK_API_KEY", ""))
+
+    from ockham.connectors.destatis import FETCH_CONNECTORS as DESTATIS_FETCH
+
+    result = result + DESTATIS_FETCH.bind_deps(
+        username=_env.get("DESTATIS_USERNAME", "GAST"),
+        password=_env.get("DESTATIS_PASSWORD", "GAST"),
+    )
+
+    eia_key = _env.get("EIA_API_KEY")
+    if eia_key:
+        from ockham.connectors.eia import FETCH_CONNECTORS as EIA_FETCH
+
+        result = result + EIA_FETCH.bind_deps(api_key=eia_key)
+
     return result
 
 
@@ -110,5 +135,30 @@ def build_connectors_from_env(
     if fr_key:
         from ockham.connectors.financial_reports import CONNECTORS as FR
         result = result + FR.bind_deps(api_key=fr_key)
+
+    # --- Public data connectors (no or optional API key) ---
+    from ockham.connectors.boe import CONNECTORS as BOE
+    from ockham.connectors.rba import CONNECTORS as RBA
+    from ockham.connectors.snb import CONNECTORS as SNB
+    from ockham.connectors.treasury import CONNECTORS as TREASURY
+
+    result = result + TREASURY + SNB + BOE + RBA
+
+    from ockham.connectors.riksbank import CONNECTORS as RIKSBANK
+
+    result = result + RIKSBANK.bind_deps(api_key=_env.get("RIKSBANK_API_KEY", ""))
+
+    from ockham.connectors.destatis import CONNECTORS as DESTATIS
+
+    result = result + DESTATIS.bind_deps(
+        username=_env.get("DESTATIS_USERNAME", "GAST"),
+        password=_env.get("DESTATIS_PASSWORD", "GAST"),
+    )
+
+    eia_key = _env.get("EIA_API_KEY")
+    if eia_key:
+        from ockham.connectors.eia import CONNECTORS as EIA
+
+        result = result + EIA.bind_deps(api_key=eia_key)
 
     return result

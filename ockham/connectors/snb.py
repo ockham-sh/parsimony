@@ -9,10 +9,13 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import logging
 import re
 from typing import Annotated, Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
 from ockham.connector import Connectors, Namespace, connector, enumerator
@@ -26,7 +29,27 @@ from ockham.result import (
 from ockham.transport.http import HttpClient
 
 _BASE_URL = "https://data.snb.ch"
-_CUBE_LIST_URL = "https://raw.githubusercontent.com/cardsX/SNB-Data-Streamliner/main/cube_list.csv"
+
+# Well-known SNB cube IDs for catalog seeding (external cube list CSV is no longer available)
+_KNOWN_CUBES = [
+    ("rendopar", "Interest rates on Swiss Confederation bonds"),
+    ("rendoblim", "Interest rates and yields"),
+    ("devkum", "Exchange rates – monthly"),
+    ("devkua", "Exchange rates – annual"),
+    ("devkut", "Exchange rates – daily"),
+    ("geldaggregate", "Monetary aggregates"),
+    ("bilanzen", "Balance sheet SNB"),
+    ("zahlungsbilanz", "Balance of payments"),
+    ("plkapitalverkehr", "Capital flows"),
+    ("kredite", "Domestic credit"),
+    ("notenumla", "Banknote circulation"),
+    ("goldreserven", "Gold reserves"),
+    ("devisenreserven", "Foreign currency reserves"),
+    ("plaussenhandel", "Foreign trade"),
+    ("konsumentenpreise", "Consumer prices"),
+    ("produzentenpreise", "Producer prices"),
+    ("bfs_bip", "Gross domestic product"),
+]
 
 _CATEGORY_KEYWORDS: dict[str, list[str]] = {
     "Interest rates": ["zins", "interest", "rate", "libor", "saron"],
@@ -127,12 +150,24 @@ def _infer_frequency_from_dates(dates: list[str]) -> str:
     return "Unknown"
 
 
+_DURATION_TO_FREQ: dict[str, str] = {
+    "P1D": "Daily",
+    "P1M": "Monthly",
+    "P3M": "Quarterly",
+    "P1Y": "Annual",
+}
+
+
 def _parse_snb_csv(text: str) -> pd.DataFrame:
     """Parse SNB CSV response, skipping metadata preamble.
 
     Returns the data as a clean DataFrame with the first column as
     the date index — no melting.  Columns retain their original names.
     """
+    # Strip BOM if present
+    if text.startswith("\ufeff"):
+        text = text[1:]
+
     lines = text.strip().split("\n")
     sep = ";" if ";" in text else ","
 
@@ -146,7 +181,8 @@ def _parse_snb_csv(text: str) -> pd.DataFrame:
     data_text = "\n".join(lines[header_idx:])
     try:
         df = pd.read_csv(io.StringIO(data_text), sep=sep, dtype=str)
-    except Exception:
+    except Exception as exc:
+        logger.warning("Failed to parse SNB CSV: %s", exc)
         return pd.DataFrame()
 
     if df.empty:
@@ -205,8 +241,10 @@ async def snb_fetch(params: SnbFetchParams) -> Result:
             dim_data = dim_resp.json()
             if isinstance(dim_data, dict):
                 df["title"] = dim_data.get("name", dim_data.get("cubeName", params.cube_id))
-    except Exception:
-        pass
+        else:
+            logger.debug("SNB dimensions endpoint returned %d for %s", dim_resp.status_code, params.cube_id)
+    except Exception as exc:
+        logger.warning("Could not fetch title for SNB cube %s: %s", params.cube_id, exc)
 
     return Result.from_dataframe(
         df,
@@ -220,26 +258,13 @@ async def snb_fetch(params: SnbFetchParams) -> Result:
 
 @enumerator(output=SNB_ENUMERATE_OUTPUT, tags=["macro", "ch"])
 async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
-    """Enumerate all SNB data cubes for catalog indexing.
+    """Enumerate well-known SNB data cubes for catalog indexing.
 
-    Fetches cube list from external reference, then queries each cube
-    for frequency inference.
+    Uses a curated list of SNB cubes and probes each for frequency inference.
     """
     import httpx
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.get(_CUBE_LIST_URL)
-        resp.raise_for_status()
-
-    reader = csv.DictReader(io.StringIO(resp.text))
-    cubes: list[dict[str, str]] = []
-    for row in reader:
-        cube_id = row.get("cube_id", row.get("id", "")).strip()
-        if cube_id:
-            cubes.append({
-                "cube_id": cube_id,
-                "title": row.get("description", row.get("name", cube_id)).strip(),
-            })
+    cubes = [{"cube_id": cid, "title": title} for cid, title in _KNOWN_CUBES]
 
     rows: list[dict[str, str]] = []
     async with httpx.AsyncClient(base_url=_BASE_URL, timeout=30.0) as client:
@@ -262,8 +287,8 @@ async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
                         if parts and re.match(r"^\d{4}", parts[0].strip()):
                             dates.append(parts[0].strip())
                     frequency = _infer_frequency_from_dates(dates)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Could not infer frequency for SNB cube %s: %s", cid, exc)
 
             rows.append({
                 "cube_id": cid, "title": title,

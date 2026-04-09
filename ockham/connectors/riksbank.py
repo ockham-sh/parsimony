@@ -6,9 +6,12 @@ API key optional but recommended.
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Any
 
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
 from ockham.connector import Connectors, Namespace, connector, enumerator
@@ -44,6 +47,14 @@ class RiksbankFetchParams(BaseModel):
         v = v.strip()
         if not v:
             raise ValueError("series_id must be non-empty")
+        return v
+
+    @field_validator("to_date")
+    @classmethod
+    def _both_dates_or_neither(cls, v: str | None, info: Any) -> str | None:
+        from_date = info.data.get("from_date")
+        if (from_date is None) != (v is None):
+            raise ValueError("Provide both from_date and to_date, or neither")
         return v
 
 
@@ -123,6 +134,22 @@ async def riksbank_fetch(params: RiksbankFetchParams, *, api_key: str = "") -> R
     response.raise_for_status()
     data = response.json()
 
+    # Resolve series title from /Series endpoint
+    title = params.series_id
+    try:
+        series_resp = await http.request("GET", "/Series")
+        if series_resp.status_code == 200:
+            series_list = series_resp.json()
+            if isinstance(series_list, dict):
+                series_list = [series_list]
+            for s in series_list:
+                sid = s.get("seriesId", s.get("id", ""))
+                if sid == params.series_id:
+                    title = s.get("seriesName", s.get("name", params.series_id))
+                    break
+    except Exception:
+        logger.debug("Could not resolve title for %s, using series_id", params.series_id)
+
     items = data if isinstance(data, list) else [data]
     rows: list[dict[str, Any]] = []
     for item in items:
@@ -136,7 +163,7 @@ async def riksbank_fetch(params: RiksbankFetchParams, *, api_key: str = "") -> R
             value = None
         rows.append({
             "series_id": params.series_id,
-            "title": params.series_id,  # Riksbank API doesn't return title in observations
+            "title": title,
             "date": date,
             "value": value,
         })

@@ -120,6 +120,58 @@ def _collect_enumerators(env: dict[str, str]) -> list[tuple[str, object, object]
     except ImportError:
         pass
 
+    # BLS (optional API key for higher rate limits)
+    try:
+        from ockham.connectors.bls import BlsEnumerateParams, enumerate_bls
+
+        conn = enumerate_bls.bind_deps(api_key=env.get("BLS_API_KEY", ""))
+        enumerators.append(("bls", conn, BlsEnumerateParams()))
+    except ImportError:
+        pass
+
+    # BdE (no auth)
+    try:
+        from ockham.connectors.bde import BdeEnumerateParams, enumerate_bde
+
+        enumerators.append(("bde", enumerate_bde, BdeEnumerateParams()))
+    except ImportError:
+        pass
+
+    # BoC (no auth)
+    try:
+        from ockham.connectors.boc import BocEnumerateParams, enumerate_boc
+
+        enumerators.append(("boc", enumerate_boc, BocEnumerateParams()))
+    except ImportError:
+        pass
+
+    # BdF (requires API key)
+    bdf_key = env.get("BANQUEDEFRANCE_KEY")
+    if bdf_key:
+        try:
+            from ockham.connectors.bdf import BdfEnumerateParams, enumerate_bdf
+
+            conn = enumerate_bdf.bind_deps(api_key=bdf_key)
+            enumerators.append(("bdf", conn, BdfEnumerateParams()))
+        except ImportError:
+            pass
+
+    # BoJ (no auth)
+    try:
+        from ockham.connectors.boj import BojEnumerateParams, enumerate_boj
+
+        enumerators.append(("boj", enumerate_boj, BojEnumerateParams()))
+    except ImportError:
+        pass
+
+    # BdP (no auth)
+    try:
+        from ockham.connectors.bdp import BdpEnumerateParams, enumerate_bdp
+
+        enumerators.append(("bdp", enumerate_bdp, BdpEnumerateParams()))
+    except ImportError:
+        pass
+
     return enumerators
 
 

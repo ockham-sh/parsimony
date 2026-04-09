@@ -383,3 +383,78 @@ async def test_multi_provider_catalog_search(tmp_path):
     # riksbank may be absent if rate-limited
 
     await store.close()
+
+
+# ---------------------------------------------------------------------------
+# bbk-sourced central bank connectors
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_bde_fetch():
+    from ockham.connectors.bde import BdeFetchParams, bde_fetch
+
+    result = await bde_fetch(BdeFetchParams(
+        key="D_1NBAF472",
+        time_range="30M",
+    ))
+    assert result.data is not None
+    df = result.data
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) > 0
+    assert "key" in df.columns
+    assert "date" in df.columns
+    assert "value" in df.columns
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_boc_fetch():
+    from ockham.connectors.boc import BocFetchParams, boc_fetch
+
+    result = await boc_fetch(BocFetchParams(
+        series_name="FXUSDCAD",
+        start_date="2024-01-01",
+        end_date="2024-03-31",
+    ))
+    assert result.data is not None
+    df = result.data
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) > 0
+    assert "series_name" in df.columns
+    assert "date" in df.columns
+    assert "value" in df.columns
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_boj_fetch():
+    from ockham.connectors.boj import BojFetchParams, boj_fetch
+
+    result = await boj_fetch(BojFetchParams(
+        db="FM08",
+        code="FXERD01",
+        start_date="202401",
+    ))
+    assert result.data is not None
+    df = result.data
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) > 0
+    assert "code" in df.columns
+    assert "date" in df.columns
+    assert "value" in df.columns
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_enumerate_boc():
+    from ockham.connectors.boc import BocEnumerateParams, enumerate_boc
+
+    result = await enumerate_boc(BocEnumerateParams())
+    assert result.data is not None
+    df = result.data
+    assert isinstance(df, pd.DataFrame)
+    assert len(df) > 0
+    assert "series_name" in df.columns
+    assert "title" in df.columns

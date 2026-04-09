@@ -87,6 +87,25 @@ def build_fetch_connectors_from_env(
 
         result = result + EIA_FETCH.bind_deps(api_key=eia_key)
 
+    # BLS (optional API key for higher rate limits)
+    from ockham.connectors.bls import FETCH_CONNECTORS as BLS_FETCH
+
+    result = result + BLS_FETCH.bind_deps(api_key=_env.get("BLS_API_KEY", ""))
+
+    # --- Central bank connectors (no or optional API key) ---
+    from ockham.connectors.bde import FETCH_CONNECTORS as BDE_FETCH
+    from ockham.connectors.boc import FETCH_CONNECTORS as BOC_FETCH
+    from ockham.connectors.boj import FETCH_CONNECTORS as BOJ_FETCH
+    from ockham.connectors.bdp import FETCH_CONNECTORS as BDP_FETCH
+
+    result = result + BDE_FETCH + BOC_FETCH + BOJ_FETCH + BDP_FETCH
+
+    bdf_key = _env.get("BANQUEDEFRANCE_KEY")
+    if bdf_key:
+        from ockham.connectors.bdf import FETCH_CONNECTORS as BDF_FETCH
+
+        result = result + BDF_FETCH.bind_deps(api_key=bdf_key)
+
     return result
 
 
@@ -160,5 +179,24 @@ def build_connectors_from_env(
         from ockham.connectors.eia import CONNECTORS as EIA
 
         result = result + EIA.bind_deps(api_key=eia_key)
+
+    # BLS (optional API key for higher rate limits)
+    from ockham.connectors.bls import CONNECTORS as BLS
+
+    result = result + BLS.bind_deps(api_key=_env.get("BLS_API_KEY", ""))
+
+    # --- Central bank connectors (no or optional API key) ---
+    from ockham.connectors.bde import CONNECTORS as BDE
+    from ockham.connectors.boc import CONNECTORS as BOC
+    from ockham.connectors.boj import CONNECTORS as BOJ
+    from ockham.connectors.bdp import CONNECTORS as BDP
+
+    result = result + BDE + BOC + BOJ + BDP
+
+    bdf_key = _env.get("BANQUEDEFRANCE_KEY")
+    if bdf_key:
+        from ockham.connectors.bdf import CONNECTORS as BDF
+
+        result = result + BDF.bind_deps(api_key=bdf_key)
 
     return result

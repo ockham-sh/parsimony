@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import logging
 import re
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from typing import Annotated, Any
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
@@ -215,6 +218,11 @@ async def boe_fetch(params: BoeFetchParams) -> Result:
     )
     response.raise_for_status()
 
+    # Detect error page redirect
+    resp_url = str(response.url)
+    if "errorpage" in resp_url.lower():
+        raise ValueError(f"BOE redirected to error page for: {params.series_ids}")
+
     xml_text = response.text
     if xml_text.lstrip().startswith(("<!DOCTYPE", "<html", "<HTML")):
         raise ValueError(f"BOE returned HTML instead of XML for: {params.series_ids}")
@@ -280,8 +288,10 @@ async def enumerate_boe(params: BoeEnumerateParams) -> pd.DataFrame:
 
             if codes:
                 rows = await _batch_fetch_xml_metadata(client, codes)
-        except (httpx.HTTPError, Exception):
-            pass
+        except httpx.HTTPError as exc:
+            logger.warning("BOE tables.asp scrape failed: %s", exc)
+        except ET.ParseError as exc:
+            logger.warning("BOE XML parse error during scrape: %s", exc)
 
         # --- Fallback: year-by-year bulk XML ---
         if len(rows) < 100:
@@ -292,8 +302,8 @@ async def enumerate_boe(params: BoeEnumerateParams) -> pd.DataFrame:
                     if r["series_id"] not in seen:
                         seen.add(r["series_id"])
                         rows.append(r)
-            except (httpx.HTTPError, Exception):
-                pass
+            except httpx.HTTPError as exc:
+                logger.warning("BOE year-by-year bulk fallback failed: %s", exc)
 
         # --- Last resort: curated fallback ---
         if len(rows) < 30:
@@ -303,8 +313,8 @@ async def enumerate_boe(params: BoeEnumerateParams) -> pd.DataFrame:
                 for r in fallback:
                     if r["series_id"] not in seen:
                         rows.append(r)
-            except (httpx.HTTPError, Exception):
-                pass
+            except httpx.HTTPError as exc:
+                logger.warning("BOE curated fallback failed: %s", exc)
 
     return pd.DataFrame(rows) if rows else pd.DataFrame(
         columns=["series_id", "title", "category", "frequency"]
@@ -326,7 +336,8 @@ async def _batch_fetch_xml_metadata(
                 params={
                     "CodeVer": "new", "xml.x": "yes",
                     "SeriesCodes": ",".join(batch),
-                    "Datefrom": "01/Jan/2025", "Dateto": "01/Jan/2025",
+                    "Datefrom": datetime.now().strftime("01/%b/%Y"),
+                    "Dateto": datetime.now().strftime("01/%b/%Y"),
                     "Omit": "-G",
                 },
             )
@@ -344,11 +355,11 @@ async def _batch_fetch_xml_metadata(
 
 async def _year_by_year_bulk(client: Any) -> list[dict[str, str]]:
     """Fallback: fetch SeriesCodes=all with narrow year ranges."""
+    now = datetime.now()
+    current_year = now.year
     ranges = [
-        ("01/Jan/2022", "01/Jan/2023"),
-        ("01/Jan/2023", "01/Jan/2024"),
-        ("01/Jan/2024", "01/Jan/2025"),
-        ("01/Jan/2025", "01/Jan/2026"),
+        (f"01/Jan/{y}", f"01/Jan/{y + 1}")
+        for y in range(current_year - 3, current_year + 1)
     ]
     all_rows: list[dict[str, str]] = []
     seen: set[str] = set()

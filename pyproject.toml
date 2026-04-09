@@ -1,0 +1,56 @@
+[project]
+name = "ockham"
+version = "0.1.0"
+description = "Connector framework for financial data — search, fetch, and catalog series from FRED, SDMX, FMP, SEC Edgar, and more"
+authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
+license = "Apache-2.0"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+keywords = ["finance", "data", "connectors", "fred", "sdmx", "catalog"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "pydantic>=2.11.1,<3",
+    "pydantic-core>=2.33.0",
+    "pandas>=2.3.0,<3",
+    "pyarrow>=18.0.0",
+    "httpx>=0.28.1",
+]
+
+[project.optional-dependencies]
+sdmx = ["sdmx1>=2.23.1,<3"]
+embeddings = ["litellm>=1.59.0,<2"]
+sec = ["edgartools>=4.0.0"]
+financial-reports = ["financial-reports-generated-client>=0.1.0"]
+all = ["ockham[sdmx,embeddings,sec,financial-reports]"]
+
+[project.urls]
+Homepage = "https://ockham.sh"
+Repository = "https://github.com/espinetandreu/ockham"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+pythonpath = ["."]

@@ -20,6 +20,7 @@ dependencies = [
     "pandas>=2.3.0,<3",
     "pyarrow>=18.0.0",
     "httpx>=0.28.1",
+    "platformdirs>=4.0.0,<5",
 ]
 
 [project.optional-dependencies]

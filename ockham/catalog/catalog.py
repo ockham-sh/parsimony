@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import platformdirs
 
 from ockham.catalog.models import (
     EmbeddingProvider,
@@ -16,13 +18,19 @@ from ockham.catalog.models import (
     normalize_code,
     normalize_entity_code,
 )
-from ockham.stores.catalog_store import CatalogStore
 from ockham.result import ColumnRole, SemanticTableResult
+from ockham.stores.catalog_store import CatalogStore
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_DIR = Path.home() / ".ockham"
-_HF_ORG = "Ockham-sh"
+_CATALOG_REPO = os.environ.get("OCKHAM_CATALOG_REPO", "ockham-sh/catalogs")
+_CATALOG_BRANCH = os.environ.get("OCKHAM_CATALOG_BRANCH", "main")
+_CACHE_DIR = (
+    Path(os.environ["OCKHAM_CACHE_DIR"])
+    if os.environ.get("OCKHAM_CACHE_DIR")
+    else Path(platformdirs.user_cache_dir("ockham")) / "catalogs"
+)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +189,7 @@ class Catalog:
     Composes a :class:`CatalogStore` and optional :class:`EmbeddingProvider`.
 
     When *connectors* is provided, :meth:`search` auto-populates requested
-    namespaces from HuggingFace pre-built catalogs or live enumerators before
+    namespaces from pre-built catalogs on GitHub or live enumerators before
     querying.
     """
 
@@ -191,12 +199,14 @@ class Catalog:
         *,
         embeddings: EmbeddingProvider | None = None,
         connectors: object | None = None,
-        hf_org: str = _HF_ORG,
+        catalog_repo: str = _CATALOG_REPO,
+        catalog_branch: str = _CATALOG_BRANCH,
     ) -> None:
         self._store = store
         self._embeddings = embeddings
         self._connectors = connectors
-        self._hf_org = hf_org
+        self._catalog_repo = catalog_repo
+        self._catalog_branch = catalog_branch
         self._populated: set[str] = set()
 
     @property
@@ -220,7 +230,7 @@ class Catalog:
         When connectors are configured, auto-populates requested namespaces.
         When an embedding provider is configured, embeds the query for hybrid search.
         """
-        if namespaces and self._connectors is not None:
+        if namespaces:
             for ns in namespaces:
                 await self._ensure_namespace(ns)
 
@@ -390,7 +400,7 @@ class Catalog:
             self._populated.add(namespace)
             return
 
-        if await self._try_hf_download(namespace):
+        if await self._try_github_download(namespace):
             self._populated.add(namespace)
             return
 
@@ -399,38 +409,50 @@ class Catalog:
             return
 
         self._populated.add(namespace)  # Don't retry
-        logger.debug("Namespace %r not available from HF or enumerator", namespace)
+        logger.debug("Namespace %r not available from GitHub or enumerator", namespace)
 
-    async def _try_hf_download(self, namespace: str) -> bool:
-        """Download pre-built catalog.db from HuggingFace and merge."""
+    async def _try_github_download(self, namespace: str) -> bool:
+        """Download pre-built catalog.db from GitHub and merge."""
+        import asyncio
+
+        import httpx
+
+        cache_path = _CACHE_DIR / namespace / "catalog.db"
+
+        if cache_path.exists():
+            self._merge_remote_db(str(cache_path))
+            return True
+
+        url = (
+            f"https://raw.githubusercontent.com/"
+            f"{self._catalog_repo}/{self._catalog_branch}/"
+            f"{namespace}/catalog.db"
+        )
         try:
-            from huggingface_hub import hf_hub_download
-        except ImportError:
-            logger.debug("huggingface_hub not installed; skipping HF download")
-            return False
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_suffix(".tmp")
 
-        repo_id = f"{self._hf_org}/{namespace}"
-        try:
-            import asyncio
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+                resp = await client.get(url)
+                if resp.status_code == 404:
+                    logger.debug("No catalog on GitHub for %s", namespace)
+                    return False
+                resp.raise_for_status()
 
-            path = await asyncio.to_thread(
-                hf_hub_download,
-                repo_id=repo_id,
-                filename="catalog.db",
-                repo_type="dataset",
-            )
-            self._merge_remote_db(path)
-            logger.info("Downloaded %s catalog from HF", namespace)
+            await asyncio.to_thread(tmp_path.write_bytes, resp.content)
+            tmp_path.rename(cache_path)
+
+            self._merge_remote_db(str(cache_path))
+            logger.info("Downloaded %s catalog from GitHub", namespace)
             return True
         except Exception as exc:
-            logger.debug("HF download failed for %s: %s", repo_id, exc)
+            logger.debug("GitHub download failed for %s: %s", namespace, exc)
             return False
 
     def _merge_remote_db(self, remote_path: str) -> None:
         """ATTACH a remote SQLite catalog and INSERT its rows.
 
-        Uses SQLiteCatalogStore internals for efficiency. Falls back to
-        read + upsert for other store types.
+        Uses SQLiteCatalogStore internals for efficiency.
         """
         from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
@@ -446,7 +468,7 @@ class Catalog:
                 conn.execute("DETACH DATABASE remote")
         else:
             logger.warning(
-                "HF catalog merge not supported for %s stores",
+                "Remote catalog merge not yet supported for %s stores",
                 type(self._store).__name__,
             )
 

@@ -1,4 +1,4 @@
-"""Tests for Catalog lazy namespace population: HF download + enumerator fallback."""
+"""Tests for Catalog lazy namespace population: GitHub download + enumerator fallback."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_lazy_hf_download(tmp_path):
-    """Catalog auto-downloads treasury catalog from HuggingFace."""
+async def test_lazy_github_download(tmp_path):
+    """Catalog auto-downloads treasury catalog from GitHub."""
     store = SQLiteCatalogStore(tmp_path / "catalog.db")
     catalog = Catalog(store, connectors=TREASURY)
 
@@ -30,12 +30,12 @@ async def test_lazy_hf_download(tmp_path):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lazy_enumerator_fallback(tmp_path):
-    """Catalog falls back to live enumerator when HF dataset doesn't exist."""
+    """Catalog falls back to live enumerator when GitHub catalog doesn't exist."""
     connectors = RIKSBANK.bind_deps(api_key="")
     store = SQLiteCatalogStore(tmp_path / "catalog.db")
     catalog = Catalog(store, connectors=connectors)
 
-    # Riksbank has no HF dataset — should enumerate live
+    # Riksbank has no GitHub catalog — should enumerate live
     await catalog.search("SEK", limit=5, namespaces=["riksbank"])
 
     ns = await catalog.list_namespaces()

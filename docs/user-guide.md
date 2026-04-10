@@ -1,6 +1,6 @@
 # ockham User Guide
 
-**Version**: 0.1.0  
+**Version**: 0.1.0
 **Audience**: Python developers building data pipelines, notebooks, or agent integrations
 
 ockham is a Python library that gives you a single, consistent async interface for fetching financial and macroeconomic data from FRED, SDMX providers (ECB, Eurostat, IMF, World Bank, BIS), Financial Modeling Prep, SEC Edgar, EODHD, Interactive Brokers, Polymarket, and Financial Reports APIs. All results are typed pandas DataFrames with provenance metadata and optional column-role schemas.
@@ -10,72 +10,53 @@ ockham is a Python library that gives you a single, consistent async interface f
 ## Table of Contents
 
 1. [Installation](#installation)
-2. [Environment Variable Setup](#environment-variable-setup)
+2. [Environment Setup](#environment-setup)
 3. [Quick Start](#quick-start)
-4. [Fetching Data from FRED](#fetching-data-from-fred)
-5. [Querying SDMX Providers](#querying-sdmx-providers)
-6. [Working with FMP Equity Data](#working-with-fmp-equity-data)
-7. [Using the Series Catalog](#using-the-series-catalog)
-8. [Creating Custom Connectors](#creating-custom-connectors)
-9. [Working with Results](#working-with-results)
-10. [Filtering and Composing Connector Bundles](#filtering-and-composing-connector-bundles)
-11. [Common Patterns](#common-patterns)
+4. [Core Concepts](#core-concepts)
+5. [Fetching Data from FRED](#fetching-data-from-fred)
+6. [Querying SDMX Providers](#querying-sdmx-providers)
+7. [Working with FMP Equity Data](#working-with-fmp-equity-data)
+8. [Using the Catalog](#using-the-catalog)
+9. [Creating Custom Connectors](#creating-custom-connectors)
+10. [Working with Results](#working-with-results)
+11. [Filtering and Composing Connector Bundles](#filtering-and-composing-connector-bundles)
+12. [Common Patterns](#common-patterns)
 
 ---
 
 ## Installation
 
-ockham is not yet published on PyPI. Install directly from source.
-
-### From source
-
 ```bash
-# Clone the monorepo (or the package directory)
-git clone <repository-url>
-cd packages/ockham
-
-pip install -e .
+pip install ockham
 ```
 
-### With optional dependencies
+### Optional extras
 
-Install the `sdmx` extra to enable SDMX provider support (ECB, Eurostat, IMF, World Bank, BIS):
+| Extra | Install command | What it enables |
+|-------|----------------|-----------------|
+| `sdmx` | `pip install "ockham[sdmx]"` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
+| `embeddings` | `pip install "ockham[embeddings]"` | Semantic catalog search via LiteLLM embeddings |
 
-```bash
-pip install -e ".[sdmx]"
-```
-
-Install the `embeddings` extra to enable semantic catalog search:
-
-```bash
-pip install -e ".[embeddings]"
-```
-
-Install both together:
+Install multiple extras at once:
 
 ```bash
-pip install -e ".[sdmx,embeddings]"
+pip install "ockham[sdmx,embeddings]"
 ```
 
-### Separately-installed packages
-
-Two connectors require packages that are not declared in `pyproject.toml` and must be installed manually:
+Two connectors require separately-installed packages:
 
 ```bash
-# Required for SEC Edgar connector
-pip install edgartools
-
-# Required for Financial Reports connector
-pip install financial-reports-generated-client
+pip install edgartools                        # SEC Edgar connector
+pip install financial-reports-generated-client  # Financial Reports connector
 ```
 
-### Python version requirement
+### Python version
 
-ockham requires Python **3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
+ockham requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
 
 ---
 
-## Environment Variable Setup
+## Environment Setup
 
 Different connectors require different credentials. Set the variables for the data sources you intend to use.
 
@@ -91,13 +72,16 @@ Different connectors require different credentials. Set the variables for the da
 
 SDMX and Polymarket connectors require no credentials.
 
-Set variables in your shell or a `.env` file:
+### .env file example
 
 ```bash
-export FRED_API_KEY="your-fred-api-key"
-export FMP_API_KEY="your-fmp-api-key"
-export EODHD_API_KEY="your-eodhd-key"       # optional
+# .env
+FRED_API_KEY=your-fred-api-key
+FMP_API_KEY=your-fmp-api-key
+EODHD_API_KEY=your-eodhd-key       # optional
 ```
+
+Load into your shell with `export $(cat .env | xargs)` or use a library like `python-dotenv`.
 
 To obtain a FRED API key, register at [https://fred.stlouisfed.org/docs/api/api_key.html](https://fred.stlouisfed.org/docs/api/api_key.html).
 
@@ -116,8 +100,8 @@ graph TD
     classDef transport fill:#9B6B9B,stroke:#7A4A7A,color:#fff
     classDef output fill:#50C878,stroke:#2E7D50,color:#fff
 
-    A["connectors[name](params_dict)"]:::user
-    B["Pydantic validates params\nto typed model"]:::framework
+    A["connectors[name](series_id='GDP')"]:::user
+    B["Pydantic validates kwargs\nto typed model"]:::framework
     C["Bound API key injected\nvia bind_deps()"]:::framework
     D["HTTP request\nHttpClient / SDK"]:::transport
     E["Raw JSON or CSV\nresponse"]:::transport
@@ -140,8 +124,8 @@ async def main():
     # Build the full connector bundle from environment variables
     connectors = build_connectors_from_env()
 
-    # Fetch US GDP data from FRED
-    result = await connectors["fred_fetch"]({"series_id": "GDP"})
+    # Fetch US GDP data from FRED using keyword arguments
+    result = await connectors["fred_fetch"](series_id="GDP")
 
     print(result.data.tail())
     print(result.provenance)
@@ -164,6 +148,26 @@ Provenance(source='fred', params={'series_id': 'GDP'}, fetched_at=datetime(...))
 
 ---
 
+## Core Concepts
+
+### Connectors
+
+A `Connector` is an async function wrapped with metadata: a name, description, Pydantic params model, and optional output schema. Call it with keyword arguments (`await conn(series_id="GDP")`) or a typed Pydantic model. Dependencies like API keys are injected via `bind_deps()` and never appear in provenance or logs.
+
+### Connectors (the collection)
+
+`Connectors` is an immutable collection of `Connector` instances. Look up by name with `connectors["fred_fetch"]`, compose with `+`, filter with `.filter(tags=["macro"])`, and attach hooks with `.with_callback()`.
+
+### Results
+
+Every connector call returns a `Result` with `.data` (usually a pandas DataFrame) and `.provenance` (source, parameters, timestamp). When a connector declares an `OutputConfig`, the result is a `SemanticTableResult` with typed columns (KEY, TITLE, DATA, METADATA roles) suitable for catalog indexing and LLM display.
+
+### Provenance
+
+`Provenance` records where data came from: the connector name, the user-facing parameters, and when it was fetched. API keys injected via `bind_deps` are excluded. Provenance is serialized with Arrow/Parquet round-trips.
+
+---
+
 ## Fetching Data from FRED
 
 ### Search for a series
@@ -175,9 +179,8 @@ from ockham.connectors import build_connectors_from_env
 async def search_fred():
     connectors = build_connectors_from_env()
 
-    # Search for series related to inflation
-    result = await connectors["fred_search"]({"query": "consumer price index", "limit": 5})
-    print(result.data[["id", "title"]])
+    result = await connectors["fred_search"](search_text="consumer price index")
+    print(result.data[["id", "title"]].head(5))
 
 asyncio.run(search_fred())
 ```
@@ -188,11 +191,11 @@ asyncio.run(search_fred())
 async def fetch_unemployment():
     connectors = build_connectors_from_env()
 
-    result = await connectors["fred_fetch"]({
-        "series_id": "UNRATE",
-        "observation_start": "2020-01-01",
-        "observation_end": "2024-12-31",
-    })
+    result = await connectors["fred_fetch"](
+        series_id="UNRATE",
+        observation_start="2020-01-01",
+        observation_end="2024-12-31",
+    )
 
     df = result.data
     print(f"Fetched {len(df)} observations")
@@ -206,7 +209,7 @@ async def enumerate_release():
     connectors = build_connectors_from_env()
 
     # FRED Release 10 is the Employment Situation
-    result = await connectors["enumerate_fred_release"]({"release_id": 10})
+    result = await connectors["enumerate_fred_release"](release_id=10)
 
     print(f"Found {len(result.data)} series in this release")
     print(result.data.head())
@@ -216,78 +219,77 @@ async def enumerate_release():
 
 ## Querying SDMX Providers
 
-SDMX connectors require the `sdmx1` package. Install with `pip install ockham[sdmx]`.
+SDMX connectors require the `sdmx` extra: `pip install "ockham[sdmx]"`.
 
-No API key is required. SDMX providers include ECB, Eurostat (ESTAT), IMF, World Bank (WB), BIS, and others.
+No API key is required. SDMX providers include ECB, Eurostat (ESTAT), IMF, World Bank (WB_WDI), BIS, and others.
 
 ```python
 async def sdmx_examples():
     connectors = build_connectors_from_env()
 
     # List all ECB datasets
-    datasets = await connectors["sdmx_list_datasets"]({"provider": "ECB"})
+    datasets = await connectors["sdmx_list_datasets"](agency="ECB")
     print(datasets.data.head(10))
 
     # Get the Data Structure Definition for the ECB exchange rate dataset
-    dsd = await connectors["sdmx_dsd"]({"provider": "ECB", "dataset_id": "EXR"})
+    dsd = await connectors["sdmx_dsd"](dataset_key="ECB-EXR")
     print(dsd.data)
 
     # Fetch daily USD/EUR spot rate observations
-    rates = await connectors["sdmx_fetch"]({
-        "provider": "ECB",
-        "dataset_id": "EXR",
-        "key": "D.USD.EUR.SP00.A",
-        "start_period": "2023-01-01",
-        "end_period": "2024-12-31",
-    })
+    rates = await connectors["sdmx_fetch"](
+        dataset_key="ECB-EXR",
+        series_key="D.USD.EUR.SP00.A",
+        start_period="2023-01-01",
+        end_period="2024-12-31",
+    )
     print(rates.data.tail())
 
-    # Enumerate series keys for catalog ingestion
-    keys = await connectors["sdmx_series_keys"]({
-        "provider": "ESTAT",
-        "dataset_id": "namq_10_gdp",
-    })
+    # List available series keys (filterable for catalog ingestion)
+    keys = await connectors["sdmx_series_keys"](
+        dataset_key="ESTAT-namq_10_gdp",
+    )
     print(f"Found {len(keys.data)} series keys")
 ```
+
+The `dataset_key` format is always `AGENCY-DATASET_ID` (e.g., `ECB-EXR`, `ESTAT-namq_10_gdp`, `IMF_DATA-IFS`).
 
 ---
 
 ## Working with FMP Equity Data
 
-FMP connectors require `FMP_API_KEY`. The calling pattern is the same as FRED: pass a dict matching the connector's params model.
+FMP connectors require `FMP_API_KEY`. The calling pattern is the same: pass keyword arguments matching the connector's params model.
 
 ```python
 async def fmp_examples():
     connectors = build_connectors_from_env()
 
     # Search for companies
-    search = await connectors["fmp_search"]({"query": "Apple", "limit": 5})
+    search = await connectors["fmp_search"](query="Apple", limit=5)
     print(search.data[["symbol", "name", "exchangeShortName"]])
 
     # Historical prices
-    prices = await connectors["fmp_prices"]({
-        "symbol": "AAPL",
-        "from_date": "2024-01-01",
-        "to_date": "2024-12-31",
-    })
+    prices = await connectors["fmp_prices"](
+        symbol="AAPL",
+        from_date="2024-01-01",
+        to_date="2024-12-31",
+    )
     print(prices.data.tail())
 
     # Annual income statements
-    income = await connectors["fmp_income_statements"]({
-        "symbol": "MSFT",
-        "period": "annual",
-        "limit": 5,
-    })
+    income = await connectors["fmp_income_statements"](
+        symbol="MSFT",
+        period="annual",
+        limit=5,
+    )
     print(income.data[["date", "revenue", "netIncome"]].head())
 
     # Screen for large-cap tech
-    screener = await connectors["fmp_screener"]({
-        "sector": "Technology",
-        "market_cap_more_than": 10_000_000_000,
-        "exchange": "NASDAQ",
-        "limit": 20,
-        # where_clause="revenueGrowth > 0.1",  # pandas query string — trusted input only
-    })
+    screener = await connectors["fmp_screener"](
+        sector="Technology",
+        market_cap_min=10_000_000_000,
+        exchange="NASDAQ",
+        limit=20,
+    )
     print(screener.data.head())
 ```
 
@@ -295,7 +297,7 @@ async def fmp_examples():
 
 ---
 
-## Using the Series Catalog
+## Using the Catalog
 
 The catalog lets you index discovered series and search them by text or semantic similarity.
 
@@ -303,16 +305,16 @@ The catalog lets you index discovered series and search them by text or semantic
 
 ```python
 import asyncio
-from ockham import SeriesCatalog, InMemoryCatalogStore
+from ockham import Catalog, SQLiteCatalogStore
 from ockham.connectors import build_connectors_from_env
 
 async def catalog_example():
     connectors = build_connectors_from_env()
-    catalog = SeriesCatalog(InMemoryCatalogStore())
+    catalog = Catalog(SQLiteCatalogStore(":memory:"))
 
     # Enumerate all series in a FRED release and index them
-    result = await connectors["enumerate_fred_release"]({"release_id": 10})
-    index_summary = await catalog.index_result(result)
+    result = await connectors["enumerate_fred_release"](release_id=10)
+    index_summary = await catalog.index_result(result, embed=False)
 
     print(f"Indexed {index_summary.indexed} series, skipped {index_summary.skipped}")
 
@@ -328,8 +330,8 @@ asyncio.run(catalog_example())
 
 ```python
 # Preview what would be indexed without writing to the store
-summary = await catalog.index_result(result, dry_run=True)
-print(f"Would index {summary.indexed} entries")
+summary = await catalog.index_result(result, embed=False, dry_run=True)
+print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 ```
 
 ### Semantic search with embeddings
@@ -337,23 +339,23 @@ print(f"Would index {summary.indexed} entries")
 Semantic search requires the `[embeddings]` extra and a LiteLLM-compatible embedding model.
 
 ```python
-from ockham import LiteLLMEmbeddingProvider, SeriesCatalog, InMemoryCatalogStore
+from ockham import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
 
 async def semantic_search():
     provider = LiteLLMEmbeddingProvider(
         model="gemini/text-embedding-004",
         dimension=768,
     )
-    catalog = SeriesCatalog(InMemoryCatalogStore(), embeddings=provider)
+    catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 
     # Index some results (embeddings are computed during indexing)
-    result = await connectors["enumerate_fred_release"]({"release_id": 10})
+    result = await connectors["enumerate_fred_release"](release_id=10)
     await catalog.index_result(result, embed=True)
 
     # Search using semantic similarity
-    matches = await catalog.search("jobs market labor", limit=5, semantic=True)
+    matches = await catalog.search("jobs market labor", limit=5)
     for match in matches:
-        print(f"  {match.similarity:.3f}  {match.title}")
+        print(f"  {match.title}")
 ```
 
 ### Listing and retrieving catalog entries
@@ -363,7 +365,7 @@ async def semantic_search():
 namespaces = await catalog.list_namespaces()
 
 # Paginate through entries in a namespace
-entries = await catalog.list_entries(namespace="fred", limit=50, offset=0)
+entries, total = await catalog.list_entries(namespace="fred", limit=50, offset=0)
 
 # Retrieve a specific entry
 entry = await catalog.get_entry(namespace="fred", code="UNRATE")
@@ -382,7 +384,7 @@ You can build your own connectors using the `@connector`, `@enumerator`, or `@lo
 ```python
 import pandas as pd
 from pydantic import BaseModel
-from ockham import connector, Result
+from ockham import connector
 
 class MyParams(BaseModel):
     symbol: str
@@ -406,7 +408,7 @@ Use `OutputConfig` and `Column` to declare the semantic meaning of each column:
 from typing import Annotated
 from pydantic import BaseModel
 from ockham import (
-    connector, loader, Namespace,
+    connector, Namespace,
     OutputConfig, Column, ColumnRole,
 )
 
@@ -414,13 +416,13 @@ class PriceParams(BaseModel):
     ticker: Annotated[str, Namespace("my_source")]
 
 PRICE_OUTPUT = OutputConfig(columns=[
-    Column(name="ticker", role=ColumnRole.KEY, dtype="str", namespace="my_source"),
-    Column(name="date",   role=ColumnRole.METADATA, dtype="date"),
-    Column(name="close",  role=ColumnRole.DATA, dtype="float64"),
-    Column(name="volume", role=ColumnRole.DATA, dtype="float64"),
+    Column(name="ticker", role=ColumnRole.KEY, namespace="my_source"),
+    Column(name="name",   role=ColumnRole.TITLE),
+    Column(name="close",  role=ColumnRole.DATA, dtype="numeric"),
+    Column(name="volume", role=ColumnRole.DATA, dtype="numeric"),
 ])
 
-@loader(output=PRICE_OUTPUT)
+@connector(output=PRICE_OUTPUT)
 async def my_prices(params: PriceParams) -> pd.DataFrame:
     """Fetch daily closing prices from my source."""
     # Your implementation here
@@ -429,7 +431,7 @@ async def my_prices(params: PriceParams) -> pd.DataFrame:
 
 ### Custom connector with dependency injection
 
-Use keyword-only function parameters to declare dependencies (such as API keys):
+Use keyword-only function parameters (after `*`) to declare dependencies like API keys:
 
 ```python
 from pydantic import BaseModel
@@ -441,7 +443,7 @@ class SearchParams(BaseModel):
 @connector(tags=["custom"])
 async def my_authenticated_source(params: SearchParams, *, api_key: str) -> pd.DataFrame:
     """Fetch from an authenticated API."""
-    # api_key is injected via bind_deps; never stored in params
+    # api_key is injected via bind_deps; never stored in params or provenance
     ...
 
 # Bind the API key before adding to a bundle
@@ -454,17 +456,22 @@ all_connectors = build_connectors_from_env() + Connectors([bound])
 
 ### Adding a result callback
 
-Callbacks let you react to every result produced by a connector, for example to store it in a database or emit a metric:
+Callbacks let you react to every result produced by a connector, for example to index into a catalog or emit a metric:
 
 ```python
-async def log_result(result):
-    print(f"Got result from {result.provenance.source}: {len(result.data)} rows")
+from ockham import Catalog, SQLiteCatalogStore, SemanticTableResult
+
+catalog = Catalog(SQLiteCatalogStore(":memory:"))
+
+async def auto_index(result):
+    if isinstance(result, SemanticTableResult):
+        await catalog.index_result(result, embed=False)
 
 # Attach callback to a single connector
-logged_connector = connectors["fred_fetch"].with_callback(log_result)
+logged_connector = connectors["fred_fetch"].with_callback(auto_index)
 
 # Attach callback to all connectors in a bundle
-logged_bundle = connectors.with_callback(log_result)
+logged_bundle = connectors.with_callback(auto_index)
 ```
 
 ---
@@ -474,13 +481,12 @@ logged_bundle = connectors.with_callback(log_result)
 ### Accessing the DataFrame and provenance
 
 ```python
-result = await connectors["fred_fetch"]({"series_id": "GDP"})
+result = await connectors["fred_fetch"](series_id="GDP")
 
 df = result.data           # pandas DataFrame
 prov = result.provenance   # Provenance(source, params, fetched_at, ...)
 
 print(prov.source)         # "fred"
-print(prov.fetched_at)     # datetime of the fetch
 print(prov.params)         # {"series_id": "GDP"}
 ```
 
@@ -492,15 +498,16 @@ If a connector returns a plain `Result` but you want to apply a schema:
 from ockham import OutputConfig, Column, ColumnRole
 
 my_schema = OutputConfig(columns=[
-    Column(name="date",  role=ColumnRole.METADATA, dtype="date"),
-    Column(name="value", role=ColumnRole.DATA, dtype="float64"),
+    Column(name="date",  role=ColumnRole.KEY, namespace="my_ns"),
+    Column(name="title", role=ColumnRole.TITLE),
+    Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
 ])
 
 semantic_result = result.to_table(my_schema)
 
 # Access typed column groups
-print(semantic_result.data_columns)    # [Column(name="value", ...)]
-print(semantic_result.entity_keys)     # [Column(name=..., role=KEY, ...)]
+print(semantic_result.data_columns)      # [Column(name="value", ...)]
+print(semantic_result.metadata_columns)  # [Column(name=..., role=METADATA)]
 ```
 
 ### Serializing to Arrow and Parquet
@@ -524,16 +531,17 @@ restored = Result.from_arrow(table)
 
 ## Filtering and Composing Connector Bundles
 
-### Filter by tag
+### Filter by name or tag
 
 ```python
 connectors = build_connectors_from_env()
 
-# Only equity connectors
-equity = connectors.filter(["equity"])
+# Filter by tag (keyword argument)
+equity = connectors.filter(tags=["equity"])
+macro = connectors.filter(tags=["macro"])
 
-# Only macro connectors
-macro = connectors.filter(["macro"])
+# Filter by name substring
+fred_only = connectors.filter(name="fred")
 ```
 
 ### Combine bundles
@@ -541,23 +549,23 @@ macro = connectors.filter(["macro"])
 ```python
 from ockham import Connectors
 
-custom = Connectors([my_prices, my_authenticated_source])
+custom = Connectors([my_prices, my_authenticated_source.bind_deps(api_key="key")])
 combined = build_connectors_from_env() + custom
 
 # Use any connector by name
-result = await combined["my_prices"]({"ticker": "AAPL"})
+result = await combined["my_prices"](ticker="AAPL")
 ```
 
 ### Generate LLM tool descriptions
 
-All connectors in a bundle can be serialized to a text description suitable for inclusion in an LLM prompt:
+All connectors in a bundle can be serialized to a text description suitable for inclusion in an LLM system prompt:
 
 ```python
 tool_descriptions = connectors.to_llm()
 print(tool_descriptions[:500])
 ```
 
-Each connector's description includes its name, docstring, tags, and parameter names and types. This output is consumed by agent frameworks that route LLM calls to connectors.
+Each connector's description includes its name, docstring, tags, parameter names/types, and output columns. This output is consumed by agent frameworks that route LLM calls to connectors.
 
 ---
 
@@ -573,7 +581,7 @@ from ockham.connectors import build_connectors_from_env
 
 async def main():
     connectors = build_connectors_from_env()
-    result = await connectors["fred_fetch"]({"series_id": "CPIAUCSL"})
+    result = await connectors["fred_fetch"](series_id="CPIAUCSL")
     print(result.data.tail())
 
 asyncio.run(main())
@@ -583,32 +591,35 @@ In a Jupyter notebook, use `await` directly (notebooks run an event loop):
 
 ```python
 connectors = build_connectors_from_env()
-result = await connectors["fred_fetch"]({"series_id": "CPIAUCSL"})
+result = await connectors["fred_fetch"](series_id="CPIAUCSL")
 result.data.tail()
 ```
 
-### Pattern 2: Pass params as a dict or a Pydantic model
+### Pattern 2: Pass params as kwargs or a Pydantic model
 
 Both forms are accepted:
 
 ```python
-# Dict form (converted internally by Pydantic)
-result = await connectors["fred_fetch"]({"series_id": "GDP"})
+# Keyword arguments (validated internally by Pydantic)
+result = await connectors["fred_fetch"](series_id="GDP")
 
-# Model form
+# Pre-built Pydantic model
 from ockham.connectors.fred import FredFetchParams
 result = await connectors["fred_fetch"](FredFetchParams(series_id="GDP"))
 ```
 
+Note: raw `dict` is **not** accepted. Use keyword arguments or a typed model.
+
 ### Pattern 3: Bulk catalog indexing from an enumerator
 
 ```python
-catalog = SeriesCatalog(InMemoryCatalogStore())
+from ockham import Catalog, SQLiteCatalogStore
 
-# Enumerate S&P 500 constituents and index them
-sp500_result = await connectors["fmp_index_constituents"]({"index": "sp500"})
-summary = await catalog.index_result(sp500_result)
+catalog = Catalog(SQLiteCatalogStore(":memory:"))
 
+# Enumerate and index
+result = await connectors["enumerate_fred_release"](release_id=10)
+summary = await catalog.index_result(result, embed=False)
 print(f"Catalog now has {summary.indexed} entries")
 ```
 
@@ -627,6 +638,6 @@ fetch_only = build_fetch_connectors_from_env()
 When an optional env var is absent, the corresponding connector is excluded from the bundle. Check by name before calling:
 
 ```python
-if "eodhd_fetch" in [c.name for c in connectors]:
-    result = await connectors["eodhd_fetch"]({"symbol": "AAPL.US", "period": "d"})
+if "eodhd_fetch" in connectors:
+    result = await connectors["eodhd_fetch"](symbol="AAPL.US")
 ```

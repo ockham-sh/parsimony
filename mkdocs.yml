@@ -1,0 +1,60 @@
+site_name: ockham
+site_description: Typed, composable data connectors with searchable catalogs for Python
+site_url: https://docs.ockham.sh
+repo_url: https://github.com/ockham-sh/ockham
+repo_name: ockham-sh/ockham
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: amber
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: amber
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - toc.follow
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_liners: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_block
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Quick Start: quickstart.md
+  - User Guide: user-guide.md
+  - Cookbook: cookbook.md
+  - Internal Data Sources: internal-connectors.md
+  - API Reference: api-reference.md
+  - Architecture: architecture.md
+  - Connector Guide: connector-guide.md
+  - FAQ: faq.md

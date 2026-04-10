@@ -293,7 +293,7 @@ All `Result` serialization methods (`to_arrow`, `to_parquet`, `from_arrow`, `fro
 
 ```python
 from ockham import (
-    CatalogStore, SeriesCatalog, SeriesEntry, SeriesMatch,
+    CatalogStore, Catalog, SeriesEntry, SeriesMatch,
     IndexResult, EmbeddingProvider,
 )
 ```
@@ -316,10 +316,10 @@ Abstract base class for catalog persistence backends. Implement this to add a cu
 | `list_namespaces` | `async () -> list[str]` | Return all distinct namespaces |
 | `codes_missing_embedding` | `async (namespace: str \| None, limit: int) -> list[tuple[str, str]]` | Entries without embeddings |
 
-### `SeriesCatalog`
+### `Catalog`
 
 ```python
-SeriesCatalog(
+Catalog(
     store: CatalogStore,
     *,
     embeddings: EmbeddingProvider | None = None,
@@ -388,7 +388,7 @@ SeriesMatch(
 )
 ```
 
-A search result returned by `SeriesCatalog.search()`. `similarity` is a float in [0, 1]; higher is more relevant.
+A search result returned by `Catalog.search()`. `similarity` is a float in [0, 1]; higher is more relevant.
 
 ### `IndexResult`
 
@@ -401,7 +401,7 @@ IndexResult(
 )
 ```
 
-Summary returned by `SeriesCatalog.index_result()` and `ingest()`.
+Summary returned by `Catalog.index_result()` and `ingest()`.
 
 ### `EmbeddingProvider`
 
@@ -453,16 +453,16 @@ Summary returned by `DataStore.load_result()`.
 ## In-Memory Implementations
 
 ```python
-from ockham import InMemoryCatalogStore, InMemoryDataStore
+from ockham import SQLiteCatalogStore, InMemoryDataStore
 ```
 
-### `InMemoryCatalogStore`
+### `SQLiteCatalogStore`
 
 Dict-backed implementation of `CatalogStore`. Suitable for development, testing, and notebooks. Data is lost when the process exits.
 
 ```python
-store = InMemoryCatalogStore()
-catalog = SeriesCatalog(store)
+store = SQLiteCatalogStore(":memory:")
+catalog = Catalog(store)
 ```
 
 ### `InMemoryDataStore`
@@ -496,10 +496,10 @@ Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install
 - Applies L2 normalization to all returned vectors.
 
 ```python
-from ockham import LiteLLMEmbeddingProvider, SeriesCatalog, InMemoryCatalogStore
+from ockham import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
 
 provider = LiteLLMEmbeddingProvider(model="gemini/text-embedding-004", dimension=768)
-catalog = SeriesCatalog(InMemoryCatalogStore(), embeddings=provider)
+catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 ```
 
 ---

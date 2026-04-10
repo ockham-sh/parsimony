@@ -32,7 +32,7 @@ all = ["ockham[sdmx,embeddings,vec,sec,financial-reports]"]
 
 [project.urls]
 Homepage = "https://ockham.sh"
-Repository = "https://github.com/espinetandreu/ockham"
+Repository = "https://github.com/ockham-sh/ockham"
 
 [tool.ruff]
 target-version = "py311"

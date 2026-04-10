@@ -46,14 +46,14 @@ ockham/
 ├── result.py                 # Result, SemanticTableResult, OutputConfig, Column, ColumnRole
 ├── data_store.py             # DataStore ABC, LoadResult
 ├── catalog/
-│   ├── catalog.py            # SeriesCatalog orchestration layer
+│   ├── catalog.py            # Catalog orchestration layer
 │   ├── store.py              # CatalogStore ABC
 │   ├── models.py             # SeriesEntry, SeriesMatch, IndexResult (Pydantic)
 │   ├── embeddings.py         # EmbeddingProvider ABC
 │   ├── series_pipeline.py    # build_embedding_text(), text composition for indexing
 │   └── identity_from_params.py  # Namespace field extraction utilities
 ├── stores/
-│   ├── memory.py             # InMemoryCatalogStore
+│   ├── memory.py             # SQLiteCatalogStore
 │   └── memory_data.py        # InMemoryDataStore
 ├── embeddings/
 │   └── litellm.py            # LiteLLMEmbeddingProvider
@@ -188,7 +188,7 @@ async def fred_fetch(params: FredFetchParams, *, api_key: str) -> pd.DataFrame:
     ...
 ```
 
-The schema contracts exist to make catalog indexing and data loading reliable. An `@enumerator` result can always be safely passed to `SeriesCatalog.index_result()` because it is guaranteed to have identifiable series codes. A `@loader` result can always be safely passed to `DataStore.load_result()` because it is guaranteed to have data columns.
+The schema contracts exist to make catalog indexing and data loading reliable. An `@enumerator` result can always be safely passed to `Catalog.index_result()` because it is guaranteed to have identifiable series codes. A `@loader` result can always be safely passed to `DataStore.load_result()` because it is guaranteed to have data columns.
 
 ---
 
@@ -257,7 +257,7 @@ The catalog subsystem (`ockham/catalog/`) manages the lifecycle of series metada
 
 | Component | File | Responsibility |
 |-----------|------|---------------|
-| `SeriesCatalog` | `catalog.py` | Orchestration: indexing pipeline, search routing, embedding coordination |
+| `Catalog` | `catalog.py` | Orchestration: indexing pipeline, search routing, embedding coordination |
 | `CatalogStore` | `store.py` | Persistence ABC: CRUD + text search + vector search |
 | `SeriesEntry` / `SeriesMatch` / `IndexResult` | `models.py` | Pydantic data models for catalog records and results |
 | `EmbeddingProvider` | `embeddings.py` | ABC for text-to-vector embedding |
@@ -266,7 +266,7 @@ The catalog subsystem (`ockham/catalog/`) manages the lifecycle of series metada
 
 ### Indexing pipeline
 
-When `SeriesCatalog.index_result()` is called with a `SemanticTableResult`:
+When `Catalog.index_result()` is called with a `SemanticTableResult`:
 
 1. Each row with a KEY column is extracted and converted to a `SeriesEntry` using the `Namespace` annotation to determine `namespace` and `code`.
 2. If `force=False`, existing entries in the store are checked; unchanged entries are skipped.
@@ -288,10 +288,10 @@ class FredFetchParams(BaseModel):
 
 ### Search routing
 
-`SeriesCatalog.search()` dispatches to either token-based or vector-based search depending on the `semantic=` flag:
+`Catalog.search()` dispatches to either token-based or vector-based search depending on the `semantic=` flag:
 
 - `semantic=False`: delegates to `CatalogStore.search()` (text/token matching).
-- `semantic=True`: calls `EmbeddingProvider.embed([query])` to get the query vector, then delegates to `CatalogStore.vector_search()`. Requires an `EmbeddingProvider` configured on the `SeriesCatalog`.
+- `semantic=True`: calls `EmbeddingProvider.embed([query])` to get the query vector, then delegates to `CatalogStore.vector_search()`. Requires an `EmbeddingProvider` configured on the `Catalog`.
 
 ---
 
@@ -432,7 +432,7 @@ graph LR
 
 ```
 SemanticTableResult (from connector)
-  → SeriesCatalog.index_result(result)
+  → Catalog.index_result(result)
       → KEY columns extracted from output_schema
       → Namespace annotation read: namespace="fred"
       → Each row → SeriesEntry(namespace="fred", code="GDP", title="...", ...)

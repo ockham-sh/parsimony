@@ -669,35 +669,67 @@ class Connectors:
             lines.append(f"  {i:2}. {c.name:<{name_w}} {desc}")
         return "\n".join(lines)
 
-    def to_llm(self) -> str:
+    _CODE_HEADER = (
+        "\n# Data connectors\n"
+        "\n"
+        "You have `client` in the code executor — a Connectors collection "
+        "for fetching data.\n"
+        "\n"
+        "## How to use\n"
+        "- `result = await client[\"name\"](param=value)` — returns Result "
+        "with .data and .provenance (source metadata).\n"
+        "- .data is usually a DataFrame; some connectors return text (noted in their description).\n"
+        "- Keyword arguments must match the connector's typed parameters.\n"
+        "- `client.filter(name=\"query\")` narrows by name or description.\n"
+        "- **ONLY use connectors listed below. Do NOT invent connector names.**\n"
+    )
+
+    _MCP_HEADER = (
+        "\n# Ockham — financial data discovery tools\n"
+        "\n"
+        "These MCP tools search and discover data. For bulk retrieval, "
+        "write and execute a Python script:\n"
+        "```python\n"
+        "from ockham import client\n"
+        "result = await client['fred_fetch'](series_id='UNRATE')\n"
+        "df = result.data  # pandas DataFrame\n"
+        "```\n"
+        "\n"
+        "After discovering data with MCP tools, always execute the fetch — "
+        "do not just suggest code.\n"
+        "\n"
+        "Workflow: discover (MCP tool) → fetch and execute (client) → analyze.\n"
+        "For SDMX: list_datasets → dsd → codelist → series_keys → fetch.\n"
+    )
+
+    def to_llm(self, context: str = "code") -> str:
         """Return an LLM-ready prompt section describing all connectors.
 
         Compact format inspired by ockham's ``enhanced_description``
         pattern: full descriptions with output columns appended, structured
         parameter lists, no decorative separators.  Designed to be injected
         into an agent's system prompt.
+
+        Parameters
+        ----------
+        context:
+            ``"code"`` (default) — header explains ``client["name"](...)`` usage
+            for code-execution agents.
+            ``"mcp"`` — header explains MCP discovery workflow and directs bulk
+            retrieval to code execution.
         """
         parts: list[str] = []
 
-        parts.append(
-            "\n# Data connectors\n"
-            "\n"
-            "You have `client` in the code executor — a Connectors collection "
-            "for fetching data.\n"
-            "\n"
-            "## How to use\n"
-            "- `result = await client[\"name\"](param=value)` — returns Result "
-            "with .data and .provenance (source metadata).\n"
-            "- .data is usually a DataFrame; some connectors return text (noted in their description).\n"
-            "- Keyword arguments must match the connector's typed parameters.\n"
-            "- `client.filter(name=\"query\")` narrows by name or description.\n"
-            "- **ONLY use connectors listed below. Do NOT invent connector names.**\n"
-        )
+        if context == "mcp":
+            parts.append(self._MCP_HEADER)
+        else:
+            parts.append(self._CODE_HEADER)
 
         if not self._items:
             parts.append("No connectors available.\n")
         else:
-            parts.append(f"## Connectors ({len(self._items)})\n")
+            label = "Tools" if context == "mcp" else "Connectors"
+            parts.append(f"## {label} ({len(self._items)})\n")
             for c in self._items:
                 parts.append(c.to_llm())
                 parts.append("")  # single blank line separator

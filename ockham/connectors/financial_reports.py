@@ -438,7 +438,7 @@ class FrReferenceDataParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@connector(output=COMPANIES_SEARCH_OUTPUT, tags=["financial_reports"])
+@connector(output=COMPANIES_SEARCH_OUTPUT, tags=["financial_reports", "tool"])
 async def fr_companies_search(params: FrCompaniesSearchParams, *, api_key: str) -> Result:
     """Search companies on Financial Reports by name, country, ISIN, ticker, or industry.
 
@@ -577,7 +577,7 @@ async def fr_next_annual_report(params: FrNextAnnualReportParams, *, api_key: st
     )
 
 
-@connector(output=ISIC_BROWSE_OUTPUT, tags=["financial_reports"])
+@connector(output=ISIC_BROWSE_OUTPUT, tags=["financial_reports", "tool"])
 async def fr_isic_browse(params: FrIsicBrowseParams, *, api_key: str) -> Result:
     """Browse ISIC industry classifications to find valid filter codes.
 
@@ -621,7 +621,7 @@ async def fr_isic_browse(params: FrIsicBrowseParams, *, api_key: str) -> Result:
     )
 
 
-@connector(output=ISIN_LOOKUP_OUTPUT, tags=["financial_reports"])
+@connector(output=ISIN_LOOKUP_OUTPUT, tags=["financial_reports", "tool"])
 async def fr_isin_lookup(params: FrIsinLookupParams, *, api_key: str) -> Result:
     """Look up ISINs with OpenFIGI enrichment (FIGI, security type, exchange).
 

@@ -254,7 +254,7 @@ _PUSHDOWN_MAP: dict[str, str] = {
 }
 
 
-@connector(output=SCREENER_OUTPUT, tags=["equity"])
+@connector(output=SCREENER_OUTPUT, tags=["equity", "tool"])
 async def fmp_screener(
     params: FmpScreenerParams,
     *,

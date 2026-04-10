@@ -525,7 +525,7 @@ _PRICES_PATH_MAP: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-@connector(output=SEARCH_OUTPUT, tags=["equity", "utility"])
+@connector(output=SEARCH_OUTPUT, tags=["equity", "utility", "tool"])
 async def fmp_search(
     params: FmpSearchParams,
     *,
@@ -543,7 +543,7 @@ async def fmp_search(
     )
 
 
-@connector(tags=["equity", "utility"])
+@connector(tags=["equity", "utility", "tool"])
 async def fmp_taxonomy(
     params: FmpTaxonomyParams,
     *,
@@ -612,7 +612,7 @@ async def fmp_prices(
 # ---------------------------------------------------------------------------
 
 
-@connector(output=COMPANY_PROFILE_OUTPUT, tags=["equity"])
+@connector(output=COMPANY_PROFILE_OUTPUT, tags=["equity", "tool"])
 async def fmp_company_profile(
     params: FmpSymbolParams,
     *,
@@ -627,7 +627,7 @@ async def fmp_company_profile(
     )
 
 
-@connector(output=PEERS_OUTPUT, tags=["equity"])
+@connector(output=PEERS_OUTPUT, tags=["equity", "tool"])
 async def fmp_peers(
     params: FmpSymbolParams,
     *,
@@ -824,7 +824,7 @@ async def fmp_earnings_transcript(
 # ---------------------------------------------------------------------------
 
 
-@connector(output=INDEX_CONSTITUENTS_OUTPUT, tags=["equity"])
+@connector(output=INDEX_CONSTITUENTS_OUTPUT, tags=["equity", "tool"])
 async def fmp_index_constituents(
     params: FmpIndexConstituentsParams,
     *,
@@ -840,7 +840,7 @@ async def fmp_index_constituents(
     )
 
 
-@connector(output=MARKET_MOVERS_OUTPUT, tags=["equity"])
+@connector(output=MARKET_MOVERS_OUTPUT, tags=["equity", "tool"])
 async def fmp_market_movers(
     params: FmpMarketMoversParams,
     *,

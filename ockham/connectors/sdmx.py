@@ -551,7 +551,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
     )
 
 
-@connector(tags=["sdmx"])
+@connector(tags=["sdmx", "tool"])
 async def sdmx_list_datasets(params: SdmxListDatasetsParams) -> Result:
     """List all dataflows (datasets) for an SDMX agency.
 
@@ -579,7 +579,7 @@ async def sdmx_list_datasets(params: SdmxListDatasetsParams) -> Result:
     return _sdmx_list_datasets_output(ns).build_table_result(df, provenance=prov, params=params.model_dump())
 
 
-@connector(tags=["sdmx"])
+@connector(tags=["sdmx", "tool"])
 async def sdmx_dsd(params: SdmxDsdParams) -> Result:
     """Inspect DSD: one row per non-time dimension with concept name and codelist size.
 
@@ -618,7 +618,7 @@ async def sdmx_dsd(params: SdmxDsdParams) -> Result:
     return Result.from_dataframe(df, provenance=prov)
 
 
-@connector(tags=["sdmx"])
+@connector(tags=["sdmx", "tool"])
 async def sdmx_codelist(params: SdmxCodelistParams) -> Result:
     """Enumerate all codes for one dimension (full DSD codelist, not availability-filtered)."""
     dataset_key = params.dataset_key
@@ -664,7 +664,7 @@ async def sdmx_codelist(params: SdmxCodelistParams) -> Result:
     return _sdmx_codelist_output(ns).build_table_result(df, provenance=prov, params=params.model_dump())
 
 
-@connector(tags=["sdmx"])
+@connector(tags=["sdmx", "tool"])
 async def sdmx_series_keys(params: SdmxSeriesKeysParams) -> Result:
     """List available series keys for a dataset via the SDMX API.
 

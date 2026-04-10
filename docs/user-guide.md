@@ -20,6 +20,7 @@ ockham is a Python library that gives you a single, consistent async interface f
 9. [Working with Results](#working-with-results)
 10. [Filtering and Composing Connector Bundles](#filtering-and-composing-connector-bundles)
 11. [Common Patterns](#common-patterns)
+12. [MCP Server (Coding Agent Integration)](#mcp-server-coding-agent-integration)
 
 ---
 
@@ -630,3 +631,30 @@ When an optional env var is absent, the corresponding connector is excluded from
 if "eodhd_fetch" in [c.name for c in connectors]:
     result = await connectors["eodhd_fetch"]({"symbol": "AAPL.US", "period": "d"})
 ```
+
+---
+
+## MCP Server (Coding Agent Integration)
+
+ockham includes an MCP server that exposes search and discovery connectors as native tools for coding agents (Claude Code, Cursor, Windsurf). The agent can search for data directly, then fetch and analyze it via code execution.
+
+```bash
+pip install -e ".[mcp]"
+```
+
+```json
+{
+  "mcpServers": {
+    "ockham": {
+      "command": "python3",
+      "args": ["-m", "ockham.mcp"],
+      "env": {
+        "FRED_API_KEY": "your-key",
+        "FMP_API_KEY": "your-key"
+      }
+    }
+  }
+}
+```
+
+See [docs/mcp-setup.md](mcp-setup.md) for full configuration, environment variables, and how to expose new connectors as MCP tools.

@@ -88,6 +88,8 @@ __all__ = [
     "normalize_code",
     "normalize_series_catalog_row",
     "series_match_from_entry",
+    # Convenience
+    "client",
 ]
 
 
@@ -154,4 +156,10 @@ def __getattr__(name: str) -> Any:
         from ockham.catalog.catalog import build_embedding_text
 
         return build_embedding_text
+    # Convenience: `from ockham import client` builds a ready-to-use Connectors
+    # collection with API keys from environment variables.
+    if name == "client":
+        from ockham.connectors import build_connectors_from_env
+
+        return build_connectors_from_env()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

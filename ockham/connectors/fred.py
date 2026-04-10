@@ -117,7 +117,7 @@ def _make_http(api_key: str) -> HttpClient:
 # ---------------------------------------------------------------------------
 
 
-@connector(tags=["macro"])
+@connector(tags=["macro", "tool"])
 async def fred_search(params: FredSearchParams, *, api_key: str) -> Result:
     """Keyword search for FRED economic time series.
 

@@ -401,7 +401,7 @@ def _get_filing_by_accession(accession_number: str) -> Any:
 # ---------------------------------------------------------------------------
 
 
-@connector(output=FIND_COMPANY_OUTPUT, tags=["sec_edgar"])
+@connector(output=FIND_COMPANY_OUTPUT, tags=["sec_edgar", "tool"])
 async def sec_edgar_find_company(params: SecEdgarFindCompanyParams) -> Result:
     """Search SEC EDGAR for companies by name, ticker symbol, or CIK number.
 
@@ -429,7 +429,7 @@ async def sec_edgar_find_company(params: SecEdgarFindCompanyParams) -> Result:
     )
 
 
-@connector(tags=["sec_edgar"])
+@connector(tags=["sec_edgar", "tool"])
 async def sec_edgar_company_profile(params: SecEdgarCompanyProfileParams) -> Result:
     """Retrieve a company's SEC EDGAR profile: name, CIK, ticker, industry, SIC code, and fiscal year end.
 
@@ -493,7 +493,7 @@ async def sec_edgar_cashflow_statement(params: SecEdgarFinancialStatementParams)
     )
 
 
-@connector(output=SEARCH_FILINGS_OUTPUT, tags=["sec_edgar"])
+@connector(output=SEARCH_FILINGS_OUTPUT, tags=["sec_edgar", "tool"])
 async def sec_edgar_search_filings(params: SecEdgarSearchFilingsParams) -> Result:
     """Full-text search across all SEC EDGAR filings.
 

@@ -12,7 +12,7 @@ This script is self-contained (in-memory catalog store, no API keys). It shows:
    :class:`~ockham.result.SemanticTableResult` (same raw columns, semantic roles applied).
 3. **Late schema** — :meth:`~ockham.result.Result.to_table` on a raw
    :class:`~ockham.result.Result` (equivalent to connector ``output=`` for tabular data).
-4. **Catalog** — :meth:`~ockham.catalog.catalog.SeriesCatalog.index_result` reads
+4. **Catalog** — :meth:`~ockham.catalog.catalog.Catalog.index_result` reads
    ``namespace`` from the KEY column; use ``embed=False`` without an embedding provider.
 5. **Post-fetch hook** — :meth:`~ockham.connector.Connector.with_callback` or
    :meth:`~ockham.connector.Connectors.with_callback` to auto-index
@@ -30,10 +30,10 @@ import asyncio
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from ockham.catalog.catalog import SeriesCatalog
+from ockham.catalog.catalog import Catalog
 from ockham.connector import Connector, Connectors, connector
 from ockham.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
-from ockham.stores.memory import InMemoryCatalogStore
+from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
 # ---------------------------------------------------------------------------
 # Shared demo identity: KEY column must declare namespace for catalog indexing.
@@ -131,8 +131,8 @@ async def _section_raw_vs_typed() -> None:
 
 
 async def _section_catalog_and_callbacks() -> None:
-    store = InMemoryCatalogStore()
-    catalog = SeriesCatalog(store, embeddings=None)
+    store = SQLiteCatalogStore(":memory:")
+    catalog = Catalog(store, embeddings=None)
 
     typed_conn: Connector = demo_fetch_typed
 
@@ -152,8 +152,8 @@ async def _section_catalog_and_callbacks() -> None:
     )
 
     print("\n--- 6) extra_tags on ingest (fresh store so rows are not skipped) ---\n")
-    store_tagged = InMemoryCatalogStore()
-    catalog_tagged = SeriesCatalog(store_tagged, embeddings=None)
+    store_tagged = SQLiteCatalogStore(":memory:")
+    catalog_tagged = Catalog(store_tagged, embeddings=None)
     tagged = await catalog_tagged.index_result(
         table,
         embed=False,
@@ -165,8 +165,8 @@ async def _section_catalog_and_callbacks() -> None:
     print(f"  sample tags on entry: {got.tags}")
 
     print("\n--- 7) with_callback: auto-index after fetch ---\n")
-    store2 = InMemoryCatalogStore()
-    catalog2 = SeriesCatalog(store2, embeddings=None)
+    store2 = SQLiteCatalogStore(":memory:")
+    catalog2 = Catalog(store2, embeddings=None)
 
     async def auto_index(result: Result) -> None:
         if isinstance(result, SemanticTableResult):
@@ -178,8 +178,8 @@ async def _section_catalog_and_callbacks() -> None:
     print(f"  after callback: total={total2}, codes={[e.code for e in listed2]}")
 
     print("\n--- 8) Connectors.with_callback on a collection ---\n")
-    store3 = InMemoryCatalogStore()
-    catalog3 = SeriesCatalog(store3, embeddings=None)
+    store3 = SQLiteCatalogStore(":memory:")
+    catalog3 = Catalog(store3, embeddings=None)
 
     async def auto_index3(result: Result) -> None:
         if isinstance(result, SemanticTableResult):

@@ -1,0 +1,29 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like?
+      description: Describe the feature and why it would be useful.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Core framework (Connector, Result, OutputConfig)
+        - Catalog (indexing, search, embeddings)
+        - Existing connector improvement
+        - Documentation
+        - Testing
+        - Other

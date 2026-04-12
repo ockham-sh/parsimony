@@ -20,14 +20,17 @@ dependencies = [
     "pandas>=2.3.0,<3",
     "pyarrow>=18.0.0",
     "httpx>=0.28.1",
+    "platformdirs>=4.0.0,<5",
 ]
 
 [project.optional-dependencies]
 sdmx = ["sdmx1>=2.23.1,<3"]
 embeddings = ["litellm>=1.59.0,<2"]
+vec = ["sqlite-vec>=0.1.6"]
 sec = ["edgartools>=4.0.0"]
 financial-reports = ["financial-reports-generated-client>=0.1.0"]
-all = ["ockham[sdmx,embeddings,sec,financial-reports]"]
+mcp = ["mcp>=1.0.0", "tabulate>=0.9.0"]
+all = ["ockham[sdmx,embeddings,vec,sec,financial-reports,mcp]"]
 docs = ["mkdocs-material"]
 
 [project.urls]
@@ -56,3 +59,6 @@ build-backend = "hatchling.build"
 addopts = "--import-mode=importlib"
 asyncio_mode = "auto"
 pythonpath = ["."]
+markers = [
+    "integration: hits live APIs (may be slow, requires env vars)",
+]

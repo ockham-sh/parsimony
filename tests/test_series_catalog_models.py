@@ -11,7 +11,7 @@ from ockham.catalog.models import (
     normalize_entity_code,
     normalize_series_catalog_row,
 )
-from ockham.catalog.series_pipeline import build_embedding_text
+from ockham.catalog.catalog import build_embedding_text
 
 
 def test_normalize_code_accepts_snake_case() -> None:

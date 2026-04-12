@@ -5,7 +5,6 @@
 | Package | Version | Supported |
 |---------|---------|-----------|
 | ockham | 0.1.x | Yes |
-| ockham-agents | 0.1.x | Yes |
 
 ## Reporting a Vulnerability
 
@@ -28,8 +27,7 @@ We will coordinate with you on disclosure timing. We follow responsible disclosu
 
 ## Scope
 
-This policy covers the open-source packages:
+This policy covers the open-source package:
 - `ockham`
-- `ockham-agents`
 
 For vulnerabilities in the hosted product (ockhamterminal.com), please also email security@ockham.sh.

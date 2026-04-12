@@ -1,4 +1,4 @@
-"""Tests for SeriesCatalog indexing, namespace connectors, and SDMX key enumeration."""
+"""Tests for Catalog indexing, namespace connectors, and SDMX key enumeration."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from ockham.catalog.catalog import SeriesCatalog, _entries_from_table_result
-from ockham.catalog.embeddings import EmbeddingProvider
+from ockham.catalog.catalog import Catalog, _entries_from_table_result
 from ockham.catalog.models import (
+    EmbeddingProvider,
     IndexResult,
     SeriesEntry,
     SeriesMatch,
@@ -19,7 +19,7 @@ from ockham.catalog.models import (
     code_token,
     normalize_code,
 )
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 from ockham.connector import Connectors, enumerator
 from ockham.connectors.sdmx import institution_source_from_dataset_key
 from ockham.result import (
@@ -100,6 +100,7 @@ class _RecordingStore(CatalogStore):
         limit: int,
         *,
         namespaces: builtins.list[str] | None = None,
+        query_embedding: builtins.list[float] | None = None,
     ) -> builtins.list[SeriesMatch]:
         return []
 
@@ -116,50 +117,6 @@ class _RecordingStore(CatalogStore):
     ) -> tuple[builtins.list[SeriesEntry], int]:
         return [], 0
 
-    async def list_codes_missing_embedding(
-        self,
-        limit: int | None,
-        *,
-        only_keys: builtins.list[tuple[str, str]] | None = None,
-    ) -> builtins.list[tuple[str, str]]:
-        return []
-
-    async def update_embeddings(
-        self, updates: builtins.list[tuple[tuple[str, str], builtins.list[float]]]
-    ) -> None:
-        pass
-
-
-class _BackfillStore(_RecordingStore):
-    def __init__(self, rows: list[SeriesEntry]) -> None:
-        super().__init__()
-        self.rows = {catalog_key(r.namespace, r.code): r for r in rows}
-        self.embedding_updates: list[tuple[tuple[str, str], list[float]]] = []
-
-    async def get(self, namespace: str, code: str) -> SeriesEntry | None:
-        return self.rows.get(catalog_key(namespace, code))
-
-    async def list_codes_missing_embedding(
-        self,
-        limit: int | None,
-        *,
-        only_keys: list[tuple[str, str]] | None = None,
-    ) -> list[tuple[str, str]]:
-        keys = sorted(
-            [k for k, r in self.rows.items() if r.embedding is None],
-            key=lambda t: (t[0], t[1]),
-        )
-        if only_keys is not None:
-            only = {catalog_key(ns, c) for ns, c in only_keys}
-            keys = [k for k in keys if k in only]
-        if limit is None:
-            return keys
-        return keys[:limit]
-
-    async def update_embeddings(
-        self, updates: list[tuple[tuple[str, str], list[float]]]
-    ) -> None:
-        self.embedding_updates.extend(updates)
 
 
 
@@ -182,7 +139,7 @@ async def test_series_catalog_ingest_inserts_new_with_embeddings() -> None:
             title="GDP",
         )
     ]
-    catalog = SeriesCatalog(store, embeddings=emb)
+    catalog = Catalog(store, embeddings=emb)
     result = await catalog.ingest(entries, embed=True)
     assert isinstance(result, IndexResult)
     assert result.total == 1
@@ -201,7 +158,7 @@ async def test_series_catalog_ingest_inserts_new_with_embeddings() -> None:
 async def test_series_catalog_ingest_skips_existing_keys() -> None:
     store = _RecordingStore(existing={catalog_key("fred", "GDPC1")})
     emb = _FixedEmbeddings(dim=4)
-    catalog = SeriesCatalog(store, embeddings=emb)
+    catalog = Catalog(store, embeddings=emb)
     entries = [
         SeriesEntry(
             namespace="fred",
@@ -219,7 +176,7 @@ async def test_series_catalog_ingest_skips_existing_keys() -> None:
 async def test_series_catalog_ingest_force_upserts_existing_keys() -> None:
     store = _RecordingStore(existing={catalog_key("fred", "GDPC1")})
     emb = _FixedEmbeddings(dim=4)
-    catalog = SeriesCatalog(store, embeddings=emb)
+    catalog = Catalog(store, embeddings=emb)
     entries = [
         SeriesEntry(
             namespace="fred",
@@ -237,7 +194,7 @@ async def test_series_catalog_ingest_force_upserts_existing_keys() -> None:
 async def test_index_result_requires_key_namespace() -> None:
     """``index_result`` needs KEY column ``namespace=...`` in the schema."""
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=_FixedEmbeddings(dim=4))
+    catalog = Catalog(store, embeddings=_FixedEmbeddings(dim=4))
     df = pd.DataFrame({"k": ["x"], "t": ["T"]})
     table = SemanticTableResult(
         data=df,
@@ -270,7 +227,7 @@ def _dry_run_sample_table() -> SemanticTableResult:
 async def test_index_result_dry_run_matches_live_dedupe_counts() -> None:
     table = _dry_run_sample_table()
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     dry = await catalog.index_result(table, embed=False, dry_run=True)
     live = await catalog.index_result(table, embed=False)
     assert dry.total == live.total == 2
@@ -283,7 +240,7 @@ async def test_index_result_dry_run_matches_live_dedupe_counts() -> None:
 async def test_index_result_dry_run_after_ingest_skips_all() -> None:
     table = _dry_run_sample_table()
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     await catalog.index_result(table, embed=False)
     dry = await catalog.index_result(table, embed=False, dry_run=True)
     assert dry.total == 2
@@ -295,7 +252,7 @@ async def test_index_result_dry_run_after_ingest_skips_all() -> None:
 async def test_index_result_dry_run_force_counts_all_indexed() -> None:
     table = _dry_run_sample_table()
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     await catalog.index_result(table, embed=False)
     dry = await catalog.index_result(table, embed=False, dry_run=True, force=True)
     assert dry.total == 2
@@ -307,7 +264,7 @@ async def test_index_result_dry_run_force_counts_all_indexed() -> None:
 async def test_index_result_dry_run_does_not_upsert() -> None:
     table = _dry_run_sample_table()
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=None)
+    catalog = Catalog(store, embeddings=None)
     await catalog.index_result(table, embed=False, dry_run=True)
     assert store.upsert_batches == []
 
@@ -316,7 +273,7 @@ async def test_index_result_dry_run_does_not_upsert() -> None:
 async def test_series_catalog_ingest_without_embed() -> None:
     store = _RecordingStore()
     emb = _FixedEmbeddings(dim=4)
-    catalog = SeriesCatalog(store, embeddings=emb)
+    catalog = Catalog(store, embeddings=emb)
     entries = [SeriesEntry(namespace="fred", code="X", title="X")]
     result = await catalog.ingest(entries, embed=False)
     assert result.indexed == 1
@@ -342,7 +299,7 @@ async def test_index_result_as_callback() -> None:
         )
 
     store = _RecordingStore()
-    catalog = SeriesCatalog(store, embeddings=_FixedEmbeddings(dim=4))
+    catalog = Catalog(store, embeddings=_FixedEmbeddings(dim=4))
 
     wired = Connectors([fetch_multi.with_callback(catalog.index_result)])
     await wired["fetch_multi"](q="x")
@@ -426,20 +383,5 @@ async def test_fred_enumerate_entries_have_metadata(
     assert by_code["UNRATE"].metadata["units_short"] == "%"
 
 
-@pytest.mark.asyncio
-async def test_in_memory_list_codes_missing_embedding_namespace() -> None:
-    from ockham.stores.memory import InMemoryCatalogStore
-
-    store = InMemoryCatalogStore()
-    await store.upsert(
-        [
-            SeriesEntry(namespace="ns_a", code="x", title="a"),
-            SeriesEntry(namespace="ns_b", code="y", title="b"),
-        ]
-    )
-    all_missing = await store.list_codes_missing_embedding(None)
-    assert len(all_missing) == 2
-    filtered = await store.list_codes_missing_embedding(None, namespace="ns_a")
-    assert filtered == [("ns_a", "x")]
 
 

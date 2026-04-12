@@ -1,17 +1,17 @@
-"""Tests for namespace-scoped catalog search and list_namespaces on InMemoryCatalogStore."""
+"""Tests for namespace-scoped catalog search and list_namespaces."""
 
 from __future__ import annotations
 
 import pytest
 
-from ockham.catalog.catalog import SeriesCatalog
+from ockham.catalog.catalog import Catalog
 from ockham.catalog.models import SeriesEntry
-from ockham.stores.memory import InMemoryCatalogStore
+from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 @pytest.mark.asyncio
 async def test_list_namespaces_sorted_distinct() -> None:
-    store = InMemoryCatalogStore()
+    store = SQLiteCatalogStore(":memory:")
     await store.upsert(
         [
             SeriesEntry(namespace="b_ns", code="1", title="t"),
@@ -24,7 +24,7 @@ async def test_list_namespaces_sorted_distinct() -> None:
 
 @pytest.mark.asyncio
 async def test_search_filters_by_namespaces() -> None:
-    store = InMemoryCatalogStore()
+    store = SQLiteCatalogStore(":memory:")
     await store.upsert(
         [
             SeriesEntry(namespace="ns_a", code="X1", title="alpha match"),
@@ -42,14 +42,14 @@ async def test_search_filters_by_namespaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_series_catalog_search_passes_namespaces() -> None:
-    store = InMemoryCatalogStore()
+async def test_catalog_search_passes_namespaces() -> None:
+    store = SQLiteCatalogStore(":memory:")
     await store.upsert(
         [
             SeriesEntry(namespace="z", code="c", title="findme"),
         ]
     )
-    cat = SeriesCatalog(store, embeddings=None)
+    cat = Catalog(store, embeddings=None)
     hits = await cat.search("findme", limit=5, namespaces=["z"])
     assert len(hits) == 1
     assert hits[0].code == "c"
@@ -59,8 +59,8 @@ async def test_series_catalog_search_passes_namespaces() -> None:
 
 
 @pytest.mark.asyncio
-async def test_series_catalog_list_namespaces() -> None:
-    store = InMemoryCatalogStore()
+async def test_catalog_list_namespaces() -> None:
+    store = SQLiteCatalogStore(":memory:")
     await store.upsert([SeriesEntry(namespace="m", code="x", title="t")])
-    cat = SeriesCatalog(store, embeddings=None)
+    cat = Catalog(store, embeddings=None)
     assert await cat.list_namespaces() == ["m"]

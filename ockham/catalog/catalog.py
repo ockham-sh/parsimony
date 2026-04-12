@@ -1,25 +1,53 @@
-"""SeriesCatalog: search and bulk indexing over a catalog store."""
+"""Catalog: search, bulk indexing, optional embeddings, and lazy namespace population."""
 
 from __future__ import annotations
 
 import logging
+import os
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import platformdirs
 
-from ockham.catalog.embeddings import EmbeddingProvider
 from ockham.catalog.models import (
+    EmbeddingProvider,
     IndexResult,
     SeriesEntry,
     SeriesMatch,
     normalize_code,
     normalize_entity_code,
 )
-from ockham.catalog.series_pipeline import build_embedding_text
-from ockham.catalog.store import CatalogStore
 from ockham.result import ColumnRole, SemanticTableResult
+from ockham.stores.catalog_store import CatalogStore
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_DB_DIR = Path.home() / ".ockham"
+_CATALOG_REPO = os.environ.get("OCKHAM_CATALOG_REPO", "ockham-sh/catalogs")
+_CATALOG_BRANCH = os.environ.get("OCKHAM_CATALOG_BRANCH", "main")
+_CACHE_DIR = (
+    Path(os.environ["OCKHAM_CACHE_DIR"])
+    if os.environ.get("OCKHAM_CACHE_DIR")
+    else Path(platformdirs.user_cache_dir("ockham")) / "catalogs"
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def build_embedding_text(entry: SeriesEntry) -> str:
+    """Compose text embedded for semantic search."""
+    parts = [entry.title]
+    if entry.metadata:
+        meta_parts = [f"{k}: {v}" for k, v in entry.metadata.items() if v is not None]
+        if meta_parts:
+            parts.append(", ".join(meta_parts))
+    if entry.tags:
+        parts.append(f"tags: {', '.join(entry.tags)}")
+    return " | ".join(parts)
 
 
 async def _embed_batch(
@@ -46,7 +74,7 @@ def _entries_from_table_result(
     *,
     extra_tags: list[str] | None = None,
 ) -> list[SeriesEntry]:
-    """Build :class:`SeriesEntry` rows from a :class:`SemanticTableResult` (catalog-local extraction).
+    """Build :class:`SeriesEntry` rows from a :class:`SemanticTableResult`.
 
     Namespace is read from the KEY column's :attr:`~ockham.result.Column.namespace`.
     """
@@ -128,12 +156,41 @@ def _entries_from_table_result(
     return entries
 
 
-class SeriesCatalog:
-    """Catalog service: search and bulk indexing.
+# ---------------------------------------------------------------------------
+# Lazy namespace helpers
+# ---------------------------------------------------------------------------
 
-    Composes a :class:`CatalogStore` and optional :class:`EmbeddingProvider` for
-    vector embeddings on ingest. :meth:`search` delegates to the store (implementation-defined).
-    Bulk loading uses :meth:`ingest` with a flat list of :class:`SeriesEntry` rows.
+
+def _find_enumerator(connectors: object, namespace: str) -> object | None:
+    """Find an ``@enumerator`` whose KEY column declares *namespace*."""
+    for conn in connectors:  # type: ignore[union-attr]
+        oc = conn.output_config
+        if oc is None:
+            continue
+        roles = {c.role for c in oc.columns}
+        if ColumnRole.DATA in roles:
+            continue
+        if ColumnRole.TITLE not in roles:
+            continue
+        for col in oc.columns:
+            if col.role == ColumnRole.KEY and col.namespace == namespace:
+                return conn
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Catalog
+# ---------------------------------------------------------------------------
+
+
+class Catalog:
+    """Catalog service: search, bulk indexing, optional embeddings, and lazy loading.
+
+    Composes a :class:`CatalogStore` and optional :class:`EmbeddingProvider`.
+
+    When *connectors* is provided, :meth:`search` auto-populates requested
+    namespaces from pre-built catalogs on GitHub or live enumerators before
+    querying.
     """
 
     def __init__(
@@ -141,9 +198,53 @@ class SeriesCatalog:
         store: CatalogStore,
         *,
         embeddings: EmbeddingProvider | None = None,
+        connectors: object | None = None,
+        catalog_repo: str = _CATALOG_REPO,
+        catalog_branch: str = _CATALOG_BRANCH,
     ) -> None:
         self._store = store
         self._embeddings = embeddings
+        self._connectors = connectors
+        self._catalog_repo = catalog_repo
+        self._catalog_branch = catalog_branch
+        self._populated: set[str] = set()
+
+    @property
+    def store(self) -> CatalogStore:
+        """The underlying catalog store."""
+        return self._store
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    async def search(
+        self,
+        query: str,
+        limit: int = 10,
+        *,
+        namespaces: list[str] | None = None,
+    ) -> list[SeriesMatch]:
+        """Search the catalog.
+
+        When connectors are configured, auto-populates requested namespaces.
+        When an embedding provider is configured, embeds the query for hybrid search.
+        """
+        if namespaces:
+            for ns in namespaces:
+                await self._ensure_namespace(ns)
+
+        query_embedding: list[float] | None = None
+        if self._embeddings is not None:
+            query_embedding = await self._embeddings.embed_query(query)
+
+        return await self._store.search(
+            query, limit, namespaces=namespaces, query_embedding=query_embedding
+        )
+
+    # ------------------------------------------------------------------
+    # Indexing
+    # ------------------------------------------------------------------
 
     async def index_result(
         self,
@@ -155,19 +256,7 @@ class SeriesCatalog:
         dry_run: bool = False,
         force: bool = False,
     ) -> IndexResult:
-        """Extract catalog rows from *table* and :meth:`ingest` them.
-
-        The catalog namespace is taken from the KEY column's ``namespace=...`` in
-        :attr:`SemanticTableResult.output_schema`. Use ``conn.with_callback(catalog.index_result)``
-        for auto-indexing after fetch.
-
-        With ``dry_run=True``, counts mirror live :meth:`ingest` dedupe (``indexed`` /
-        ``skipped``) using :meth:`~ockham.catalog.store.CatalogStore.exists`;
-        no rows are written and embeddings are not computed.
-
-        With ``force=True``, dedupe is skipped: every extracted row is counted as
-        ``indexed`` and passed to the store upsert (updates existing keys).
-        """
+        """Extract catalog rows from *table* and :meth:`ingest` them."""
         entries = _entries_from_table_result(table, extra_tags=extra_tags)
         if dry_run:
             return await self._preview_ingest(
@@ -177,46 +266,6 @@ class SeriesCatalog:
             entries, embed=embed, batch_size=batch_size, force=force
         )
 
-    async def _preview_ingest(
-        self,
-        entries: list[SeriesEntry],
-        *,
-        batch_size: int,
-        force: bool = False,
-    ) -> IndexResult:
-        """Count rows that would be inserted vs skipped, mirroring :meth:`ingest` dedupe logic.
-
-        No store writes and no embedding calls.
-        """
-        result = IndexResult()
-        result.total = len(entries)
-        if not entries:
-            return result
-        for start in range(0, len(entries), batch_size):
-            batch = entries[start : start + batch_size]
-            if force:
-                result.indexed += len(batch)
-                continue
-            keys = [(e.namespace, e.code) for e in batch]
-            existing = await self._store.exists(keys)
-            to_insert = [e for e in batch if (e.namespace, e.code) not in existing]
-            result.skipped += len(batch) - len(to_insert)
-            result.indexed += len(to_insert)
-        return result
-
-    async def search(
-        self,
-        query: str,
-        limit: int = 10,
-        *,
-        namespaces: list[str] | None = None,
-    ) -> list[SeriesMatch]:
-        """Search the catalog; behavior depends on :class:`CatalogStore` implementation."""
-        return await self._store.search(query, limit, namespaces=namespaces)
-
-    async def list_namespaces(self) -> list[str]:
-        return await self._store.list_namespaces()
-
     async def ingest(
         self,
         entries: list[SeriesEntry],
@@ -225,21 +274,17 @@ class SeriesCatalog:
         batch_size: int = 100,
         force: bool = False,
     ) -> IndexResult:
-        """Dedupe, optionally embed, and upsert entries in batches of ``batch_size``.
-
-        When ``force`` is true, skip existence checks and upsert every entry (overwrites).
-        """
+        """Dedupe, optionally embed, and upsert entries in batches."""
         if embed and self._embeddings is None:
             raise RuntimeError(
                 "ingest(embed=True) requires an EmbeddingProvider; "
-                "pass embeddings=... to SeriesCatalog, or use embed=False."
+                "pass embeddings=... to Catalog, or use embed=False."
             )
         result = IndexResult()
         result.total = len(entries)
         if not entries:
             return result
 
-        # Process in chunks for embedding batching and store throughput
         for start in range(0, len(entries), batch_size):
             batch = entries[start : start + batch_size]
             if force:
@@ -264,6 +309,62 @@ class SeriesCatalog:
                 result.errors += len(to_insert)
         return result
 
+    async def _preview_ingest(
+        self,
+        entries: list[SeriesEntry],
+        *,
+        batch_size: int,
+        force: bool = False,
+    ) -> IndexResult:
+        """Count rows that would be inserted vs skipped (no writes, no embedding)."""
+        result = IndexResult()
+        result.total = len(entries)
+        if not entries:
+            return result
+        for start in range(0, len(entries), batch_size):
+            batch = entries[start : start + batch_size]
+            if force:
+                result.indexed += len(batch)
+                continue
+            keys = [(e.namespace, e.code) for e in batch]
+            existing = await self._store.exists(keys)
+            to_insert = [e for e in batch if (e.namespace, e.code) not in existing]
+            result.skipped += len(batch) - len(to_insert)
+            result.indexed += len(to_insert)
+        return result
+
+    # ------------------------------------------------------------------
+    # Embeddings
+    # ------------------------------------------------------------------
+
+    async def embed_pending(
+        self,
+        limit: int | None = None,
+        *,
+        namespace: str | None = None,
+    ) -> int:
+        """Backfill embeddings for entries that don't have them."""
+        if self._embeddings is None:
+            raise RuntimeError(
+                "embed_pending requires an EmbeddingProvider; "
+                "pass embeddings=... to Catalog."
+            )
+        lim = limit if limit is not None else 10_000
+        entries, _ = await self._store.list(namespace=namespace, limit=lim)
+        missing = [e for e in entries if e.embedding is None]
+        if not missing:
+            return 0
+        embedded = await _embed_batch(self._embeddings, missing)
+        await self._store.upsert(embedded)
+        return len(embedded)
+
+    # ------------------------------------------------------------------
+    # CRUD pass-throughs
+    # ------------------------------------------------------------------
+
+    async def list_namespaces(self) -> list[str]:
+        return await self._store.list_namespaces()
+
     async def list_entries(
         self,
         *,
@@ -285,46 +386,114 @@ class SeriesCatalog:
     async def upsert_entries(self, entries: list[SeriesEntry]) -> None:
         await self._store.upsert(entries)
 
-    async def codes_missing_embedding(
-        self,
-        limit: int | None,
-        *,
-        only_keys: list[tuple[str, str]] | None = None,
-    ) -> list[tuple[str, str]]:
-        return await self._store.list_codes_missing_embedding(
-            limit, only_keys=only_keys
-        )
+    # ------------------------------------------------------------------
+    # Lazy namespace population
+    # ------------------------------------------------------------------
 
-    async def embed_pending(
-        self,
-        limit: int | None = None,
-        *,
-        only_keys: list[tuple[str, str]] | None = None,
-    ) -> int:
-        if self._embeddings is None:
-            raise RuntimeError(
-                "embed_pending requires an EmbeddingProvider; "
-                "pass embeddings=... to SeriesCatalog."
-            )
-        keys = await self._store.list_codes_missing_embedding(
-            limit, only_keys=only_keys
+    async def _ensure_namespace(self, namespace: str) -> None:
+        """Populate *namespace* if not already in the local catalog."""
+        if namespace in self._populated:
+            return
+
+        existing = await self._store.list_namespaces()
+        if namespace in existing:
+            self._populated.add(namespace)
+            return
+
+        if await self._try_github_download(namespace):
+            self._populated.add(namespace)
+            return
+
+        if await self._try_enumerate(namespace):
+            self._populated.add(namespace)
+            return
+
+        self._populated.add(namespace)  # Don't retry
+        logger.debug("Namespace %r not available from GitHub or enumerator", namespace)
+
+    async def _try_github_download(self, namespace: str) -> bool:
+        """Download pre-built catalog.db from GitHub and merge."""
+        import asyncio
+
+        import httpx
+
+        cache_path = _CACHE_DIR / namespace / "catalog.db"
+
+        if cache_path.exists():
+            self._merge_remote_db(str(cache_path))
+            return True
+
+        url = (
+            f"https://raw.githubusercontent.com/"
+            f"{self._catalog_repo}/{self._catalog_branch}/"
+            f"{namespace}/catalog.db"
         )
-        if not keys:
-            return 0
-        rows: list[SeriesEntry] = []
-        for ns, c in keys:
-            row = await self._store.get(ns, c)
-            if row is None or row.embedding is not None:
-                continue
-            rows.append(row)
-        if not rows:
-            return 0
-        embedded = await _embed_batch(self._embeddings, rows)
-        updates: list[tuple[tuple[str, str], list[float]]] = []
-        for e in embedded:
-            vec = e.embedding
-            if vec is None:
-                raise ValueError("embed_pending: _embed_batch must set embedding on each entry")
-            updates.append(((e.namespace, e.code), vec))
-        await self._store.update_embeddings(updates)
-        return len(updates)
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = cache_path.with_suffix(".tmp")
+
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
+                resp = await client.get(url)
+                if resp.status_code == 404:
+                    logger.debug("No catalog on GitHub for %s", namespace)
+                    return False
+                resp.raise_for_status()
+
+            await asyncio.to_thread(tmp_path.write_bytes, resp.content)
+            tmp_path.rename(cache_path)
+
+            self._merge_remote_db(str(cache_path))
+            logger.info("Downloaded %s catalog from GitHub", namespace)
+            return True
+        except Exception as exc:
+            logger.debug("GitHub download failed for %s: %s", namespace, exc)
+            return False
+
+    def _merge_remote_db(self, remote_path: str) -> None:
+        """ATTACH a remote SQLite catalog and INSERT its rows.
+
+        Uses SQLiteCatalogStore internals for efficiency.
+        """
+        from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+
+        if isinstance(self._store, SQLiteCatalogStore):
+            conn = self._store._get_conn()
+            conn.execute(f'ATTACH DATABASE "{remote_path}" AS remote')
+            try:
+                conn.execute(
+                    "INSERT OR REPLACE INTO series_catalog SELECT * FROM remote.series_catalog"
+                )
+                conn.commit()
+            finally:
+                conn.execute("DETACH DATABASE remote")
+        else:
+            logger.warning(
+                "Remote catalog merge not yet supported for %s stores",
+                type(self._store).__name__,
+            )
+
+    async def _try_enumerate(self, namespace: str) -> bool:
+        """Find and run the enumerator for *namespace* from the connectors."""
+        if self._connectors is None:
+            return False
+        enumerator = _find_enumerator(self._connectors, namespace)
+        if enumerator is None:
+            return False
+
+        try:
+            params = enumerator.param_type() if enumerator.param_type else None  # type: ignore[union-attr]
+            result = await enumerator(params)  # type: ignore[misc]
+            entries = _entries_from_table_result(result)
+            if not entries:
+                return False
+            idx = await self.ingest(entries, embed=False, force=True)
+            logger.info("Enumerated %s: %d entries", namespace, idx.indexed)
+            return idx.indexed > 0
+        except Exception as exc:
+            logger.warning("Enumerator failed for %s: %s", namespace, exc)
+            return False
+
+    async def close(self) -> None:
+        """Close the underlying store if it supports closing."""
+        if hasattr(self._store, "close"):
+            await self._store.close()

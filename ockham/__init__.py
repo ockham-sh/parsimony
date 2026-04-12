@@ -18,11 +18,11 @@ optional stacks use lazy loading via :func:`__getattr__` to keep core imports li
 * :func:`~ockham.connector.loader` builds the same :class:`~ockham.connector.Connector`
   type with a data-oriented schema (KEY with ``namespace=...`` and DATA columns only; no TITLE/METADATA).
   :class:`~ockham.data_store.DataStore` persists observations via :meth:`~ockham.data_store.DataStore.load_result`.
-* :class:`~ockham.catalog.SeriesCatalog` orchestrates store and optional
-  embeddings for indexing (:meth:`~ockham.catalog.catalog.SeriesCatalog.ingest`).
+* :class:`~ockham.catalog.catalog.Catalog` orchestrates store and optional
+  embeddings for indexing (:meth:`~ockham.catalog.catalog.Catalog.ingest`).
   :meth:`~ockham.catalog.store.CatalogStore.search` is implementation-defined on the store.
   Catalog identity is ``(namespace, code)``; ``code`` is the connector-native identifier for that namespace.
-  :meth:`~ockham.catalog.catalog.SeriesCatalog.index_result` builds :class:`SeriesEntry` rows from a
+  :meth:`~ockham.catalog.catalog.Catalog.index_result` builds :class:`SeriesEntry` rows from a
   :class:`~ockham.result.SemanticTableResult`. The catalog namespace comes from ``namespace=...`` on the
   KEY column in :class:`~ockham.result.OutputConfig`. Use ``conn.with_callback(catalog.index_result)``
   for auto-indexing after fetch.
@@ -36,8 +36,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ockham.catalog.embeddings import EmbeddingProvider
 from ockham.catalog.models import (
+    EmbeddingProvider,
     IndexResult,
     SeriesEntry,
     SeriesMatch,
@@ -45,8 +45,7 @@ from ockham.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from ockham.catalog.series_pipeline import build_embedding_text
-from ockham.catalog.store import CatalogStore
+from ockham.stores.catalog_store import CatalogStore
 from ockham.result import (
     Column,
     ColumnRole,
@@ -73,13 +72,13 @@ __all__ = [
     "Result",
     "SemanticTableResult",
     # Catalog
+    "Catalog",
     "CatalogStore",
     "EmbeddingProvider",
     "IndexResult",
-    "SeriesCatalog",
     "SeriesEntry",
     "SeriesMatch",
-    "InMemoryCatalogStore",
+    "SQLiteCatalogStore",
     "InMemoryDataStore",
     "DataStore",
     "LoadResult",
@@ -89,6 +88,8 @@ __all__ = [
     "normalize_code",
     "normalize_series_catalog_row",
     "series_match_from_entry",
+    # Convenience
+    "client",
 ]
 
 
@@ -123,32 +124,42 @@ def __getattr__(name: str) -> Any:
 
         return Namespace
     # Catalog
-    if name == "SeriesCatalog":
-        from ockham.catalog.catalog import SeriesCatalog
+    if name == "Catalog":
+        from ockham.catalog.catalog import Catalog
 
-        return SeriesCatalog
+        return Catalog
     if name == "LiteLLMEmbeddingProvider":
         from ockham.embeddings.litellm import LiteLLMEmbeddingProvider
 
         return LiteLLMEmbeddingProvider
-    if name == "InMemoryCatalogStore":
-        from ockham.stores.memory import InMemoryCatalogStore
+    if name == "SQLiteCatalogStore":
+        from ockham.stores.sqlite_catalog import SQLiteCatalogStore
 
-        return InMemoryCatalogStore
+        return SQLiteCatalogStore
     if name == "InMemoryDataStore":
         from ockham.stores.memory_data import InMemoryDataStore
 
         return InMemoryDataStore
     if name == "DataStore":
-        from ockham.data_store import DataStore
+        from ockham.stores.data_store import DataStore
 
         return DataStore
     if name == "LoadResult":
-        from ockham.data_store import LoadResult
+        from ockham.stores.data_store import LoadResult
 
         return LoadResult
     if name == "code_token":
         from ockham.catalog.models import code_token
 
         return code_token
+    if name == "build_embedding_text":
+        from ockham.catalog.catalog import build_embedding_text
+
+        return build_embedding_text
+    # Convenience: `from ockham import client` builds a ready-to-use Connectors
+    # collection with API keys from environment variables.
+    if name == "client":
+        from ockham.connectors import build_connectors_from_env
+
+        return build_connectors_from_env()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

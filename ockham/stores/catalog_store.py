@@ -37,11 +37,16 @@ class CatalogStore(ABC):
         limit: int,
         *,
         namespaces: builtins.list[str] | None = None,
+        query_embedding: builtins.list[float] | None = None,
     ) -> builtins.list[SeriesMatch]:
         """Search the catalog by natural-language query.
 
         When *namespaces* is set, restrict results to those namespace strings
         (after normalization). When ``None``, search all namespaces.
+
+        When *query_embedding* is provided, implementations may use it for
+        vector/hybrid search. Implementations that don't support vector search
+        should ignore it gracefully.
         """
         ...
 
@@ -60,22 +65,4 @@ class CatalogStore(ABC):
         offset: int = 0,
     ) -> tuple[builtins.list[SeriesEntry], int]:
         """Return (entries, total_count) for pagination. Optional substring q on title/code."""
-        ...
-
-    @abstractmethod
-    async def list_codes_missing_embedding(
-        self,
-        limit: int | None,
-        *,
-        only_keys: builtins.list[tuple[str, str]] | None = None,
-        namespace: str | None = None,
-    ) -> builtins.list[tuple[str, str]]:
-        """(namespace, code) pairs where embedding is null, for backfill."""
-        ...
-
-    @abstractmethod
-    async def update_embeddings(
-        self, updates: builtins.list[tuple[tuple[str, str], builtins.list[float]]]
-    ) -> None:
-        """Set embedding per (namespace, code)."""
         ...

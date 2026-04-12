@@ -1,0 +1,63 @@
+name: Bug Report
+description: Report a bug in ockham
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: connector
+    attributes:
+      label: Connector
+      description: Which connector is affected?
+      options:
+        - Core framework
+        - FRED
+        - SDMX
+        - FMP
+        - FMP Screener
+        - SEC Edgar
+        - Polymarket
+        - EODHD
+        - IBKR
+        - Financial Reports
+        - Custom connector
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Minimal code to trigger the error.
+      render: python
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error message
+      description: Full stack trace if available.
+      render: text
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      placeholder: "3.11"
+
+  - type: input
+    id: ockham-version
+    attributes:
+      label: ockham version
+      placeholder: "0.1.0"
+
+  - type: input
+    id: extras
+    attributes:
+      label: Installed extras
+      placeholder: "sdmx, embeddings"

@@ -5,13 +5,13 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from ockham.catalog.models import (
+from parsimony.catalog.models import (
     SeriesEntry,
     normalize_code,
     normalize_entity_code,
     normalize_series_catalog_row,
 )
-from ockham.catalog.catalog import build_embedding_text
+from parsimony.catalog.catalog import build_embedding_text
 
 
 def test_normalize_code_accepts_snake_case() -> None:

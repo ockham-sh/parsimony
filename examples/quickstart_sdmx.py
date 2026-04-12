@@ -1,7 +1,7 @@
 """Quickstart: Fetch ECB EUR/USD exchange rate via SDMX (no API key required).
 
 Setup:
-    pip install ockham[sdmx]
+    pip install parsimony[sdmx]
 
 Expected output:
     A DataFrame of daily EUR/USD exchange rate observations with columns
@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 
-from ockham.connectors.sdmx import sdmx_fetch
+from parsimony.connectors.sdmx import sdmx_fetch
 
 
 async def main() -> None:

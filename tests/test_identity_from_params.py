@@ -7,9 +7,9 @@ from typing import Annotated
 import pytest
 from pydantic import BaseModel
 
-from ockham.catalog.identity_from_params import first_namespace_field, identity_from_params
-from ockham.connector import Namespace
-from ockham.connectors.fred import FredFetchParams
+from parsimony.catalog.identity_from_params import first_namespace_field, identity_from_params
+from parsimony.connector import Namespace
+from parsimony.connectors.fred import FredFetchParams
 
 
 class NoNsParams(BaseModel):

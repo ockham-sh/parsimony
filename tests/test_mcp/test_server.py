@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from mcp.server.lowlevel.server import Server
 
-from ockham.mcp.server import create_server
+from parsimony.mcp.server import create_server
 
 
 @pytest.fixture()
@@ -27,8 +27,8 @@ class TestServerListTools:
 
 
 class TestServerInstructions:
-    def test_instructions_contain_ockham(self, mcp_server):
-        assert "Ockham" in mcp_server.instructions
+    def test_instructions_contain_parsimony(self, mcp_server):
+        assert "parsimony" in mcp_server.instructions.lower()
 
     def test_instructions_contain_workflow(self, mcp_server):
         assert "search" in mcp_server.instructions.lower()

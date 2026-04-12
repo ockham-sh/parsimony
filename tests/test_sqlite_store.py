@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from ockham.catalog.models import SeriesEntry, catalog_key
-from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+from parsimony.catalog.models import SeriesEntry, catalog_key
+from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 @pytest.fixture

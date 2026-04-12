@@ -6,7 +6,7 @@ Demonstrates:
 3. Composing the custom connector into a Connectors bundle alongside FRED.
 
 Setup:
-    pip install ockham
+    pip install parsimony
     export FRED_API_KEY="your-key-here"
 
 Expected output:
@@ -25,8 +25,8 @@ import os
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from ockham import Column, ColumnRole, Connectors, OutputConfig, connector
-from ockham.connectors.fred import fred_fetch
+from parsimony import Column, ColumnRole, Connectors, OutputConfig, connector
+from parsimony.connectors.fred import fred_fetch
 
 CUSTOM_OUTPUT = OutputConfig(
     columns=[

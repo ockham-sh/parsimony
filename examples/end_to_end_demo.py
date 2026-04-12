@@ -2,21 +2,21 @@
 
 Run from the repo root::
 
-    poetry run python -m ockham.examples.end_to_end_demo
+    poetry run python -m parsimony.examples.end_to_end_demo
 
 This script is self-contained (in-memory catalog store, no API keys). It shows:
 
-1. **Raw tabular return** — DataFrame with no ``output=`` → :class:`~ockham.result.Result`
+1. **Raw tabular return** — DataFrame with no ``output=`` → :class:`~parsimony.result.Result`
    with ``output_schema is None``.
 2. **Declared schema on the connector** — ``@connector(output=OutputConfig(...))`` →
-   :class:`~ockham.result.SemanticTableResult` (same raw columns, semantic roles applied).
-3. **Late schema** — :meth:`~ockham.result.Result.to_table` on a raw
-   :class:`~ockham.result.Result` (equivalent to connector ``output=`` for tabular data).
-4. **Catalog** — :meth:`~ockham.catalog.catalog.Catalog.index_result` reads
+   :class:`~parsimony.result.SemanticTableResult` (same raw columns, semantic roles applied).
+3. **Late schema** — :meth:`~parsimony.result.Result.to_table` on a raw
+   :class:`~parsimony.result.Result` (equivalent to connector ``output=`` for tabular data).
+4. **Catalog** — :meth:`~parsimony.catalog.catalog.Catalog.index_result` reads
    ``namespace`` from the KEY column; use ``embed=False`` without an embedding provider.
-5. **Post-fetch hook** — :meth:`~ockham.connector.Connector.with_callback` or
-   :meth:`~ockham.connector.Connectors.with_callback` to auto-index
-   :class:`~ockham.result.SemanticTableResult` rows.
+5. **Post-fetch hook** — :meth:`~parsimony.connector.Connector.with_callback` or
+   :meth:`~parsimony.connector.Connectors.with_callback` to auto-index
+   :class:`~parsimony.result.SemanticTableResult` rows.
 6. **Dry run / tags** — ``dry_run=True`` previews dedupe counts (no writes); ``extra_tags`` on ingest.
 
 Unmapped DataFrame columns are merged as DATA when a schema is applied (connector ``output`` or
@@ -30,10 +30,10 @@ import asyncio
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from ockham.catalog.catalog import Catalog
-from ockham.connector import Connector, Connectors, connector
-from ockham.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
-from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+from parsimony.catalog.catalog import Catalog
+from parsimony.connector import Connector, Connectors, connector
+from parsimony.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
+from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 # ---------------------------------------------------------------------------
 # Shared demo identity: KEY column must declare namespace for catalog indexing.

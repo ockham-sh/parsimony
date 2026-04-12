@@ -11,7 +11,7 @@ _Fetch quarterly real GDP from FRED and render a line chart._
 ```python
 import asyncio
 import altair as alt
-from ockham.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.connectors.fred import fred_fetch, FredFetchParams
 
 async def main():
     conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -36,8 +36,8 @@ _Fetch the same exchange rate from two sources and merge for comparison._
 ```python
 import asyncio
 import pandas as pd
-from ockham.connectors.fred import fred_fetch, FredFetchParams
-from ockham.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
 
 async def main():
     fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -65,7 +65,7 @@ _Use FMP taxonomy and quotes to filter stocks by sector and PE ratio._
 
 ```python
 import asyncio
-from ockham.connectors.fmp import fmp_quotes, FmpSymbolsParams
+from parsimony.connectors.fmp import fmp_quotes, FmpSymbolsParams
 
 async def main():
     conn = fmp_quotes.bind_deps(api_key="YOUR_FMP_KEY")
@@ -90,8 +90,8 @@ _Enumerate a FRED release into an in-memory catalog and search it._
 
 ```python
 import asyncio
-from ockham import Catalog, SQLiteCatalogStore
-from ockham.connectors.fred import enumerate_fred_release, FredEnumerateParams
+from parsimony import Catalog, SQLiteCatalogStore
+from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
 
 async def main():
     catalog = Catalog(SQLiteCatalogStore(":memory:"))
@@ -114,7 +114,7 @@ _Pull income statement and balance sheet, then compute profit margin and debt-to
 
 ```python
 import asyncio
-from ockham.connectors.fmp import (
+from parsimony.connectors.fmp import (
     fmp_income_statements, fmp_balance_sheet_statements,
     FmpFinancialStatementParams,
 )
@@ -144,7 +144,7 @@ _Fetch a Polymarket event and list its market outcomes._
 
 ```python
 import asyncio
-from ockham.connectors.polymarket import POLYMARKET_GAMMA, PolymarketFetchParams
+from parsimony.connectors.polymarket import POLYMARKET_GAMMA, PolymarketFetchParams
 
 async def main():
     result = await POLYMARKET_GAMMA(PolymarketFetchParams(
@@ -168,8 +168,8 @@ _Combine FRED inflation and ECB interest rates into one DataFrame._
 ```python
 import asyncio
 import pandas as pd
-from ockham.connectors.fred import fred_fetch, FredFetchParams
-from ockham.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
 
 async def main():
     fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -197,8 +197,8 @@ _Fetch FRED data with OutputConfig, write to Parquet, and read it back with full
 
 ```python
 import asyncio
-from ockham.connectors.fred import fred_fetch, FredFetchParams
-from ockham.result import SemanticTableResult
+from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.result import SemanticTableResult
 
 async def main():
     conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -222,8 +222,8 @@ _Loop over several releases, index all into one catalog, then search across them
 
 ```python
 import asyncio
-from ockham import Catalog, SQLiteCatalogStore
-from ockham.connectors.fred import enumerate_fred_release, FredEnumerateParams
+from parsimony import Catalog, SQLiteCatalogStore
+from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
 
 RELEASES = {50: "Employment", 53: "GDP", 10: "CPI"}
 
@@ -251,7 +251,7 @@ _Full discovery workflow: list datasets, inspect DSD, find series keys, then fet
 
 ```python
 import asyncio
-from ockham.connectors.sdmx import (
+from parsimony.connectors.sdmx import (
     sdmx_list_datasets, sdmx_dsd, sdmx_series_keys, sdmx_fetch,
     SdmxListDatasetsParams, SdmxDsdParams, SdmxSeriesKeysParams, SdmxFetchParams,
 )

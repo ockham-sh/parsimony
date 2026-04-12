@@ -1,6 +1,6 @@
 # MCP Server Setup
 
-ockham includes an MCP (Model Context Protocol) server that exposes search and discovery connectors as native tools for coding agents like Claude Code, Cursor, and Windsurf.
+parsimony includes an MCP (Model Context Protocol) server that exposes search and discovery connectors as native tools for coding agents like Claude Code, Cursor, and Windsurf.
 
 ## Installation
 
@@ -12,7 +12,7 @@ This adds the `mcp` and `tabulate` dependencies.
 
 ## Configuration
 
-Add ockham to your agent's MCP server configuration.
+Add parsimony to your agent's MCP server configuration.
 
 ### Claude Code
 
@@ -21,10 +21,10 @@ Add to `~/.claude.json` under `mcpServers`:
 ```json
 {
   "mcpServers": {
-    "ockham": {
+    "parsimony": {
       "type": "stdio",
       "command": "python3",
-      "args": ["-m", "ockham.mcp"],
+      "args": ["-m", "parsimony.mcp"],
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"
@@ -41,9 +41,9 @@ Add to your MCP configuration file (typically `.cursor/mcp.json` or equivalent):
 ```json
 {
   "mcpServers": {
-    "ockham": {
+    "parsimony": {
       "command": "python3",
-      "args": ["-m", "ockham.mcp"],
+      "args": ["-m", "parsimony.mcp"],
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"
@@ -70,7 +70,7 @@ SDMX connectors (ECB, Eurostat, IMF, World Bank, BIS, OECD) and SEC Edgar requir
 
 ## What Gets Exposed
 
-The MCP server exposes connectors tagged `"tool"` — these are search and discovery connectors that return small, context-friendly results. Bulk data fetch connectors are not exposed as MCP tools; agents use them via code execution with `from ockham import client`.
+The MCP server exposes connectors tagged `"tool"` — these are search and discovery connectors that return small, context-friendly results. Bulk data fetch connectors are not exposed as MCP tools; agents use them via code execution with `from parsimony import client`.
 
 Currently exposed tools (~18):
 
@@ -82,7 +82,7 @@ Currently exposed tools (~18):
 
 ## How It Works
 
-The MCP server is a thin bridge between ockham's `Connectors` collection and the MCP protocol:
+The MCP server is a thin bridge between parsimony's `Connectors` collection and the MCP protocol:
 
 1. On startup, `build_connectors_from_env()` loads all connectors with available API keys
 2. Connectors tagged `"tool"` are filtered and registered as MCP tools
@@ -93,7 +93,7 @@ The MCP server is a thin bridge between ockham's `Connectors` collection and the
 
 ```bash
 # Test that the server starts
-python -m ockham.mcp
+python -m parsimony.mcp
 ```
 
 The server communicates over stdio — it won't produce visible output. Press Ctrl+C to stop.

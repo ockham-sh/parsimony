@@ -1,4 +1,4 @@
-"""Tests for :func:`ockham.connectors.build_fetch_connectors_from_env`."""
+"""Tests for :func:`parsimony.connectors.build_fetch_connectors_from_env`."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ def test_fetch_factory_excludes_discovery_and_screener() -> None:
         "FRED_API_KEY": "test",
         "FMP_API_KEY": "test",
     }
-    from ockham.connectors import build_fetch_connectors_from_env
+    from parsimony.connectors import build_fetch_connectors_from_env
 
     c = build_fetch_connectors_from_env(env=env)
     names = {x.name for x in c}

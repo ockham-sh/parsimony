@@ -4,7 +4,7 @@ Demonstrates Connectors composition with the + operator to build a unified
 bundle spanning multiple data providers.
 
 Setup:
-    pip install ockham[sdmx]
+    pip install parsimony[sdmx]
     export FRED_API_KEY="your-key-here"
 
 Expected output:
@@ -20,9 +20,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ockham import Connectors
-from ockham.connectors.fred import FETCH_CONNECTORS as FRED_FETCH
-from ockham.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX_FETCH
+from parsimony import Connectors
+from parsimony.connectors.fred import FETCH_CONNECTORS as FRED_FETCH
+from parsimony.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX_FETCH
 
 
 async def main() -> None:

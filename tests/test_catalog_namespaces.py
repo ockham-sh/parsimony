@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from ockham.catalog.catalog import Catalog
-from ockham.catalog.models import SeriesEntry
-from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+from parsimony.catalog.catalog import Catalog
+from parsimony.catalog.models import SeriesEntry
+from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 @pytest.mark.asyncio

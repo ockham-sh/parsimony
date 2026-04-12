@@ -1,9 +1,9 @@
-# ockham Architecture
+# parsimony Architecture
 
 **Version**: 0.1.0  
 **Audience**: Contributors, integrators, and developers who need to extend the library
 
-This document describes the internal design of ockham: the connector pattern and its three decorator variants, the catalog abstraction, the HTTP transport layer, and how the 9 modules and 33 connector functions are organized and composed.
+This document describes the internal design of parsimony: the connector pattern and its three decorator variants, the catalog abstraction, the HTTP transport layer, and how the 9 modules and 33 connector functions are organized and composed.
 
 ---
 
@@ -27,7 +27,7 @@ This document describes the internal design of ockham: the connector pattern and
 
 ## Design Philosophy
 
-ockham is built around three core principles:
+parsimony is built around three core principles:
 
 **Uniform interface**. Every data source — whether it is FRED's REST API, an SDMX provider, or a local IBKR gateway — exposes the same calling convention: an async function that accepts a Pydantic model and returns a typed DataFrame wrapped in a `Result`.
 
@@ -40,7 +40,7 @@ ockham is built around three core principles:
 ## Module Organization
 
 ```
-ockham/
+parsimony/
 ├── __init__.py               # Public API surface (__all__)
 ├── connector.py              # Connector, Connectors, decorators
 ├── result.py                 # Result, SemanticTableResult, OutputConfig, Column, ColumnRole
@@ -251,7 +251,7 @@ If a connector returns a plain `Result` but the caller needs schema information,
 
 ## Catalog Subsystem
 
-The catalog subsystem (`ockham/catalog/`) manages the lifecycle of series metadata: indexing, deduplication, embedding, and search.
+The catalog subsystem (`parsimony/catalog/`) manages the lifecycle of series metadata: indexing, deduplication, embedding, and search.
 
 ### Component responsibilities
 
@@ -526,4 +526,4 @@ Not all connectors have fully declared schemas. Keeping `Result` as the base typ
 
 ### Why is the Supabase backend external to this package?
 
-ockham is a client library. It does not manage any schema or runtime infrastructure. The `CatalogStore` and `DataStore` ABCs define the contracts; production backends are injected by the consuming application. This keeps the package self-contained and testable with in-memory implementations.
+parsimony is a client library. It does not manage any schema or runtime infrastructure. The `CatalogStore` and `DataStore` ABCs define the contracts; production backends are injected by the consuming application. This keeps the package self-contained and testable with in-memory implementations.

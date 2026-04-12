@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from ockham.result import Result
+from parsimony.result import Result
 
 # ---------------------------------------------------------------------------
 # Fixtures & helpers
@@ -52,7 +52,7 @@ def _make_response(json_data: Any, status_code: int = 200) -> httpx.Response:
 
 def _patch_http(response: httpx.Response):
     return patch(
-        "ockham.transport.http.HttpClient.request",
+        "parsimony.transport.http.HttpClient.request",
         new_callable=AsyncMock,
         return_value=response,
     )
@@ -76,7 +76,7 @@ async def _call_live(connector_obj, **kwargs) -> Result:
 class TestFmpSearch:
     @pytest.mark.asyncio
     async def test_calls_correct_endpoint(self) -> None:
-        from ockham.connectors.fmp import fmp_search
+        from parsimony.connectors.fmp import fmp_search
 
         data = [{"symbol": "AAPL", "name": "Apple Inc", "currency": "USD",
                  "exchangeFullName": "NASDAQ", "exchange": "NASDAQ"}]
@@ -89,7 +89,7 @@ class TestFmpSearch:
 class TestFmpTaxonomy:
     @pytest.mark.asyncio
     async def test_sectors_path(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
 
         with _patch_http(_make_response([{"sector": "Tech"}])) as m:
             await _call(fmp_taxonomy, type="sectors")
@@ -97,7 +97,7 @@ class TestFmpTaxonomy:
 
     @pytest.mark.asyncio
     async def test_industries_path(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
 
         with _patch_http(_make_response([{"industry": "SW"}])) as m:
             await _call(fmp_taxonomy, type="industries")
@@ -105,7 +105,7 @@ class TestFmpTaxonomy:
 
     @pytest.mark.asyncio
     async def test_exchanges_path(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
 
         with _patch_http(_make_response([{"exchange": "NYSE"}])) as m:
             await _call(fmp_taxonomy, type="exchanges")
@@ -113,7 +113,7 @@ class TestFmpTaxonomy:
 
     @pytest.mark.asyncio
     async def test_symbols_with_financials_uses_stock_list(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
 
         with _patch_http(_make_response([{"symbol": "AAPL"}])) as m:
             await _call(fmp_taxonomy, type="symbols_with_financials")
@@ -123,7 +123,7 @@ class TestFmpTaxonomy:
 class TestFmpQuotes:
     @pytest.mark.asyncio
     async def test_uses_batch_quote(self) -> None:
-        from ockham.connectors.fmp import fmp_quotes
+        from parsimony.connectors.fmp import fmp_quotes
 
         data = [{"symbol": "AAPL", "name": "Apple", "price": 180.0,
                  "changesPercentage": 0.8, "change": 1.5, "dayLow": 178.0,
@@ -139,7 +139,7 @@ class TestFmpQuotes:
 class TestFmpPrices:
     @pytest.mark.asyncio
     async def test_daily_path(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
 
         data = {"historical": [{"date": "2024-01-02", "open": 180.0, "high": 182.0,
                  "low": 179.0, "close": 181.0, "volume": 5e7, "change": 1.0,
@@ -150,7 +150,7 @@ class TestFmpPrices:
 
     @pytest.mark.asyncio
     async def test_intraday_path(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
 
         data = [{"date": "2024-01-02 10:00:00", "open": 180.0, "high": 180.5,
                  "low": 179.5, "close": 180.2, "volume": 1e5}]
@@ -160,7 +160,7 @@ class TestFmpPrices:
 
     @pytest.mark.asyncio
     async def test_dividend_adjusted_path(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
 
         data = {"historical": [{"date": "2024-01-02", "open": 180.0, "high": 182.0,
                  "low": 179.0, "close": 181.0, "volume": 5e7, "change": 1.0,
@@ -173,7 +173,7 @@ class TestFmpPrices:
 class TestFmpCompanyProfile:
     @pytest.mark.asyncio
     async def test_path_and_parsing(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         data = [{"symbol": "AAPL", "companyName": "Apple Inc", "price": 180.0,
                  "marketCap": 2.8e12, "beta": 1.2, "exchange": "NASDAQ",
@@ -192,7 +192,7 @@ class TestFmpCompanyProfile:
 class TestFmpPeers:
     @pytest.mark.asyncio
     async def test_path(self) -> None:
-        from ockham.connectors.fmp import fmp_peers
+        from parsimony.connectors.fmp import fmp_peers
 
         data = [{"symbol": "MSFT", "companyName": "Microsoft", "price": 380.0, "mktCap": 2.9e12}]
         with _patch_http(_make_response(data)) as m:
@@ -205,7 +205,7 @@ class TestFmpFinancialStatements:
 
     @pytest.mark.asyncio
     async def test_income_statement_no_symbol_in_path(self) -> None:
-        from ockham.connectors.fmp import fmp_income_statements
+        from parsimony.connectors.fmp import fmp_income_statements
 
         data = [{"date": "2024-09-30", "symbol": "AAPL", "reportedCurrency": "USD",
                  "revenue": 3.91e11, "costOfRevenue": 2.14e11, "grossProfit": 1.77e11,
@@ -222,7 +222,7 @@ class TestFmpFinancialStatements:
 
     @pytest.mark.asyncio
     async def test_balance_sheet_no_symbol_in_path(self) -> None:
-        from ockham.connectors.fmp import fmp_balance_sheet_statements
+        from parsimony.connectors.fmp import fmp_balance_sheet_statements
 
         data = [{"date": "2024-09-30", "symbol": "AAPL", "totalAssets": 3.52e11,
                  "totalLiabilities": 2.9e11, "totalStockholdersEquity": 6.2e10,
@@ -237,7 +237,7 @@ class TestFmpFinancialStatements:
 
     @pytest.mark.asyncio
     async def test_cash_flow_no_symbol_in_path(self) -> None:
-        from ockham.connectors.fmp import fmp_cash_flow_statements
+        from parsimony.connectors.fmp import fmp_cash_flow_statements
 
         data = [{"date": "2024-09-30", "symbol": "AAPL", "reportedCurrency": "USD",
                  "netIncome": 9.7e10, "operatingCashFlow": 1.18e11,
@@ -258,7 +258,7 @@ class TestFmpFinancialStatements:
 class TestFmpCorporateHistory:
     @pytest.mark.asyncio
     async def test_earnings_path(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
 
         data = [{"date": "2024-10-31", "symbol": "AAPL", "eps": 1.64}]
         with _patch_http(_make_response(data)) as m:
@@ -267,7 +267,7 @@ class TestFmpCorporateHistory:
 
     @pytest.mark.asyncio
     async def test_dividends_path(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
 
         data = [{"date": "2024-11-01", "symbol": "AAPL", "dividend": 0.25}]
         with _patch_http(_make_response(data)) as m:
@@ -276,7 +276,7 @@ class TestFmpCorporateHistory:
 
     @pytest.mark.asyncio
     async def test_splits_uses_splits_not_stock_split(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
 
         data = [{"date": "2020-08-31", "symbol": "AAPL", "numerator": 4, "denominator": 1}]
         with _patch_http(_make_response(data)) as m:
@@ -288,7 +288,7 @@ class TestFmpCorporateHistory:
 class TestFmpEventCalendar:
     @pytest.mark.asyncio
     async def test_earnings_calendar(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
 
         data = [{"date": "2024-10-31", "symbol": "AAPL", "eps": 1.64}]
         with _patch_http(_make_response(data)) as m:
@@ -297,7 +297,7 @@ class TestFmpEventCalendar:
 
     @pytest.mark.asyncio
     async def test_dividends_calendar(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
 
         data = [{"date": "2024-11-01", "symbol": "AAPL", "dividend": 0.25}]
         with _patch_http(_make_response(data)) as m:
@@ -306,7 +306,7 @@ class TestFmpEventCalendar:
 
     @pytest.mark.asyncio
     async def test_splits_calendar(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
 
         data = [{"date": "2024-08-31", "symbol": "TSLA", "numerator": 3}]
         with _patch_http(_make_response(data)) as m:
@@ -317,7 +317,7 @@ class TestFmpEventCalendar:
 class TestFmpAnalystEstimates:
     @pytest.mark.asyncio
     async def test_path_and_required_period(self) -> None:
-        from ockham.connectors.fmp import fmp_analyst_estimates
+        from parsimony.connectors.fmp import fmp_analyst_estimates
 
         data = [{"symbol": "AAPL", "date": "2025-09-30", "revenueLow": 3.8e11,
                  "revenueAvg": 4e11, "revenueHigh": 4.2e11, "ebitdaLow": 1.2e11,
@@ -335,7 +335,7 @@ class TestFmpAnalystEstimates:
 class TestFmpNews:
     @pytest.mark.asyncio
     async def test_stock_news_path(self) -> None:
-        from ockham.connectors.fmp import fmp_news
+        from parsimony.connectors.fmp import fmp_news
 
         data = [{"symbol": "AAPL", "publishedDate": "2024-10-31T14:00:00",
                  "title": "Q4", "text": "Apple...", "url": "https://x.com",
@@ -346,7 +346,7 @@ class TestFmpNews:
 
     @pytest.mark.asyncio
     async def test_press_releases_path(self) -> None:
-        from ockham.connectors.fmp import fmp_news
+        from parsimony.connectors.fmp import fmp_news
 
         data = [{"symbol": "AAPL", "publishedDate": "2024-10-31T14:00:00",
                  "title": "Q4", "text": "Apple...", "url": "https://x.com",
@@ -359,7 +359,7 @@ class TestFmpNews:
 class TestFmpInsiderTrades:
     @pytest.mark.asyncio
     async def test_path(self) -> None:
-        from ockham.connectors.fmp import fmp_insider_trades
+        from parsimony.connectors.fmp import fmp_insider_trades
 
         data = [{"symbol": "AAPL", "filingDate": "2024-10-15",
                  "transactionDate": "2024-10-14", "reportingName": "Tim Cook",
@@ -374,7 +374,7 @@ class TestFmpInsiderTrades:
 class TestFmpInstitutionalPositions:
     @pytest.mark.asyncio
     async def test_path(self) -> None:
-        from ockham.connectors.fmp import fmp_institutional_positions
+        from parsimony.connectors.fmp import fmp_institutional_positions
 
         data = [{"symbol": "AAPL", "date": "2024-09-30", "investorsHolding": 5000,
                  "investorsHoldingChange": 50, "numberOf13Fshares": 1.5e10,
@@ -391,7 +391,7 @@ class TestFmpInstitutionalPositions:
 class TestFmpEarningsTranscript:
     @pytest.mark.asyncio
     async def test_path(self) -> None:
-        from ockham.connectors.fmp import fmp_earnings_transcript
+        from parsimony.connectors.fmp import fmp_earnings_transcript
 
         data = [{"symbol": "AAPL", "year": 2024, "period": "Q4",
                  "date": "2024-10-31", "content": "Good afternoon..."}]
@@ -403,7 +403,7 @@ class TestFmpEarningsTranscript:
 class TestFmpIndexConstituents:
     @pytest.mark.asyncio
     async def test_sp500(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
 
         data = [{"symbol": "AAPL", "name": "Apple", "sector": "Technology",
                  "subSector": "CE", "headQuarter": "CA", "dateFirstAdded": "1982-11-30",
@@ -414,7 +414,7 @@ class TestFmpIndexConstituents:
 
     @pytest.mark.asyncio
     async def test_nasdaq(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
 
         with _patch_http(_make_response([{"symbol": "MSFT", "name": "Microsoft",
                  "sector": "Tech", "subSector": "SW", "headQuarter": "WA",
@@ -424,7 +424,7 @@ class TestFmpIndexConstituents:
 
     @pytest.mark.asyncio
     async def test_dow_jones(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
 
         with _patch_http(_make_response([{"symbol": "AAPL", "name": "Apple",
                  "sector": "Tech", "subSector": "CE", "headQuarter": "CA",
@@ -436,7 +436,7 @@ class TestFmpIndexConstituents:
 class TestFmpMarketMovers:
     @pytest.mark.asyncio
     async def test_gainers(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
 
         data = [{"symbol": "X", "name": "X", "price": 50.0, "change": 10.0,
                  "changesPercentage": 25.0, "exchange": "NASDAQ"}]
@@ -446,7 +446,7 @@ class TestFmpMarketMovers:
 
     @pytest.mark.asyncio
     async def test_losers(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
 
         with _patch_http(_make_response([{"symbol": "X", "name": "X", "price": 10.0,
                  "change": -5.0, "changesPercentage": -33.0, "exchange": "NYSE"}])) as m:
@@ -455,7 +455,7 @@ class TestFmpMarketMovers:
 
     @pytest.mark.asyncio
     async def test_most_actives(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
 
         with _patch_http(_make_response([{"symbol": "NVDA", "name": "NVIDIA", "price": 800.0,
                  "change": 20.0, "changesPercentage": 2.5, "exchange": "NASDAQ"}])) as m:
@@ -471,7 +471,7 @@ class TestFmpMarketMovers:
 class TestFmpErrorHandling:
     @pytest.mark.asyncio
     async def test_401_friendly_message(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response({}, status_code=401)):
             with pytest.raises(ValueError, match="Invalid or missing FMP API key"):
@@ -479,14 +479,14 @@ class TestFmpErrorHandling:
 
     @pytest.mark.asyncio
     async def test_402_plan_message(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response({}, status_code=402)), pytest.raises(ValueError, match="not eligible"):
             await _call(fmp_company_profile, symbol="AAPL")
 
     @pytest.mark.asyncio
     async def test_500_generic_message(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response({}, status_code=500)):
             with pytest.raises(ValueError, match="FMP API error 500"):
@@ -494,7 +494,7 @@ class TestFmpErrorHandling:
 
     @pytest.mark.asyncio
     async def test_api_key_never_exposed(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response({}, status_code=401)):
             with pytest.raises(ValueError) as exc_info:
@@ -503,7 +503,7 @@ class TestFmpErrorHandling:
 
     @pytest.mark.asyncio
     async def test_empty_response_raises(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response([])), pytest.raises(ValueError, match="No data returned"):
             await _call(fmp_company_profile, symbol="INVALID")
@@ -550,43 +550,43 @@ class TestFmpScreener:
 
     @pytest.mark.asyncio
     async def test_basic_screener(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=self._mock_request):
             result = await _call(fmp_screener, sector="Technology", limit=10)
         assert len(result.df) == 2
 
     @pytest.mark.asyncio
     async def test_where_clause(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=self._mock_request):
             result = await _call(fmp_screener, where_clause="price > 200", limit=50)
         assert all(result.df["price"] > 200)
 
     @pytest.mark.asyncio
     async def test_sort_and_limit(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=self._mock_request):
             result = await _call(fmp_screener, sort_by="marketCap", sort_order="desc", limit=1)
         assert len(result.df) == 1
 
     @pytest.mark.asyncio
     async def test_fields_selection(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=self._mock_request):
             result = await _call(fmp_screener, fields=["companyName", "marketCap"], limit=10)
         assert set(result.df.columns) == {"symbol", "companyName", "marketCap"}
 
     @pytest.mark.asyncio
     async def test_skips_enrichment_when_not_needed(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
         endpoints: list[str] = []
 
@@ -594,7 +594,7 @@ class TestFmpScreener:
             endpoints.append(path)
             return self._mock_request(method, path, params, **kw)
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=tracking_mock):
             await _call(fmp_screener, fields=["companyName", "marketCap"], limit=10)
 
@@ -604,15 +604,15 @@ class TestFmpScreener:
 
     @pytest.mark.asyncio
     async def test_invalid_where_clause(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
-        with patch("ockham.transport.http.HttpClient.request",
+        with patch("parsimony.transport.http.HttpClient.request",
                    side_effect=self._mock_request), pytest.raises(ValueError, match="Invalid where_clause"):
             await _call(fmp_screener, where_clause="nonExistent > 5", limit=10)
 
     @pytest.mark.asyncio
     async def test_empty_screener_raises(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
 
         with _patch_http(_make_response([])), pytest.raises(ValueError, match="no rows"):
             await _call(fmp_screener, sector="Nonexistent", limit=10)
@@ -625,36 +625,36 @@ class TestFmpScreener:
 
 class TestCollectionIntegrity:
     def test_fmp_has_18_connectors(self) -> None:
-        from ockham.connectors.fmp import CONNECTORS
+        from parsimony.connectors.fmp import CONNECTORS
         assert len(CONNECTORS) == 18
 
     def test_screener_has_1_connector(self) -> None:
-        from ockham.connectors.fmp_screener import CONNECTORS
+        from parsimony.connectors.fmp_screener import CONNECTORS
         assert len(CONNECTORS) == 1
 
     def test_all_have_descriptions(self) -> None:
-        from ockham.connectors.fmp import CONNECTORS as FMP
-        from ockham.connectors.fmp_screener import CONNECTORS as SCREENER
+        from parsimony.connectors.fmp import CONNECTORS as FMP
+        from parsimony.connectors.fmp_screener import CONNECTORS as SCREENER
         for c in list(FMP) + list(SCREENER):
             assert c.description and len(c.description) > 10, f"{c.name} missing description"
 
     def test_all_bindable(self) -> None:
-        from ockham.connectors.fmp import CONNECTORS as FMP
-        from ockham.connectors.fmp_screener import CONNECTORS as SCREENER
+        from parsimony.connectors.fmp import CONNECTORS as FMP
+        from parsimony.connectors.fmp_screener import CONNECTORS as SCREENER
         for c in list(FMP) + list(SCREENER):
             bound = c.bind_deps(api_key="test")
             assert not bound.dep_names, f"{c.name} has unbound deps"
 
     def test_no_duplicate_names(self) -> None:
-        from ockham.connectors.fmp import CONNECTORS as FMP
-        from ockham.connectors.fmp_screener import CONNECTORS as SCREENER
+        from parsimony.connectors.fmp import CONNECTORS as FMP
+        from parsimony.connectors.fmp_screener import CONNECTORS as SCREENER
         names = [c.name for c in list(FMP) + list(SCREENER)]
         assert len(names) == len(set(names))
 
     def test_factory_includes_all_19(self) -> None:
         os.environ.setdefault("FRED_API_KEY", "test")
         os.environ.setdefault("FMP_API_KEY", "test")
-        from ockham.connectors import build_connectors_from_env
+        from parsimony.connectors import build_connectors_from_env
         connectors = build_connectors_from_env()
         fmp = sorted(c.name for c in connectors if c.name.startswith("fmp_"))
         assert len(fmp) == 19
@@ -674,45 +674,45 @@ class TestLiveFmpConnectors:
 
     @pytest.mark.asyncio
     async def test_search(self) -> None:
-        from ockham.connectors.fmp import fmp_search
+        from parsimony.connectors.fmp import fmp_search
         result = await _call_live(fmp_search, query="Apple", limit=3)
         assert len(result.df) >= 1
         assert "symbol" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_taxonomy_sectors(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
         result = await _call_live(fmp_taxonomy, type="sectors")
         assert len(result.df) >= 5
 
     @pytest.mark.asyncio
     async def test_taxonomy_industries(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
         result = await _call_live(fmp_taxonomy, type="industries")
         assert len(result.df) >= 10
 
     @pytest.mark.asyncio
     async def test_taxonomy_exchanges(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
         result = await _call_live(fmp_taxonomy, type="exchanges")
         assert len(result.df) >= 5
 
     @pytest.mark.asyncio
     async def test_taxonomy_symbols_with_financials(self) -> None:
-        from ockham.connectors.fmp import fmp_taxonomy
+        from parsimony.connectors.fmp import fmp_taxonomy
         result = await _call_live(fmp_taxonomy, type="symbols_with_financials")
         assert len(result.df) >= 100
 
     @pytest.mark.asyncio
     async def test_quotes(self) -> None:
-        from ockham.connectors.fmp import fmp_quotes
+        from parsimony.connectors.fmp import fmp_quotes
         result = await _call_live(fmp_quotes, symbols="AAPL,MSFT")
         assert len(result.df) == 2
         assert set(result.df["symbol"].tolist()) == {"AAPL", "MSFT"}
 
     @pytest.mark.asyncio
     async def test_prices_daily(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
         result = await _call_live(fmp_prices, symbol="AAPL", frequency="daily",
                                   **{"from": "2024-01-02", "to": "2024-01-05"})
         assert len(result.df) >= 1
@@ -720,20 +720,20 @@ class TestLiveFmpConnectors:
 
     @pytest.mark.asyncio
     async def test_prices_intraday(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
         result = await _call_live(fmp_prices, symbol="AAPL", frequency="5min")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_prices_dividend_adjusted(self) -> None:
-        from ockham.connectors.fmp import fmp_prices
+        from parsimony.connectors.fmp import fmp_prices
         result = await _call_live(fmp_prices, symbol="AAPL", frequency="dividend_adjusted",
                                   **{"from": "2024-01-02", "to": "2024-01-05"})
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_company_profile(self) -> None:
-        from ockham.connectors.fmp import fmp_company_profile
+        from parsimony.connectors.fmp import fmp_company_profile
         result = await _call_live(fmp_company_profile, symbol="AAPL")
         df = result.df
         assert df["symbol"].iloc[0] == "AAPL"
@@ -741,103 +741,103 @@ class TestLiveFmpConnectors:
 
     @pytest.mark.asyncio
     async def test_peers(self) -> None:
-        from ockham.connectors.fmp import fmp_peers
+        from parsimony.connectors.fmp import fmp_peers
         result = await _call_live(fmp_peers, symbol="AAPL")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_income_statements(self) -> None:
-        from ockham.connectors.fmp import fmp_income_statements
+        from parsimony.connectors.fmp import fmp_income_statements
         result = await _call_live(fmp_income_statements, symbol="AAPL", period="annual", limit=2)
         assert len(result.df) == 2
         assert "revenue" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_balance_sheet_statements(self) -> None:
-        from ockham.connectors.fmp import fmp_balance_sheet_statements
+        from parsimony.connectors.fmp import fmp_balance_sheet_statements
         result = await _call_live(fmp_balance_sheet_statements, symbol="AAPL", period="annual", limit=2)
         assert len(result.df) == 2
         assert "totalAssets" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_cash_flow_statements(self) -> None:
-        from ockham.connectors.fmp import fmp_cash_flow_statements
+        from parsimony.connectors.fmp import fmp_cash_flow_statements
         result = await _call_live(fmp_cash_flow_statements, symbol="AAPL", period="annual", limit=2)
         assert len(result.df) == 2
         assert "freeCashFlow" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_corporate_history_earnings(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
         result = await _call_live(fmp_corporate_history, symbol="AAPL", event_type="earnings", limit=3)
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_corporate_history_dividends(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
         result = await _call_live(fmp_corporate_history, symbol="AAPL", event_type="dividends", limit=3)
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_corporate_history_splits(self) -> None:
-        from ockham.connectors.fmp import fmp_corporate_history
+        from parsimony.connectors.fmp import fmp_corporate_history
         result = await _call_live(fmp_corporate_history, symbol="AAPL", event_type="splits", limit=3)
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_event_calendar_earnings(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
         result = await _call_live(fmp_event_calendar, event_type="earnings")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_event_calendar_dividends(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
         result = await _call_live(fmp_event_calendar, event_type="dividends")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_event_calendar_splits(self) -> None:
-        from ockham.connectors.fmp import fmp_event_calendar
+        from parsimony.connectors.fmp import fmp_event_calendar
         result = await _call_live(fmp_event_calendar, event_type="splits")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_analyst_estimates(self) -> None:
-        from ockham.connectors.fmp import fmp_analyst_estimates
+        from parsimony.connectors.fmp import fmp_analyst_estimates
         result = await _call_live(fmp_analyst_estimates, symbol="AAPL", period="annual", limit=2)
         assert len(result.df) >= 1
         assert "epsAvg" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_news(self) -> None:
-        from ockham.connectors.fmp import fmp_news
+        from parsimony.connectors.fmp import fmp_news
         result = await _call_live(fmp_news, type="news", symbols="AAPL", limit=3)
         assert len(result.df) >= 1
         assert "title" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_press_releases(self) -> None:
-        from ockham.connectors.fmp import fmp_news
+        from parsimony.connectors.fmp import fmp_news
         result = await _call_live(fmp_news, type="press_releases", symbols="AAPL", limit=3)
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_insider_trades(self) -> None:
-        from ockham.connectors.fmp import fmp_insider_trades
+        from parsimony.connectors.fmp import fmp_insider_trades
         result = await _call_live(fmp_insider_trades, symbol="AAPL", limit=5)
         assert len(result.df) >= 1
         assert "reportingName" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_institutional_positions(self) -> None:
-        from ockham.connectors.fmp import fmp_institutional_positions
+        from parsimony.connectors.fmp import fmp_institutional_positions
         result = await _call_live(fmp_institutional_positions, symbol="AAPL", year="2024", quarter="3")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_earnings_transcript(self) -> None:
-        from ockham.connectors.fmp import fmp_earnings_transcript
+        from parsimony.connectors.fmp import fmp_earnings_transcript
         result = await _call_live(fmp_earnings_transcript, symbol="AAPL", year="2024", quarter="4")
         assert len(result.df) >= 1
         assert "content" in result.df.columns
@@ -845,37 +845,37 @@ class TestLiveFmpConnectors:
 
     @pytest.mark.asyncio
     async def test_index_constituents_sp500(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
         result = await _call_live(fmp_index_constituents, index="SP500")
         assert len(result.df) >= 400  # S&P 500 should have ~503
 
     @pytest.mark.asyncio
     async def test_index_constituents_nasdaq(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
         result = await _call_live(fmp_index_constituents, index="NASDAQ")
         assert len(result.df) >= 50
 
     @pytest.mark.asyncio
     async def test_index_constituents_dow_jones(self) -> None:
-        from ockham.connectors.fmp import fmp_index_constituents
+        from parsimony.connectors.fmp import fmp_index_constituents
         result = await _call_live(fmp_index_constituents, index="DOW_JONES")
         assert len(result.df) >= 25
 
     @pytest.mark.asyncio
     async def test_market_movers_gainers(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
         result = await _call_live(fmp_market_movers, type="gainers")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_market_movers_losers(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
         result = await _call_live(fmp_market_movers, type="losers")
         assert len(result.df) >= 1
 
     @pytest.mark.asyncio
     async def test_market_movers_most_actives(self) -> None:
-        from ockham.connectors.fmp import fmp_market_movers
+        from parsimony.connectors.fmp import fmp_market_movers
         result = await _call_live(fmp_market_movers, type="most_actives")
         assert len(result.df) >= 1
 
@@ -884,14 +884,14 @@ class TestLiveFmpConnectors:
 class TestLiveFmpScreener:
     @pytest.mark.asyncio
     async def test_basic_screener(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
         result = await _call_live(fmp_screener, sector="Technology", country="US", limit=5)
         assert len(result.df) == 5
         assert "symbol" in result.df.columns
 
     @pytest.mark.asyncio
     async def test_screener_with_enrichment(self) -> None:
-        from ockham.connectors.fmp_screener import fmp_screener
+        from parsimony.connectors.fmp_screener import fmp_screener
         result = await _call_live(
             fmp_screener, sector="Technology", country="US",
             fields=["companyName", "marketCap", "priceToEarningsRatioTTM", "returnOnEquityTTM"],

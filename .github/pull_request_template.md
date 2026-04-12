@@ -12,7 +12,7 @@
 
 ## For new connectors
 
-- [ ] Module created in `ockham/connectors/`
+- [ ] Module created in `parsimony/connectors/`
 - [ ] Pydantic params models with docstrings
 - [ ] `@connector`, `@enumerator`, or `@loader` decorators applied
 - [ ] `OutputConfig` with explicit `Column` roles
@@ -33,5 +33,5 @@ pytest tests/test_<module>.py -v
 
 - [ ] `ruff check .` passes
 - [ ] `ruff format --check .` passes
-- [ ] `mypy ockham/` passes
+- [ ] `mypy parsimony/` passes
 - [ ] Tests pass locally

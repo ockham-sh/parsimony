@@ -9,7 +9,7 @@ import pytest
 
 import pandas as pd
 
-from ockham.connectors.sdmx import (
+from parsimony.connectors.sdmx import (
     SdmxCodelistParams,
     SdmxDsdParams,
     SdmxListDatasetsParams,
@@ -25,7 +25,7 @@ from ockham.connectors.sdmx import (
     sdmx_list_datasets,
     sdmx_namespace_from_dataset_key,
 )
-from ockham.result import ColumnRole
+from parsimony.result import ColumnRole
 
 
 def test_sdmx_namespace_helpers() -> None:
@@ -129,7 +129,7 @@ async def test_sdmx_list_datasets_ecb_network() -> None:
 @pytest.mark.asyncio
 async def test_sdmx_codelist_ecb_yc_freq_network() -> None:
     _require_sdmx_integration()
-    from ockham.connectors.sdmx import sdmx_codelist
+    from parsimony.connectors.sdmx import sdmx_codelist
 
     res = await sdmx_codelist(SdmxCodelistParams(dataset_key="ECB-YC", dimension="FREQ"))
     df = res.df
@@ -141,7 +141,7 @@ async def test_sdmx_codelist_ecb_yc_freq_network() -> None:
 @pytest.mark.asyncio
 async def test_sdmx_dsd_ecb_yc_network() -> None:
     _require_sdmx_integration()
-    from ockham.connectors.sdmx import sdmx_dsd
+    from parsimony.connectors.sdmx import sdmx_dsd
 
     res = await sdmx_dsd(SdmxDsdParams(dataset_key="ECB-YC"))
     assert res.output_schema is None
@@ -153,7 +153,7 @@ async def test_sdmx_dsd_ecb_yc_network() -> None:
 
 @pytest.mark.asyncio
 async def test_sdmx_series_keys_invalid_filter_key() -> None:
-    from ockham.connectors.sdmx import sdmx_series_keys
+    from parsimony.connectors.sdmx import sdmx_series_keys
 
     with pytest.raises(ValueError, match="not a dimension"):
         await sdmx_series_keys(

@@ -1,4 +1,4 @@
-"""Integration tests for :class:`~ockham.connector.Connectors` composition and execution."""
+"""Integration tests for :class:`~parsimony.connector.Connectors` composition and execution."""
 
 from __future__ import annotations
 
@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, Field
 
-from ockham.connector import Connectors, connector
-from ockham.result import Provenance, Result
+from parsimony.connector import Connectors, connector
+from parsimony.result import Provenance, Result
 
 
 class MockParams(BaseModel):
@@ -47,13 +47,13 @@ class TestConnectorsExecution:
 
 class TestPreboundComposition:
     def test_fred_bind_names(self) -> None:
-        from ockham.connectors.fred import CONNECTORS as FRED
+        from parsimony.connectors.fred import CONNECTORS as FRED
 
         wired = FRED.bind_deps(api_key="test-key")
         assert "fred_fetch" in wired.names()
 
     def test_fred_connectors(self) -> None:
-        from ockham.connectors.fred import CONNECTORS as FRED
+        from parsimony.connectors.fred import CONNECTORS as FRED
 
         c = FRED.bind_deps(api_key="test-key")
         names = set(c.names())
@@ -61,7 +61,7 @@ class TestPreboundComposition:
         assert "fred_fetch" in names
 
     def test_fmp_connectors(self) -> None:
-        from ockham.connectors.fmp import CONNECTORS as FMP
+        from parsimony.connectors.fmp import CONNECTORS as FMP
 
         c = FMP.bind_deps(api_key="test-key")
         names = set(c.names())

@@ -7,7 +7,7 @@ Demonstrates the full catalog lifecycle:
 4. List entries and namespaces.
 
 Setup:
-    pip install ockham
+    pip install parsimony
     export FRED_API_KEY="your-key-here"
 
 Expected output:
@@ -23,8 +23,8 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ockham import SQLiteCatalogStore, Catalog
-from ockham.connectors.fred import enumerate_fred_release
+from parsimony import SQLiteCatalogStore, Catalog
+from parsimony.connectors.fred import enumerate_fred_release
 
 
 async def main() -> None:

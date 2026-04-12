@@ -1,13 +1,13 @@
-# ockham
+# parsimony
 
-[![PyPI version](https://img.shields.io/pypi/v/ockham)](https://pypi.org/project/ockham/)
+[![PyPI version](https://img.shields.io/pypi/v/parsimony)](https://pypi.org/project/parsimony/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/ockham)](https://pypi.org/project/ockham/)
-[![CI](https://github.com/ockham-sh/ockham/actions/workflows/test.yml/badge.svg)](https://github.com/ockham-sh/ockham/actions)
+[![Python](https://img.shields.io/pypi/pyversions/parsimony)](https://pypi.org/project/parsimony/)
+[![CI](https://github.com/ockham-sh/parsimony/actions/workflows/test.yml/badge.svg)](https://github.com/ockham-sh/parsimony/actions)
 
 Typed, composable data connectors with searchable catalogs for Python.
 
-## Why ockham?
+## Why parsimony?
 
 - **Unified interface** -- one async calling convention (`await connectors["name"](params)`) across FRED, SDMX, FMP, SEC Edgar, Polymarket, and more.
 - **Typed parameters** -- every connector validates input through a Pydantic model with a JSON Schema for agent integration.
@@ -17,8 +17,8 @@ Typed, composable data connectors with searchable catalogs for Python.
 ## Install
 
 ```bash
-pip install ockham           # core + FRED
-pip install ockham[sdmx]     # + ECB, Eurostat, IMF, World Bank (no API key needed)
+pip install parsimony           # core + FRED
+pip install parsimony[sdmx]     # + ECB, Eurostat, IMF, World Bank (no API key needed)
 ```
 
 ## 30-Second Example (No API Key)
@@ -27,7 +27,7 @@ Fetch daily USD/EUR exchange rates from the ECB:
 
 ```python
 import asyncio
-from ockham.connectors.sdmx import CONNECTORS as SDMX
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 async def main():
     result = await SDMX["sdmx_fetch"](
@@ -52,7 +52,7 @@ asyncio.run(main())
 FRED provides US macroeconomic data. Get a free key at [fred.stlouisfed.org](https://fred.stlouisfed.org/docs/api/api_key.html):
 
 ```python
-from ockham.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.fred import CONNECTORS as FRED
 
 fred = FRED.bind_deps(api_key="your-key")
 

@@ -5,7 +5,7 @@ Get from zero to fetching macroeconomic data in under five minutes -- no API key
 ## Install
 
 ```bash
-pip install ockham[sdmx]
+pip install parsimony[sdmx]
 ```
 
 > **Python 3.11 or 3.12** required. The `[sdmx]` extra enables ECB, Eurostat, IMF, and World Bank connectors.
@@ -20,7 +20,7 @@ SDMX connectors work out of the box. Fetch the daily USD/EUR spot rate from the 
 
 ```python
 import asyncio
-from ockham.connectors.sdmx import CONNECTORS as SDMX
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 async def main():
     result = await SDMX["sdmx_fetch"](
@@ -37,7 +37,7 @@ asyncio.run(main())
 **Jupyter notebook**
 
 ```python
-from ockham.connectors.sdmx import CONNECTORS as SDMX
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 result = await SDMX["sdmx_fetch"](
     dataset_key="ECB-EXR",
@@ -129,7 +129,7 @@ export FRED_API_KEY="your-key-here"
 **Search for series:**
 
 ```python
-from ockham.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.fred import CONNECTORS as FRED
 
 fred = FRED.bind_deps(api_key="your-key-here")
 
@@ -167,7 +167,7 @@ print(result.data.tail())
 Index fetched series into a searchable catalog:
 
 ```python
-from ockham import Catalog, SQLiteCatalogStore
+from parsimony import Catalog, SQLiteCatalogStore
 
 catalog = Catalog(store=SQLiteCatalogStore(":memory:"))
 
@@ -193,11 +193,11 @@ Indexed: 1, Skipped: 0
 For semantic (vector) search, add the embeddings extra and an embedding provider:
 
 ```bash
-pip install ockham[sdmx,embeddings]
+pip install parsimony[sdmx,embeddings]
 ```
 
 ```python
-from ockham import LiteLLMEmbeddingProvider
+from parsimony import LiteLLMEmbeddingProvider
 
 catalog = Catalog(
     store=SQLiteCatalogStore(":memory:"),
@@ -226,16 +226,16 @@ await SDMX["sdmx_fetch"](dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A")
 await SDMX["sdmx_fetch"]({"dataset_key": "ECB-EXR", "series_key": "D.USD.EUR.SP00.A"})
 
 # Pydantic model
-from ockham.connectors.sdmx import SdmxFetchParams
+from parsimony.connectors.sdmx import SdmxFetchParams
 await SDMX["sdmx_fetch"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A"))
 ```
 
 ### Composing multiple sources
 
 ```python
-from ockham import Connectors
-from ockham.connectors.fred import CONNECTORS as FRED
-from ockham.connectors.sdmx import CONNECTORS as SDMX
+from parsimony import Connectors
+from parsimony.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 all_connectors = FRED.bind_deps(api_key="your-key") + SDMX
 result = await all_connectors["fred_fetch"](series_id="GDP")

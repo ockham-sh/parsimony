@@ -8,8 +8,8 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, Field, ValidationError
 
-from ockham.connector import Connector, Connectors, connector, enumerator, loader
-from ockham.result import Column, ColumnRole, OutputConfig, Provenance, Result, SemanticTableResult
+from parsimony.connector import Connector, Connectors, connector, enumerator, loader
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, SemanticTableResult
 
 # ---------------------------------------------------------------------------
 # Helpers

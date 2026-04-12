@@ -1,13 +1,13 @@
-# ockham
+# parsimony
 
 **Typed, composable data connectors with searchable catalogs for Python.**
 
-Every financial data project starts the same way: write API wrappers, parse responses into DataFrames, track where data came from. `ockham` replaces that boilerplate with a declarative `@connector` system that gives you Pydantic-validated parameters, standardized `Result` outputs with provenance tracking, composable routing across sources, and an optional vector-searchable catalog for entity discovery.
+Every financial data project starts the same way: write API wrappers, parse responses into DataFrames, track where data came from. `parsimony` replaces that boilerplate with a declarative `@connector` system that gives you Pydantic-validated parameters, standardized `Result` outputs with provenance tracking, composable routing across sources, and an optional vector-searchable catalog for entity discovery.
 
 ## Quick Start
 
 ```python
-from ockham.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.fred import CONNECTORS as FRED
 
 client = FRED.bind_deps(api_key="your-fred-key")
 
@@ -19,15 +19,15 @@ print(result.provenance)  # source="fred_fetch", params={...}
 ## Installation
 
 ```bash
-pip install ockham
+pip install parsimony
 ```
 
 With optional extras:
 
 ```bash
-pip install ockham[sdmx]        # SDMX providers (ECB, Eurostat, IMF, World Bank)
-pip install ockham[embeddings]  # Vector-searchable catalog
-pip install ockham[all]         # Everything
+pip install parsimony[sdmx]        # SDMX providers (ECB, Eurostat, IMF, World Bank)
+pip install parsimony[embeddings]  # Vector-searchable catalog
+pip install parsimony[all]         # Everything
 ```
 
 ## Built-in Data Sources

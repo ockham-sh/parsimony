@@ -1,9 +1,9 @@
-# ockham User Guide
+# parsimony User Guide
 
 **Version**: 0.1.0
 **Audience**: Python developers building data pipelines, notebooks, or agent integrations
 
-ockham is a Python library that gives you a single, consistent async interface for fetching financial and macroeconomic data from FRED, SDMX providers (ECB, Eurostat, IMF, World Bank, BIS), Financial Modeling Prep, SEC Edgar, EODHD, Interactive Brokers, Polymarket, and Financial Reports APIs. All results are typed pandas DataFrames with provenance metadata and optional column-role schemas.
+parsimony is a Python library that gives you a single, consistent async interface for fetching financial and macroeconomic data from FRED, SDMX providers (ECB, Eurostat, IMF, World Bank, BIS), Financial Modeling Prep, SEC Edgar, EODHD, Interactive Brokers, Polymarket, and Financial Reports APIs. All results are typed pandas DataFrames with provenance metadata and optional column-role schemas.
 
 ---
 
@@ -28,20 +28,20 @@ ockham is a Python library that gives you a single, consistent async interface f
 ## Installation
 
 ```bash
-pip install ockham
+pip install parsimony
 ```
 
 ### Optional extras
 
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `sdmx` | `pip install "ockham[sdmx]"` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
-| `embeddings` | `pip install "ockham[embeddings]"` | Semantic catalog search via LiteLLM embeddings |
+| `sdmx` | `pip install "parsimony[sdmx]"` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
+| `embeddings` | `pip install "parsimony[embeddings]"` | Semantic catalog search via LiteLLM embeddings |
 
 Install multiple extras at once:
 
 ```bash
-pip install "ockham[sdmx,embeddings]"
+pip install "parsimony[sdmx,embeddings]"
 ```
 
 Two connectors require separately-installed packages:
@@ -53,7 +53,7 @@ pip install financial-reports-generated-client  # Financial Reports connector
 
 ### Python version
 
-ockham requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
+parsimony requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
 
 ---
 
@@ -119,7 +119,7 @@ graph TD
 
 ```python
 import asyncio
-from ockham.connectors import build_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 
 async def main():
     # Build the full connector bundle from environment variables
@@ -175,7 +175,7 @@ Every connector call returns a `Result` with `.data` (usually a pandas DataFrame
 
 ```python
 import asyncio
-from ockham.connectors import build_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 
 async def search_fred():
     connectors = build_connectors_from_env()
@@ -220,7 +220,7 @@ async def enumerate_release():
 
 ## Querying SDMX Providers
 
-SDMX connectors require the `sdmx` extra: `pip install "ockham[sdmx]"`.
+SDMX connectors require the `sdmx` extra: `pip install "parsimony[sdmx]"`.
 
 No API key is required. SDMX providers include ECB, Eurostat (ESTAT), IMF, World Bank (WB_WDI), BIS, and others.
 
@@ -306,8 +306,8 @@ The catalog lets you index discovered series and search them by text or semantic
 
 ```python
 import asyncio
-from ockham import Catalog, SQLiteCatalogStore
-from ockham.connectors import build_connectors_from_env
+from parsimony import Catalog, SQLiteCatalogStore
+from parsimony.connectors import build_connectors_from_env
 
 async def catalog_example():
     connectors = build_connectors_from_env()
@@ -340,7 +340,7 @@ print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 Semantic search requires the `[embeddings]` extra and a LiteLLM-compatible embedding model.
 
 ```python
-from ockham import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
+from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
 
 async def semantic_search():
     provider = LiteLLMEmbeddingProvider(
@@ -385,7 +385,7 @@ You can build your own connectors using the `@connector`, `@enumerator`, or `@lo
 ```python
 import pandas as pd
 from pydantic import BaseModel
-from ockham import connector
+from parsimony import connector
 
 class MyParams(BaseModel):
     symbol: str
@@ -408,7 +408,7 @@ Use `OutputConfig` and `Column` to declare the semantic meaning of each column:
 ```python
 from typing import Annotated
 from pydantic import BaseModel
-from ockham import (
+from parsimony import (
     connector, Namespace,
     OutputConfig, Column, ColumnRole,
 )
@@ -436,7 +436,7 @@ Use keyword-only function parameters (after `*`) to declare dependencies like AP
 
 ```python
 from pydantic import BaseModel
-from ockham import connector, Connectors
+from parsimony import connector, Connectors
 
 class SearchParams(BaseModel):
     query: str
@@ -451,7 +451,7 @@ async def my_authenticated_source(params: SearchParams, *, api_key: str) -> pd.D
 bound = my_authenticated_source.bind_deps(api_key="secret-key")
 
 # Combine with the standard bundle
-from ockham.connectors import build_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 all_connectors = build_connectors_from_env() + Connectors([bound])
 ```
 
@@ -460,7 +460,7 @@ all_connectors = build_connectors_from_env() + Connectors([bound])
 Callbacks let you react to every result produced by a connector, for example to index into a catalog or emit a metric:
 
 ```python
-from ockham import Catalog, SQLiteCatalogStore, SemanticTableResult
+from parsimony import Catalog, SQLiteCatalogStore, SemanticTableResult
 
 catalog = Catalog(SQLiteCatalogStore(":memory:"))
 
@@ -496,7 +496,7 @@ print(prov.params)         # {"series_id": "GDP"}
 If a connector returns a plain `Result` but you want to apply a schema:
 
 ```python
-from ockham import OutputConfig, Column, ColumnRole
+from parsimony import OutputConfig, Column, ColumnRole
 
 my_schema = OutputConfig(columns=[
     Column(name="date",  role=ColumnRole.KEY, namespace="my_ns"),
@@ -520,7 +520,7 @@ Results can be saved and loaded round-trip using Apache Arrow or Parquet:
 result.to_parquet("/tmp/gdp.parquet")
 
 # Load from Parquet
-from ockham import Result
+from parsimony import Result
 loaded = Result.from_parquet("/tmp/gdp.parquet")
 
 # Arrow round-trip
@@ -548,7 +548,7 @@ fred_only = connectors.filter(name="fred")
 ### Combine bundles
 
 ```python
-from ockham import Connectors
+from parsimony import Connectors
 
 custom = Connectors([my_prices, my_authenticated_source.bind_deps(api_key="key")])
 combined = build_connectors_from_env() + custom
@@ -578,7 +578,7 @@ All connector calls are `async`. In a script, wrap them in `asyncio.run()`:
 
 ```python
 import asyncio
-from ockham.connectors import build_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 
 async def main():
     connectors = build_connectors_from_env()
@@ -605,7 +605,7 @@ Both forms are accepted:
 result = await connectors["fred_fetch"](series_id="GDP")
 
 # Pre-built Pydantic model
-from ockham.connectors.fred import FredFetchParams
+from parsimony.connectors.fred import FredFetchParams
 result = await connectors["fred_fetch"](FredFetchParams(series_id="GDP"))
 ```
 
@@ -614,7 +614,7 @@ Note: raw `dict` is **not** accepted. Use keyword arguments or a typed model.
 ### Pattern 3: Bulk catalog indexing from an enumerator
 
 ```python
-from ockham import Catalog, SQLiteCatalogStore
+from parsimony import Catalog, SQLiteCatalogStore
 
 catalog = Catalog(SQLiteCatalogStore(":memory:"))
 
@@ -629,7 +629,7 @@ print(f"Catalog now has {summary.indexed} entries")
 If you only need data fetching (no search/screener connectors):
 
 ```python
-from ockham.connectors import build_fetch_connectors_from_env
+from parsimony.connectors import build_fetch_connectors_from_env
 
 fetch_only = build_fetch_connectors_from_env()
 ```
@@ -647,7 +647,7 @@ if "eodhd_fetch" in connectors:
 
 ## MCP Server (Coding Agent Integration)
 
-ockham includes an MCP server that exposes search and discovery connectors as native tools for coding agents (Claude Code, Cursor, Windsurf). The agent can search for data directly, then fetch and analyze it via code execution.
+parsimony includes an MCP server that exposes search and discovery connectors as native tools for coding agents (Claude Code, Cursor, Windsurf). The agent can search for data directly, then fetch and analyze it via code execution.
 
 ```bash
 pip install -e ".[mcp]"
@@ -656,9 +656,9 @@ pip install -e ".[mcp]"
 ```json
 {
   "mcpServers": {
-    "ockham": {
+    "parsimony": {
       "command": "python3",
-      "args": ["-m", "ockham.mcp"],
+      "args": ["-m", "parsimony.mcp"],
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"

@@ -1,5 +1,5 @@
 [project]
-name = "ockham"
+name = "parsimony"
 version = "0.1.0a1"
 description = "Connector framework for financial data — search, fetch, and catalog series from FRED, SDMX, FMP, SEC Edgar, and more"
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
@@ -30,13 +30,13 @@ vec = ["sqlite-vec>=0.1.6"]
 sec = ["edgartools>=4.0.0"]
 financial-reports = ["financial-reports-generated-client>=0.1.0"]
 mcp = ["mcp>=1.0.0", "tabulate>=0.9.0"]
-all = ["ockham[sdmx,embeddings,vec,sec,financial-reports,mcp]"]
+all = ["parsimony[sdmx,embeddings,vec,sec,financial-reports,mcp]"]
 docs = ["mkdocs-material"]
 
 [project.urls]
-Homepage = "https://ockham.sh"
-Repository = "https://github.com/ockham-sh/ockham"
-Documentation = "https://docs.ockham.sh"
+Homepage = "https://parsimony.dev"
+Repository = "https://github.com/ockham-sh/parsimony"
+Documentation = "https://docs.parsimony.dev"
 
 [tool.ruff]
 target-version = "py311"

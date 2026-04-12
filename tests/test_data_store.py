@@ -5,10 +5,10 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ockham.connector import Connectors, loader
-from ockham.stores.data_store import DataStore, LoadResult, _data_from_table_result
-from ockham.stores.memory_data import InMemoryDataStore
-from ockham.result import (
+from parsimony.connector import Connectors, loader
+from parsimony.stores.data_store import DataStore, LoadResult, _data_from_table_result
+from parsimony.stores.memory_data import InMemoryDataStore
+from parsimony.result import (
     Column,
     ColumnRole,
     OutputConfig,

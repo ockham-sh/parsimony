@@ -1,10 +1,10 @@
-# ockham API Reference
+# parsimony API Reference
 
 **Version**: 0.1.0  
 **License**: Apache-2.0  
 **Python**: 3.11 – 3.12
 
-This reference covers every public symbol exported by `ockham`, all 33 connector functions across 9 data-source modules, the catalog API, the factory functions, and all public types.
+This reference covers every public symbol exported by `parsimony`, all 33 connector functions across 9 data-source modules, the catalog API, the factory functions, and all public types.
 
 ---
 
@@ -33,10 +33,10 @@ This reference covers every public symbol exported by `ockham`, all 33 connector
 
 ## Core Connector Framework
 
-Import from `ockham`:
+Import from `parsimony`:
 
 ```python
-from ockham import Connector, Connectors, connector, enumerator, loader
+from parsimony import Connector, Connectors, connector, enumerator, loader
 ```
 
 ### `Connector`
@@ -77,7 +77,7 @@ class Connector:
 An immutable ordered collection of `Connector` instances.
 
 ```python
-from ockham import Connectors
+from parsimony import Connectors
 ```
 
 **Constructor**: `Connectors(connectors: Sequence[Connector])`
@@ -99,7 +99,7 @@ from ockham import Connectors
 ### `connector` decorator
 
 ```python
-from ockham import connector
+from parsimony import connector
 
 connector(
     name: str | None = None,
@@ -121,7 +121,7 @@ Decorator factory for **general-purpose** connectors. The decorated function mus
 ### `enumerator` decorator
 
 ```python
-from ockham import enumerator
+from parsimony import enumerator
 
 enumerator(output: OutputConfig) -> Callable[[AsyncFunc], Connector]
 ```
@@ -133,7 +133,7 @@ Use `enumerator` for functions that list series identifiers for later catalog in
 ### `loader` decorator
 
 ```python
-from ockham import loader
+from parsimony import loader
 
 loader(output: OutputConfig) -> Callable[[AsyncFunc], Connector]
 ```
@@ -155,7 +155,7 @@ Type alias for callbacks attached via `Connector.with_callback()`. Callbacks rec
 ## Schema and Output Types
 
 ```python
-from ockham import (
+from parsimony import (
     Namespace, Column, ColumnRole, OutputConfig,
     Provenance, Result, SemanticTableResult,
 )
@@ -171,7 +171,7 @@ Pydantic field metadata annotation that links a param model field to a catalog n
 
 ```python
 from typing import Annotated
-from ockham import Namespace
+from parsimony import Namespace
 
 class FredFetchParams(BaseModel):
     series_id: Annotated[str, Namespace("fred")]
@@ -182,7 +182,7 @@ A connector whose param model has a `Namespace`-annotated field supports automat
 ### `ColumnRole`
 
 ```python
-from ockham import ColumnRole
+from parsimony import ColumnRole
 
 class ColumnRole(str, Enum):
     KEY      = "key"       # Series identifier (namespace + code)
@@ -292,7 +292,7 @@ All `Result` serialization methods (`to_arrow`, `to_parquet`, `from_arrow`, `fro
 ## Catalog API
 
 ```python
-from ockham import (
+from parsimony import (
     CatalogStore, Catalog, SeriesEntry, SeriesMatch,
     IndexResult, EmbeddingProvider,
 )
@@ -418,7 +418,7 @@ Abstract base class for text-to-vector embedding backends.
 ## Data Store API
 
 ```python
-from ockham import DataStore, LoadResult
+from parsimony import DataStore, LoadResult
 ```
 
 ### `DataStore`
@@ -453,7 +453,7 @@ Summary returned by `DataStore.load_result()`.
 ## In-Memory Implementations
 
 ```python
-from ockham import SQLiteCatalogStore, InMemoryDataStore
+from parsimony import SQLiteCatalogStore, InMemoryDataStore
 ```
 
 ### `SQLiteCatalogStore`
@@ -478,7 +478,7 @@ data_store = InMemoryDataStore()
 ## Embedding Providers
 
 ```python
-from ockham import LiteLLMEmbeddingProvider
+from parsimony import LiteLLMEmbeddingProvider
 ```
 
 ### `LiteLLMEmbeddingProvider`
@@ -490,13 +490,13 @@ LiteLLMEmbeddingProvider(
 )
 ```
 
-Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install ockham[embeddings]`.
+Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony[embeddings]`.
 
 - Batches embedding requests at 100 texts per call (`_EMBED_BATCH_SIZE = 100`; hardcoded).
 - Applies L2 normalization to all returned vectors.
 
 ```python
-from ockham import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
+from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
 
 provider = LiteLLMEmbeddingProvider(model="gemini/text-embedding-004", dimension=768)
 catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
@@ -507,7 +507,7 @@ catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 ## Utility Functions
 
 ```python
-from ockham import (
+from parsimony import (
     build_embedding_text,
     code_token,
     normalize_code,
@@ -528,10 +528,10 @@ from ockham import (
 
 ## Factory Functions
 
-These functions are not in `__all__` but are the primary entry points for production use. Import from `ockham.connectors`.
+These functions are not in `__all__` but are the primary entry points for production use. Import from `parsimony.connectors`.
 
 ```python
-from ockham.connectors import (
+from parsimony.connectors import (
     build_fetch_connectors_from_env,
     build_connectors_from_env,
 )
@@ -613,7 +613,7 @@ graph LR
 
 ### FRED Connectors
 
-**Module**: `ockham.connectors.fred`  
+**Module**: `parsimony.connectors.fred`  
 **Required dependency**: `FRED_API_KEY` environment variable
 
 #### `fred_search`
@@ -671,8 +671,8 @@ Enumerate all series in a FRED release. Returns a `SemanticTableResult` with KEY
 
 ### SDMX Connectors
 
-**Module**: `ockham.connectors.sdmx`  
-**Required dependency**: `sdmx1` package (`pip install ockham[sdmx]`)  
+**Module**: `parsimony.connectors.sdmx`  
+**Required dependency**: `sdmx1` package (`pip install parsimony[sdmx]`)  
 **No API key required**
 
 #### `sdmx_fetch`
@@ -763,7 +763,7 @@ Enumerate all series keys in an SDMX dataset. Returns KEY and TITLE columns. Sui
 
 ### FMP Connectors
 
-**Module**: `ockham.connectors.fmp`  
+**Module**: `parsimony.connectors.fmp`  
 **Required dependency**: `FMP_API_KEY` environment variable
 
 All FMP connectors share the tag `["equity"]` unless otherwise noted. Utility connectors have the additional tag `"utility"`.
@@ -934,7 +934,7 @@ Fetch the top market movers (largest price changers) for the current session.
 
 ### FMP Screener Connector
 
-**Module**: `ockham.connectors.fmp_screener`  
+**Module**: `parsimony.connectors.fmp_screener`  
 **Required dependency**: `FMP_API_KEY`
 
 #### `fmp_screener`
@@ -968,7 +968,7 @@ Screens companies using FMP's screener endpoint, then concurrently fetches key m
 
 ### SEC Edgar Connector
 
-**Module**: `ockham.connectors.sec_edgar`  
+**Module**: `parsimony.connectors.sec_edgar`  
 **Required dependency**: `edgartools` package (install separately: `pip install edgartools`)  
 **No API key required** (optional `SEC_EDGAR_USER_AGENT` / `EDGAR_IDENTITY` for request identification)
 
@@ -994,7 +994,7 @@ Fetch SEC Edgar filings for a company. Uses the `edgartools` synchronous library
 
 ### EODHD Connector
 
-**Module**: `ockham.connectors.eodhd`  
+**Module**: `parsimony.connectors.eodhd`  
 **Required dependency**: `EODHD_API_KEY` environment variable
 
 #### `eodhd_fetch`
@@ -1020,7 +1020,7 @@ Fetch historical end-of-day price data from EODHD.
 
 ### IBKR Connector
 
-**Module**: `ockham.connectors.ibkr`  
+**Module**: `parsimony.connectors.ibkr`  
 **Required dependency**: `IBKR_WEB_API_BASE_URL` environment variable (local gateway URL)
 
 #### `ibkr_fetch`
@@ -1047,7 +1047,7 @@ Fetch historical market data from a locally running Interactive Brokers Web API 
 
 ### Polymarket Connectors
 
-**Module**: `ockham.connectors.polymarket`  
+**Module**: `parsimony.connectors.polymarket`  
 **No API key or additional dependencies required**
 
 #### `polymarket_gamma_fetch`
@@ -1086,7 +1086,7 @@ Fetch order book and trade data from Polymarket's Central Limit Order Book (CLOB
 
 ### Financial Reports Connector
 
-**Module**: `ockham.connectors.financial_reports`  
+**Module**: `parsimony.connectors.financial_reports`  
 **Required dependencies**: `FINANCIAL_REPORTS_API_KEY` environment variable + `financial-reports-generated-client` SDK (install separately)
 
 #### `financial_reports_fetch`

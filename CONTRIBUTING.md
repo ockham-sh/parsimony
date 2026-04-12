@@ -1,4 +1,4 @@
-# Contributing to ockham
+# Contributing to parsimony
 
 Thank you for your interest in contributing! This guide covers everything from setting up your development environment to submitting a pull request.
 
@@ -9,8 +9,8 @@ Thank you for your interest in contributing! This guide covers everything from s
 [uv](https://docs.astral.sh/uv/) is the fastest way to get a working environment:
 
 ```bash
-git clone https://github.com/<your-username>/ockham.git
-cd ockham
+git clone https://github.com/<your-username>/parsimony.git
+cd parsimony
 uv venv && source .venv/bin/activate
 uv pip install -e ".[sdmx,embeddings]"
 uv pip install pytest pytest-asyncio ruff mypy
@@ -21,8 +21,8 @@ uv pip install pytest pytest-asyncio ruff mypy
 Standard pip works fine if you prefer it:
 
 ```bash
-git clone https://github.com/<your-username>/ockham.git
-cd ockham
+git clone https://github.com/<your-username>/parsimony.git
+cd parsimony
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[sdmx,embeddings]"
 pip install pytest pytest-asyncio ruff mypy
@@ -50,7 +50,7 @@ ruff check .
 ruff format --check .
 
 # Type checking
-mypy ockham/
+mypy parsimony/
 ```
 
 Run all checks before submitting a PR. CI will run the same commands.
@@ -77,7 +77,7 @@ New connectors are the most common contribution. Here is the step-by-step proces
 
 ### 1. Create the connector module
 
-Add a new file in `ockham/connectors/`. Use `ockham/connectors/fred.py` as the reference implementation. Your module needs:
+Add a new file in `parsimony/connectors/`. Use `parsimony/connectors/fred.py` as the reference implementation. Your module needs:
 
 - **Pydantic params model(s)** -- one model per connector function, defining the user-facing parameters with types, defaults, and descriptions.
 - **OutputConfig** (optional but recommended) -- declares column roles (KEY, TITLE, DATA, METADATA) for typed results. Required for connectors that will feed the catalog.
@@ -88,12 +88,12 @@ For detailed patterns, see [docs/connector-implementation-guide.md](docs/connect
 
 ### 2. Wire up the factory (if applicable)
 
-If your connector requires an API key, add it to `build_connectors_from_env()` and `build_fetch_connectors_from_env()` in `ockham/connectors/__init__.py`. Follow the existing pattern:
+If your connector requires an API key, add it to `build_connectors_from_env()` and `build_fetch_connectors_from_env()` in `parsimony/connectors/__init__.py`. Follow the existing pattern:
 
 ```python
 my_key = _env.get("MY_API_KEY")
 if my_key:
-    from ockham.connectors.my_source import CONNECTORS as MY_SOURCE
+    from parsimony.connectors.my_source import CONNECTORS as MY_SOURCE
     result = result + MY_SOURCE.bind_deps(api_key=my_key)
 ```
 
@@ -123,7 +123,7 @@ Before submitting your PR, verify:
 - [ ] `CONNECTORS` bundle exported from the module
 - [ ] Tests pass: `pytest tests/ -v`
 - [ ] Linting passes: `ruff check .`
-- [ ] Type checking passes: `mypy ockham/`
+- [ ] Type checking passes: `mypy parsimony/`
 - [ ] No hardcoded API keys or secrets in the source
 - [ ] User guide and env var table updated
 
@@ -148,7 +148,7 @@ Look for issues labeled `good first issue` in the issue tracker.
 
 ## Repository Structure
 
-This repository is a read-only mirror of `packages/ockham/` in our development monorepo. Your PR will be reviewed here and synced upstream.
+This repository is a read-only mirror of `packages/parsimony/` in our development monorepo. Your PR will be reviewed here and synced upstream.
 
 ## Code of Conduct
 

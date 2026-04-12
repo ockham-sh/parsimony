@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from ockham.result import (
+from parsimony.result import (
     Column,
     ColumnRole,
     OutputConfig,

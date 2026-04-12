@@ -1,7 +1,7 @@
 """Quickstart: Search and fetch US GDP from FRED.
 
 Setup:
-    pip install ockham
+    pip install parsimony
     export FRED_API_KEY="your-key-here"
 
     Register for a free FRED API key at:
@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ockham.connectors.fred import fred_fetch, fred_search
+from parsimony.connectors.fred import fred_fetch, fred_search
 
 
 async def main() -> None:

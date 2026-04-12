@@ -9,8 +9,8 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from ockham.catalog.catalog import Catalog, _entries_from_table_result
-from ockham.catalog.models import (
+from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+from parsimony.catalog.models import (
     EmbeddingProvider,
     IndexResult,
     SeriesEntry,
@@ -19,10 +19,10 @@ from ockham.catalog.models import (
     code_token,
     normalize_code,
 )
-from ockham.stores.catalog_store import CatalogStore
-from ockham.connector import Connectors, enumerator
-from ockham.connectors.sdmx import institution_source_from_dataset_key
-from ockham.result import (
+from parsimony.stores.catalog_store import CatalogStore
+from parsimony.connector import Connectors, enumerator
+from parsimony.connectors.sdmx import institution_source_from_dataset_key
+from parsimony.result import (
     Column,
     ColumnRole,
     OutputConfig,
@@ -46,7 +46,7 @@ def test_institution_source_from_dataset_key() -> None:
 
 
 def test_sdmx_agency_namespace() -> None:
-    from ockham.connectors.sdmx import sdmx_agency_namespace
+    from parsimony.connectors.sdmx import sdmx_agency_namespace
 
     assert sdmx_agency_namespace("ECB") == "sdmx_ecb_datasets"
 
@@ -122,7 +122,7 @@ class _RecordingStore(CatalogStore):
 
 @pytest.mark.asyncio
 async def test_fred_enumerate_requires_bound_api_key() -> None:
-    from ockham.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
 
     with pytest.raises(TypeError, match="unbound dependencies"):
         await enumerate_fred_release(FredEnumerateParams(release_id=1))
@@ -324,11 +324,11 @@ async def test_fred_enumerate_connector_produces_entries(monkeypatch: pytest.Mon
         ]
 
     monkeypatch.setattr(
-        "ockham.connectors.fred._enumerate_release_series",
+        "parsimony.connectors.fred._enumerate_release_series",
         _fake_enumerate,
     )
 
-    from ockham.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
 
     conn = enumerate_fred_release.bind_deps(api_key="dummy")
     res = await conn(FredEnumerateParams(release_id=51))
@@ -365,11 +365,11 @@ async def test_fred_enumerate_entries_have_metadata(
         ]
 
     monkeypatch.setattr(
-        "ockham.connectors.fred._enumerate_release_series",
+        "parsimony.connectors.fred._enumerate_release_series",
         _fake_enumerate,
     )
 
-    from ockham.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
 
     conn = enumerate_fred_release.bind_deps(api_key="dummy")
     res = await conn(FredEnumerateParams(release_id=51))

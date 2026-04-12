@@ -6,7 +6,7 @@ Demonstrates the FMP equity research workflow:
 3. Fetch recent historical prices for that symbol.
 
 Setup:
-    pip install ockham
+    pip install parsimony
     export FMP_API_KEY="your-key-here"
 
     FMP API keys are available at https://financialmodelingprep.com/
@@ -24,9 +24,9 @@ from __future__ import annotations
 import asyncio
 import os
 
-from ockham import Connectors
-from ockham.connectors.fmp import CONNECTORS as FMP
-from ockham.connectors.fmp_screener import CONNECTORS as FMP_SCREENER
+from parsimony import Connectors
+from parsimony.connectors.fmp import CONNECTORS as FMP
+from parsimony.connectors.fmp_screener import CONNECTORS as FMP_SCREENER
 
 
 async def main() -> None:

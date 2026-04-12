@@ -1,9 +1,9 @@
-site_name: ockham
-site_url: https://docs.ockham.sh
+site_name: parsimony
+site_url: https://docs.parsimony.dev
 site_description: Typed, composable data connectors with searchable catalogs for Python
 site_author: Ockham.sh
-repo_url: https://github.com/ockham-sh/ockham
-repo_name: ockham-sh/ockham
+repo_url: https://github.com/ockham-sh/parsimony
+repo_name: ockham-sh/parsimony
 edit_uri: edit/main/docs/
 
 theme:
@@ -67,6 +67,6 @@ plugins:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/ockham-sh/ockham
+      link: https://github.com/ockham-sh/parsimony
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/ockham/
+      link: https://pypi.org/project/parsimony/

@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from ockham.stores.supabase import SupabaseCatalogStore
+from parsimony.stores.supabase import SupabaseCatalogStore
 
 
 @pytest.mark.asyncio

@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from ockham.catalog.catalog import Catalog
-from ockham.connectors.riksbank import CONNECTORS as RIKSBANK
-from ockham.connectors.treasury import CONNECTORS as TREASURY
-from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+from parsimony.catalog.catalog import Catalog
+from parsimony.connectors.riksbank import CONNECTORS as RIKSBANK
+from parsimony.connectors.treasury import CONNECTORS as TREASURY
+from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 
 @pytest.mark.integration

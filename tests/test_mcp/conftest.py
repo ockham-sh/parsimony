@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, Field
 
-from ockham.connector import Connectors, connector
-from ockham.result import Column, ColumnRole, OutputConfig
+from parsimony.connector import Connectors, connector
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 # ---------------------------------------------------------------------------

@@ -4,25 +4,25 @@
 
 ### What Python version do I need?
 
-ockham requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
+parsimony requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
 
 ### What are the optional extras?
 
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `sdmx` | `pip install ockham[sdmx]` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
-| `embeddings` | `pip install ockham[embeddings]` | Semantic catalog search via LiteLLM embeddings |
+| `sdmx` | `pip install parsimony[sdmx]` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
+| `embeddings` | `pip install parsimony[embeddings]` | Semantic catalog search via LiteLLM embeddings |
 | `sec` | `pip install edgartools` | SEC Edgar connector (installed separately) |
 
 Install multiple extras at once:
 
 ```bash
-pip install "ockham[sdmx,embeddings]"
+pip install "parsimony[sdmx,embeddings]"
 ```
 
 ### I get `ModuleNotFoundError: No module named 'sdmx'`
 
-Install the SDMX extra: `pip install ockham[sdmx]`. The `sdmx1` library is not included in the base install.
+Install the SDMX extra: `pip install parsimony[sdmx]`. The `sdmx1` library is not included in the base install.
 
 ### I get `ModuleNotFoundError: No module named 'edgartools'`
 
@@ -63,7 +63,7 @@ python my_script.py
 In code, the `build_connectors_from_env()` factory reads `os.environ` and injects keys automatically:
 
 ```python
-from ockham.connectors import build_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 
 connectors = build_connectors_from_env()
 ```
@@ -71,7 +71,7 @@ connectors = build_connectors_from_env()
 You can also bind keys manually on individual connectors:
 
 ```python
-from ockham.connectors.fred import fred_fetch
+from parsimony.connectors.fred import fred_fetch
 
 bound = fred_fetch.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")
@@ -107,7 +107,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### How do I use ockham in a Jupyter notebook?
+### How do I use parsimony in a Jupyter notebook?
 
 Jupyter notebooks already run an event loop. Use `await` directly in a cell:
 
@@ -124,7 +124,7 @@ You are calling `await` in a synchronous context. Either:
 
 ### I get `RuntimeError: This event loop is already running`
 
-This happens when calling `asyncio.run()` inside an environment that already has a running event loop (e.g., Jupyter). Use `await` directly instead of `asyncio.run()`. If you need to use ockham from synchronous library code, consider `nest_asyncio`:
+This happens when calling `asyncio.run()` inside an environment that already has a running event loop (e.g., Jupyter). Use `await` directly instead of `asyncio.run()`. If you need to use parsimony from synchronous library code, consider `nest_asyncio`:
 
 ```python
 import nest_asyncio
@@ -140,7 +140,7 @@ nest_asyncio.apply()
 `build_connectors_from_env()` requires `FRED_API_KEY` and `FMP_API_KEY` to be set. If you only need one provider, build connectors manually instead:
 
 ```python
-from ockham.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.fred import CONNECTORS as FRED
 
 fred = FRED.bind_deps(api_key="your-key")
 ```
@@ -150,7 +150,7 @@ fred = FRED.bind_deps(api_key="your-key")
 You called a connector that requires API keys without binding them first. Call `bind_deps()`:
 
 ```python
-from ockham.connectors.fred import fred_fetch
+from parsimony.connectors.fred import fred_fetch
 
 bound = fred_fetch.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")
@@ -172,12 +172,12 @@ If a connector raises `ValueError("Returned an empty DataFrame")`:
 - For SDMX, verify the `dataset_key` format includes the agency prefix (e.g., `ECB-EXR`, not just `EXR`)
 - For FRED search, try shorter or more general search terms
 
-### `ImportError: cannot import name 'Catalog' from 'ockham'`
+### `ImportError: cannot import name 'Catalog' from 'parsimony'`
 
 The class is named `Catalog`, not `Catalog`:
 
 ```python
-from ockham import Catalog
+from parsimony import Catalog
 ```
 
 ---
@@ -228,7 +228,7 @@ Use `with_callback` to attach monitoring hooks:
 ```python
 import logging
 
-logger = logging.getLogger("ockham.monitor")
+logger = logging.getLogger("parsimony.monitor")
 
 async def log_call(result):
     logger.info(

@@ -5,8 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from ockham.mcp.bridge import connector_to_tool, result_to_content
-from ockham.result import Provenance, Result
+from parsimony.mcp.bridge import connector_to_tool, result_to_content
+from parsimony.result import Provenance, Result
 
 
 class TestConnectorToTool:

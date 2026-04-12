@@ -39,7 +39,7 @@ def _has_key(name: str) -> bool:
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_treasury_fetch():
-    from ockham.connectors.treasury import TreasuryFetchParams, treasury_fetch
+    from parsimony.connectors.treasury import TreasuryFetchParams, treasury_fetch
 
     result = await treasury_fetch(TreasuryFetchParams(
         endpoint="v2/accounting/od/debt_to_penny",
@@ -59,7 +59,7 @@ async def test_treasury_fetch():
 async def test_bls_fetch():
     if not _has_key("BLS_API_KEY"):
         pytest.skip("BLS_API_KEY not set")
-    from ockham.connectors.bls import BlsFetchParams, bls_fetch
+    from parsimony.connectors.bls import BlsFetchParams, bls_fetch
 
     conn = bls_fetch.bind_deps(api_key=os.environ["BLS_API_KEY"])
     result = await conn(BlsFetchParams(
@@ -80,7 +80,7 @@ async def test_bls_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_riksbank_fetch():
-    from ockham.connectors.riksbank import RiksbankFetchParams, riksbank_fetch
+    from parsimony.connectors.riksbank import RiksbankFetchParams, riksbank_fetch
 
     conn = riksbank_fetch.bind_deps(api_key="")
     result = await conn(RiksbankFetchParams(
@@ -98,7 +98,7 @@ async def test_riksbank_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_snb_fetch():
-    from ockham.connectors.snb import SnbFetchParams, snb_fetch
+    from parsimony.connectors.snb import SnbFetchParams, snb_fetch
 
     result = await snb_fetch(SnbFetchParams(
         cube_id="rendoblim",
@@ -116,7 +116,7 @@ async def test_snb_fetch():
 async def test_eia_fetch():
     if not _has_key("EIA_API_KEY"):
         pytest.skip("EIA_API_KEY not set")
-    from ockham.connectors.eia import EiaFetchParams, eia_fetch
+    from parsimony.connectors.eia import EiaFetchParams, eia_fetch
 
     conn = eia_fetch.bind_deps(api_key=os.environ["EIA_API_KEY"])
     result = await conn(EiaFetchParams(
@@ -134,7 +134,7 @@ async def test_eia_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_boe_fetch():
-    from ockham.connectors.boe import BoeFetchParams, boe_fetch
+    from parsimony.connectors.boe import BoeFetchParams, boe_fetch
 
     result = await boe_fetch(BoeFetchParams(
         series_ids="IUDBEDR",
@@ -151,7 +151,7 @@ async def test_boe_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_destatis_fetch():
-    from ockham.connectors.destatis import DestatisFetchParams, destatis_fetch
+    from parsimony.connectors.destatis import DestatisFetchParams, destatis_fetch
 
     conn = destatis_fetch.bind_deps(username="GAST", password="GAST")
     try:
@@ -177,7 +177,7 @@ async def test_destatis_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_enumerate_treasury():
-    from ockham.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
+    from parsimony.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
 
     result = await enumerate_treasury(TreasuryEnumerateParams())
     df = result.data
@@ -191,7 +191,7 @@ async def test_enumerate_treasury():
 async def test_enumerate_bls():
     if not _has_key("BLS_API_KEY"):
         pytest.skip("BLS_API_KEY not set")
-    from ockham.connectors.bls import BlsEnumerateParams, enumerate_bls
+    from parsimony.connectors.bls import BlsEnumerateParams, enumerate_bls
 
     conn = enumerate_bls.bind_deps(api_key=os.environ["BLS_API_KEY"])
     result = await conn(BlsEnumerateParams())
@@ -204,7 +204,7 @@ async def test_enumerate_bls():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_enumerate_riksbank():
-    from ockham.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
+    from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
 
     conn = enumerate_riksbank.bind_deps(api_key="")
     result = await conn(RiksbankEnumerateParams())
@@ -219,7 +219,7 @@ async def test_enumerate_riksbank():
 async def test_enumerate_eia():
     if not _has_key("EIA_API_KEY"):
         pytest.skip("EIA_API_KEY not set")
-    from ockham.connectors.eia import EiaEnumerateParams, enumerate_eia
+    from parsimony.connectors.eia import EiaEnumerateParams, enumerate_eia
 
     conn = enumerate_eia.bind_deps(api_key=os.environ["EIA_API_KEY"])
     result = await conn(EiaEnumerateParams())
@@ -232,7 +232,7 @@ async def test_enumerate_eia():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_enumerate_destatis():
-    from ockham.connectors.destatis import DestatisEnumerateParams, enumerate_destatis
+    from parsimony.connectors.destatis import DestatisEnumerateParams, enumerate_destatis
 
     conn = enumerate_destatis.bind_deps(username="GAST", password="GAST")
     try:
@@ -253,9 +253,9 @@ async def test_enumerate_destatis():
 @pytest.mark.asyncio
 async def test_build_and_search_treasury_catalog(tmp_path):
     """Full pipeline: enumerate → index → SQLite FTS search."""
-    from ockham.catalog.catalog import Catalog, _entries_from_table_result
-    from ockham.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
-    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
+    from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     # 1) Enumerate
     result = await enumerate_treasury(TreasuryEnumerateParams())
@@ -288,9 +288,9 @@ async def test_build_and_search_bls_catalog(tmp_path):
     if not _has_key("BLS_API_KEY"):
         pytest.skip("BLS_API_KEY not set")
 
-    from ockham.catalog.catalog import Catalog, _entries_from_table_result
-    from ockham.connectors.bls import BlsEnumerateParams, enumerate_bls
-    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.connectors.bls import BlsEnumerateParams, enumerate_bls
+    from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_bls.bind_deps(api_key=os.environ["BLS_API_KEY"])
     result = await conn(BlsEnumerateParams())
@@ -313,9 +313,9 @@ async def test_build_and_search_bls_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_build_and_search_riksbank_catalog(tmp_path):
     """Full pipeline: Riksbank enumerate → index → search."""
-    from ockham.catalog.catalog import Catalog, _entries_from_table_result
-    from ockham.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
-    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
+    from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_riksbank.bind_deps(api_key="")
     result = await conn(RiksbankEnumerateParams())
@@ -341,10 +341,10 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_multi_provider_catalog_search(tmp_path):
     """Build a catalog from multiple providers and search across all."""
-    from ockham.catalog.catalog import Catalog, _entries_from_table_result
-    from ockham.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
-    from ockham.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
-    from ockham.stores.sqlite_catalog import SQLiteCatalogStore
+    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
+    from parsimony.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
+    from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     db_path = tmp_path / "multi_catalog.db"
     store = SQLiteCatalogStore(db_path)
@@ -393,7 +393,7 @@ async def test_multi_provider_catalog_search(tmp_path):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_bde_fetch():
-    from ockham.connectors.bde import BdeFetchParams, bde_fetch
+    from parsimony.connectors.bde import BdeFetchParams, bde_fetch
 
     result = await bde_fetch(BdeFetchParams(
         key="D_1NBAF472",
@@ -411,7 +411,7 @@ async def test_bde_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_boc_fetch():
-    from ockham.connectors.boc import BocFetchParams, boc_fetch
+    from parsimony.connectors.boc import BocFetchParams, boc_fetch
 
     result = await boc_fetch(BocFetchParams(
         series_name="FXUSDCAD",
@@ -430,7 +430,7 @@ async def test_boc_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_boj_fetch():
-    from ockham.connectors.boj import BojFetchParams, boj_fetch
+    from parsimony.connectors.boj import BojFetchParams, boj_fetch
 
     result = await boj_fetch(BojFetchParams(
         db="FM08",
@@ -449,7 +449,7 @@ async def test_boj_fetch():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_enumerate_boc():
-    from ockham.connectors.boc import BocEnumerateParams, enumerate_boc
+    from parsimony.connectors.boc import BocEnumerateParams, enumerate_boc
 
     result = await enumerate_boc(BocEnumerateParams())
     assert result.data is not None

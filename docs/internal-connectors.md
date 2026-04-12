@@ -7,7 +7,7 @@ Every organization has its own Postgres schemas, Snowflake warehouses, and S3 bu
 layouts. Writing generic connectors for these would be either too opaque (a single
 `run_sql` blob) or too rigid (one schema per connector).
 
-Instead, ockham gives you the **layer above** the raw client:
+Instead, parsimony gives you the **layer above** the raw client:
 
 - **`@connector` / `@enumerator`** -- typed parameter models, provenance tracking,
   and agent-discoverable schemas via `to_llm()`.
@@ -39,8 +39,8 @@ import asyncpg
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from ockham.connector import Connectors, connector, enumerator
-from ockham.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.connector import Connectors, connector, enumerator
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +169,8 @@ import pandas as pd
 import snowflake.connector
 from pydantic import BaseModel, Field
 
-from ockham.connector import Connectors, connector, enumerator
-from ockham.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.connector import Connectors, connector, enumerator
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +311,8 @@ import pandas as pd
 import pyarrow.parquet as pq
 from pydantic import BaseModel, Field
 
-from ockham.connector import Connectors, connector, enumerator
-from ockham.result import Column, ColumnRole, OutputConfig
+from parsimony.connector import Connectors, connector, enumerator
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 # ---------------------------------------------------------------------------
@@ -433,8 +433,8 @@ an agent or CLI can query:
 
 ```python
 import os
-from ockham.connectors.fred import CONNECTORS as FRED
-from ockham.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX
+from parsimony.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX
 from my_connectors.postgres import CONNECTORS as PG
 from my_connectors.snowflake import CONNECTORS as SF
 from my_connectors.s3 import CONNECTORS as S3
@@ -449,7 +449,7 @@ all_connectors = (
 )
 
 # Auto-index into catalog on every fetch:
-from ockham import Catalog, SQLiteCatalogStore
+from parsimony import Catalog, SQLiteCatalogStore
 catalog = Catalog(SQLiteCatalogStore(":memory:"))
 all_connectors = all_connectors.with_callback(catalog.index_result)
 ```

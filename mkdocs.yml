@@ -39,13 +39,17 @@ theme:
 
 nav:
   - Home: index.md
-  - User Guide: user-guide.md
+  - Getting Started:
+      - Quick Start: quickstart.md
+      - User Guide: user-guide.md
   - Guides:
-      - Building Connectors: connector-implementation-guide.md
-      - SEC Edgar: sec-edgar-connectors.md
+      - Building Connectors: connector-guide.md
+      - Internal Connectors: internal-connectors.md
+      - MCP Setup: mcp-setup.md
+      - Cookbook: cookbook.md
+      - FAQ: faq.md
   - API Reference: api-reference.md
   - Architecture: architecture.md
-  - Deployment: deployment.md
 
 markdown_extensions:
   - pymdownx.highlight:

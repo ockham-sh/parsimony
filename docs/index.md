@@ -55,8 +55,9 @@ Connectors compose into bundles via `Connectors`, bind dependencies once with `b
 
 ## Next Steps
 
+- [Quick Start](quickstart.md) — get up and running in 5 minutes
 - [User Guide](user-guide.md) — detailed walkthrough of all features
-- [Building Connectors](connector-implementation-guide.md) — create your own data connectors
+- [Building Connectors](connector-guide.md) — create your own data connectors
 - [API Reference](api-reference.md) — complete API documentation
 - [Architecture](architecture.md) — system design and internals
 

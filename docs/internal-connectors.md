@@ -2,7 +2,7 @@
 
 ## Philosophy
 
-Ockham does not ship database or cloud-storage connectors. That is intentional.
+Parsimony does not ship database or cloud-storage connectors. That is intentional.
 Every organization has its own Postgres schemas, Snowflake warehouses, and S3 bucket
 layouts. Writing generic connectors for these would be either too opaque (a single
 `run_sql` blob) or too rigid (one schema per connector).
@@ -19,7 +19,7 @@ Instead, parsimony gives you the **layer above** the raw client:
   tools (charts, exports, catalog indexing) work automatically.
 
 You bring the client library (`asyncpg`, `snowflake-connector-python`, `boto3`).
-Ockham wraps it in a connector that an agent or CLI can discover and call.
+Parsimony wraps it in a connector that an agent or CLI can discover and call.
 
 ---
 

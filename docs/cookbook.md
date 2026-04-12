@@ -1,4 +1,4 @@
-# Ockham Cookbook
+# Parsimony Cookbook
 
 Ten practical recipes. Each is self-contained and runnable as a standalone script.
 

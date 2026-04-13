@@ -20,6 +20,7 @@ from typing import Annotated, Any
 
 logger = logging.getLogger(__name__)
 
+import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
@@ -199,8 +200,6 @@ async def boe_fetch(params: BoeFetchParams) -> Result:
 
     Uses the BOE XML endpoint which returns series metadata + observations.
     """
-    http = HttpClient(_BASE_URL, headers={"User-Agent": _USER_AGENT})
-
     req_params: dict[str, Any] = {
         "CodeVer": "new",
         "xml.x": "yes",
@@ -211,9 +210,10 @@ async def boe_fetch(params: BoeFetchParams) -> Result:
     if params.end_date:
         req_params["Dateto"] = _format_boe_date(params.end_date)
 
-    response = await http.request(
-        "GET", "/boeapps/database/_iadb-fromshowcolumns.asp", params=req_params,
-    )
+    async with httpx.AsyncClient(
+        timeout=30.0, headers={"User-Agent": _USER_AGENT}, follow_redirects=True,
+    ) as client:
+        response = await client.get(_XML_URL, params=req_params)
     response.raise_for_status()
 
     # Detect error page redirect

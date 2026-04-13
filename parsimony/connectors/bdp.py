@@ -124,7 +124,7 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
 
     Uses the BPstat API. Two-step workflow: domain → dataset → observations.
     """
-    url = f"{_BASE_URL}/domains/{params.domain_id}/datasets/{params.dataset_id}"
+    url = f"{_BASE_URL}/domains/{params.domain_id}/datasets/{params.dataset_id}/"
     req_params: dict[str, str] = {"lang": params.lang.upper()}
 
     if params.series_ids:
@@ -134,7 +134,7 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
     if params.end_date:
         req_params["obs_to"] = params.end_date
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
         response = await client.get(url, params=req_params)
         response.raise_for_status()
         json_data = response.json()
@@ -156,8 +156,14 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
         elif isinstance(index, list):
             dates = index
 
-    values = json_data.get("value", [])
-    if not dates or not values:
+    raw_values = json_data.get("value", [])
+    # JSON-stat value can be a dict with string keys or a list
+    if isinstance(raw_values, dict):
+        values_list: list[Any] = [raw_values.get(str(i)) for i in range(max(int(k) for k in raw_values) + 1)] if raw_values else []
+    else:
+        values_list = list(raw_values)
+
+    if not dates or not values_list:
         raise ValueError(
             f"No observations for domain={params.domain_id}, dataset={params.dataset_id}"
         )
@@ -165,7 +171,7 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
     # Extract series metadata
     series_info = json_data.get("extension", {}).get("series", [])
     n_dates = len(dates)
-    n_series = len(values) // n_dates if n_dates else 1
+    n_series = len(values_list) // n_dates if n_dates else 1
 
     rows: list[dict[str, Any]] = []
     for s_idx in range(n_series):
@@ -174,9 +180,9 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
 
         for d_idx, date_str in enumerate(dates):
             val_idx = s_idx * n_dates + d_idx
-            if val_idx >= len(values):
+            if val_idx >= len(values_list):
                 break
-            raw = values[val_idx]
+            raw = values_list[val_idx]
             try:
                 value = float(raw) if raw is not None else None
             except (ValueError, TypeError):

@@ -68,8 +68,8 @@ class BdeFetchParams(BaseModel):
     time_range: str | None = Field(
         default=None,
         description=(
-            "Time range: frequency-based code (3M, 12M, 30M, 60M, MAX) "
-            "or year (e.g. 2024). Default uses the smallest range for the series frequency."
+            "Time range: 30M, 60M, MAX, or a year (e.g. 2024). "
+            "Default uses the full available range."
         ),
     )
     lang: str = Field(default="en", description="Language: en or es")
@@ -81,6 +81,20 @@ class BdeFetchParams(BaseModel):
         if not v:
             raise ValueError("At least one series code required")
         return v
+
+    @field_validator("time_range")
+    @classmethod
+    def _valid_range(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        v = v.strip()
+        # BdE API rejects short range codes (3M, 12M); accept 30M, 60M, MAX, or year
+        _VALID_RANGES = {"30M", "60M", "MAX"}
+        if v.upper() in _VALID_RANGES or v.isdigit():
+            return v
+        raise ValueError(
+            f"Invalid time_range '{v}'. Use 30M, 60M, MAX, or a year (e.g. 2024)."
+        )
 
     @field_validator("lang")
     @classmethod

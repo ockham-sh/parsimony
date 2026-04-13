@@ -274,7 +274,6 @@ REFERENCE_GENERIC_OUTPUT = OutputConfig(
 class FrCompaniesSearchParams(BaseModel):
     """Parameters for searching/listing companies on Financial Reports."""
 
-    search: str | None = Field(default=None, description="Full-text search query (company name)")
     countries: str | None = Field(
         default=None, description="Comma-separated ISO Alpha-2 country codes (e.g. 'DE,GB,FR')"
     )

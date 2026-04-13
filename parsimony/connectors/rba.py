@@ -247,8 +247,17 @@ def _parse_csv_metadata(text: str, csv_url: str) -> list[dict[str, str]]:
 @connector(output=RBA_FETCH_OUTPUT, tags=["macro", "au"])
 async def rba_fetch(params: RbaFetchParams) -> Result:
     """Fetch RBA statistical table data by table ID."""
-    url = f"{_BASE_URL}/statistics/tables/csv/{params.table_id}.csv"
-    text = await _http_get(url)
+    tid = params.table_id
+    # RBA changed CSV naming: try "{id}-data.csv" first, fall back to "{id}.csv"
+    for suffix in ("-data.csv", ".csv"):
+        url = f"{_BASE_URL}/statistics/tables/csv/{tid}{suffix}"
+        try:
+            text = await _http_get(url)
+            break
+        except Exception:
+            continue
+    else:
+        raise ValueError(f"RBA CSV not found for table: {tid} (tried -data.csv and .csv)")
 
     df = _parse_rba_csv(text, params.table_id)
     if df.empty:

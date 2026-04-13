@@ -11,7 +11,7 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
@@ -30,7 +30,10 @@ class Column(BaseModel):
 
     name: str
     dtype: str = "auto"
-    role: ColumnRole = ColumnRole.DATA
+    role: ColumnRole = Field(
+        default=ColumnRole.DATA,
+        validation_alias=AliasChoices("role", "kind"),
+    )
     mapped_name: str | None = None
     param_key: str | None = None
     description: str | None = None

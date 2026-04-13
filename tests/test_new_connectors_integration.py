@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import httpx
 import pandas as pd
 import pytest
 
@@ -83,11 +84,14 @@ async def test_riksbank_fetch():
     from parsimony.connectors.riksbank import RiksbankFetchParams, riksbank_fetch
 
     conn = riksbank_fetch.bind_deps(api_key="")
-    result = await conn(RiksbankFetchParams(
-        series_id="SEKEURPMI",
-        from_date="2024-01-01",
-        to_date="2024-03-01",
-    ))
+    try:
+        result = await conn(RiksbankFetchParams(
+            series_id="SEKEURPMI",
+            from_date="2024-01-01",
+            to_date="2024-03-01",
+        ))
+    except httpx.HTTPStatusError as exc:
+        pytest.skip(f"Riksbank API unavailable: {exc.response.status_code}")
     df = result.data
     assert len(df) > 0
     assert "series_id" in df.columns
@@ -207,7 +211,10 @@ async def test_enumerate_riksbank():
     from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
 
     conn = enumerate_riksbank.bind_deps(api_key="")
-    result = await conn(RiksbankEnumerateParams())
+    try:
+        result = await conn(RiksbankEnumerateParams())
+    except httpx.HTTPStatusError as exc:
+        pytest.skip(f"Riksbank API unavailable: {exc.response.status_code}")
     df = result.data
     assert len(df) > 10, f"Expected >10 Riksbank series, got {len(df)}"
     assert "series_id" in df.columns
@@ -318,7 +325,10 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
     from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_riksbank.bind_deps(api_key="")
-    result = await conn(RiksbankEnumerateParams())
+    try:
+        result = await conn(RiksbankEnumerateParams())
+    except httpx.HTTPStatusError as exc:
+        pytest.skip(f"Riksbank API unavailable: {exc.response.status_code}")
     entries = _entries_from_table_result(result)
     assert len(entries) > 5
 

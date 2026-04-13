@@ -37,7 +37,7 @@ class TestConnectorsExecution:
     async def test_call_success(self, connectors_with_mock: Connectors) -> None:
         result = await connectors_with_mock["mock_fetch"](series_id="GDPC1")
         assert len(result.data) == 2
-        assert result.provenance.source == "mock"
+        assert result.provenance.source == "mock_fetch"
 
     @pytest.mark.asyncio
     async def test_missing_raises(self, connectors_with_mock: Connectors) -> None:

@@ -45,7 +45,6 @@ from parsimony.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from parsimony.stores.catalog_store import CatalogStore
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -54,6 +53,7 @@ from parsimony.result import (
     Result,
     SemanticTableResult,
 )
+from parsimony.stores.catalog_store import CatalogStore
 
 __all__ = [
     # Core abstractions

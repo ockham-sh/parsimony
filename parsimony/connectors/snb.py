@@ -7,11 +7,10 @@ No authentication required.
 from __future__ import annotations
 
 import asyncio
-import csv
 import io
 import logging
 import re
-from typing import Annotated, Any
+from typing import Annotated
 
 import pandas as pd
 

@@ -12,8 +12,6 @@ Discovery uses a cascading strategy:
 from __future__ import annotations
 
 import asyncio
-import csv
-import io
 import logging
 import re
 import xml.etree.ElementTree as ET

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from parsimony.catalog.models import SeriesEntry, catalog_key
+from parsimony.catalog.models import SeriesEntry
 from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 
@@ -264,7 +264,6 @@ async def test_vec_available(store: SQLiteCatalogStore) -> None:
 @pytest.mark.asyncio
 async def test_hybrid_search(tmp_path) -> None:
     """Hybrid RRF search combining FTS5 BM25 + vec0 cosine."""
-    import numpy as np
 
     dim = 4
     store = SQLiteCatalogStore(tmp_path / "hybrid.db", embedding_dim=dim)

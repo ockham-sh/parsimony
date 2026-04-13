@@ -8,7 +8,6 @@ No authentication required. Max 250 codes per request.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
 from typing import Annotated, Any
 
 import httpx

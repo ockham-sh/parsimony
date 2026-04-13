@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 from typing import Any
-
 from urllib.parse import quote
 
 import pandas as pd
@@ -524,7 +523,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
     for dim_id in dim_ids:
         labels = label_maps.get(dim_id, {})
         df[dim_id] = df[dim_id].map(
-            lambda code: _format_code_with_label(str(code), labels.get(str(code)))
+            lambda code, _lbl=labels: _format_code_with_label(str(code), _lbl.get(str(code)))
         )
     long_df = df[["series_key", "title", *dim_ids, "TIME_PERIOD", "value"]]
 
@@ -625,7 +624,7 @@ async def sdmx_codelist(params: SdmxCodelistParams) -> Result:
     dimension = params.dimension
     agency_id, dataset_id = dataset_key.split("-", 1)
 
-    def _run() -> tuple[pd.DataFrame, str, str | None]:
+    def _run() -> tuple[pd.DataFrame, str, str, str | None]:
         with _sdmx_client(agency_id) as client:
             _dataflow, dsd, msg = _fetch_dsd(client, dataset_id)
         for dim in dsd.dimensions:
@@ -715,7 +714,7 @@ async def sdmx_series_keys(params: SdmxSeriesKeysParams) -> Result:
         for dim_id in dim_ids:
             labels = label_maps.get(dim_id, {})
             sk_df[dim_id] = sk_df[dim_id].map(
-                lambda code: _format_code_with_label(str(code), labels.get(str(code)))
+                lambda code, _lbl=labels: _format_code_with_label(str(code), _lbl.get(str(code)))
             )
         sk_df["dataset_key"] = dataset_key
         cols = ["series_key", "title", "dataset_key"] + dim_ids

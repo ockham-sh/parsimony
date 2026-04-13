@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
 
-class ColumnRole(str, Enum):
+class ColumnRole(StrEnum):
     """Semantic role of a column in a tabular result."""
 
     DATA = "data"

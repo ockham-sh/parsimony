@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Tuple
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from parsimony.catalog.models import normalize_code, normalize_entity_code
 from parsimony.result import ColumnRole, SemanticTableResult
@@ -24,7 +23,7 @@ class LoadResult(BaseModel):
     errors: int = 0
 
 
-def _data_from_table_result(table: SemanticTableResult) -> List[Tuple[str, str, pd.DataFrame]]:
+def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, pd.DataFrame]]:
     """Extract (namespace, code, data_frame) per distinct KEY value.
 
     Namespace comes from the KEY column's ``namespace=...``. The returned DataFrame contains
@@ -70,7 +69,7 @@ def _data_from_table_result(table: SemanticTableResult) -> List[Tuple[str, str, 
 
     ns = normalize_code(key_col.namespace)
     raw_codes = df[key_name].dropna().unique()
-    out: List[Tuple[str, str, pd.DataFrame]] = []
+    out: list[tuple[str, str, pd.DataFrame]] = []
     for raw_code in raw_codes:
         code = normalize_entity_code(str(raw_code))
         mask = df[key_name] == raw_code
@@ -95,7 +94,7 @@ class DataStore(ABC):
         """Remove stored observations for one entity."""
 
     @abstractmethod
-    async def exists(self, keys: List[Tuple[str, str]]) -> set[Tuple[str, str]]:
+    async def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
         """Return the subset of (namespace, code) pairs that have stored data."""
 
     async def load_result(
@@ -117,7 +116,7 @@ class DataStore(ABC):
 
         keys = [(ns, code) for ns, code, _ in rows]
         if force:
-            existing: set[Tuple[str, str]] = set()
+            existing: set[tuple[str, str]] = set()
         else:
             existing = await self.exists(keys)
 

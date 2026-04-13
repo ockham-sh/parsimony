@@ -6,7 +6,6 @@ Uses guest credentials (GAST/GAST) by default.
 
 from __future__ import annotations
 
-import csv
 import io
 import re
 from typing import Annotated, Any

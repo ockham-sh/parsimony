@@ -94,9 +94,9 @@ def build_fetch_connectors_from_env(
 
     # --- Central bank connectors (no or optional API key) ---
     from parsimony.connectors.bde import FETCH_CONNECTORS as BDE_FETCH
+    from parsimony.connectors.bdp import FETCH_CONNECTORS as BDP_FETCH
     from parsimony.connectors.boc import FETCH_CONNECTORS as BOC_FETCH
     from parsimony.connectors.boj import FETCH_CONNECTORS as BOJ_FETCH
-    from parsimony.connectors.bdp import FETCH_CONNECTORS as BDP_FETCH
 
     result = result + BDE_FETCH + BOC_FETCH + BOJ_FETCH + BDP_FETCH
 
@@ -187,9 +187,9 @@ def build_connectors_from_env(
 
     # --- Central bank connectors (no or optional API key) ---
     from parsimony.connectors.bde import CONNECTORS as BDE
+    from parsimony.connectors.bdp import CONNECTORS as BDP
     from parsimony.connectors.boc import CONNECTORS as BOC
     from parsimony.connectors.boj import CONNECTORS as BOJ
-    from parsimony.connectors.bdp import CONNECTORS as BDP
 
     result = result + BDE + BOC + BOJ + BDP
 

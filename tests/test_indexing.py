@@ -17,9 +17,7 @@ from parsimony.catalog.models import (
     SeriesMatch,
     catalog_key,
     code_token,
-    normalize_code,
 )
-from parsimony.stores.catalog_store import CatalogStore
 from parsimony.connector import Connectors, enumerator
 from parsimony.connectors.sdmx import institution_source_from_dataset_key
 from parsimony.result import (
@@ -29,6 +27,7 @@ from parsimony.result import (
     Provenance,
     SemanticTableResult,
 )
+from parsimony.stores.catalog_store import CatalogStore
 
 
 class _AutoIndexFetchParams(BaseModel):

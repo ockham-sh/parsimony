@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import json
+import logging
 import sqlite3
 import struct
 from pathlib import Path
@@ -25,6 +26,8 @@ from parsimony.catalog.models import (
     series_match_from_entry,
 )
 from parsimony.stores.catalog_store import CatalogStore
+
+logger = logging.getLogger(__name__)
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS series_catalog (
@@ -110,7 +113,10 @@ def _try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
         sqlite_vec.load(conn)
         conn.enable_load_extension(False)
         return True
-    except (ImportError, Exception):
+    except ImportError:
+        return False
+    except (sqlite3.OperationalError, OSError):
+        logger.debug("sqlite-vec extension failed to load", exc_info=True)
         return False
 
 

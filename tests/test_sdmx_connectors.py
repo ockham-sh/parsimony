@@ -5,9 +5,8 @@ from __future__ import annotations
 import os
 from types import SimpleNamespace
 
-import pytest
-
 import pandas as pd
+import pytest
 
 from parsimony.connectors.sdmx import (
     SdmxCodelistParams,
@@ -74,7 +73,6 @@ def test_format_code_with_label_includes_parenthesized_label() -> None:
 
 
 def test_build_sdmx_title_uses_labels_dash_separated() -> None:
-    import pandas as pd
 
     row = pd.Series({"FREQ": "M", "REF_AREA": "US"})
     labels = {"FREQ": {"M": "Monthly"}, "REF_AREA": {"US": "United States"}}

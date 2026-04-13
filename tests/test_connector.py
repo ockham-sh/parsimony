@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, SemanticTableResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
+from pydantic import BaseModel
 
 from parsimony.connector import Connectors, loader
-from parsimony.stores.data_store import DataStore, LoadResult, _data_from_table_result
-from parsimony.stores.memory_data import InMemoryDataStore
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -15,7 +14,8 @@ from parsimony.result import (
     Provenance,
     SemanticTableResult,
 )
-from pydantic import BaseModel
+from parsimony.stores.data_store import DataStore, LoadResult, _data_from_table_result
+from parsimony.stores.memory_data import InMemoryDataStore
 
 
 class _Params(BaseModel):

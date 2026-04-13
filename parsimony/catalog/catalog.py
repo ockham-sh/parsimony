@@ -161,9 +161,13 @@ def _entries_from_table_result(
 # ---------------------------------------------------------------------------
 
 
-def _find_enumerator(connectors: object, namespace: str) -> object | None:
-    """Find an ``@enumerator`` whose KEY column declares *namespace*."""
-    for conn in connectors:  # type: ignore[union-attr]
+def _find_enumerator(connectors: Any, namespace: str) -> Any | None:
+    """Find an ``@enumerator`` whose KEY column declares *namespace*.
+
+    *connectors* is duck-typed: any iterable of objects with an ``output_config``
+    attribute whose ``columns`` expose ``role`` and ``namespace`` fields.
+    """
+    for conn in connectors:
         oc = conn.output_config
         if oc is None:
             continue
@@ -198,7 +202,7 @@ class Catalog:
         store: CatalogStore,
         *,
         embeddings: EmbeddingProvider | None = None,
-        connectors: object | None = None,
+        connectors: Any | None = None,  # duck-typed iterable of Connector-like objects
         catalog_repo: str = _CATALOG_REPO,
         catalog_branch: str = _CATALOG_BRANCH,
     ) -> None:
@@ -298,7 +302,10 @@ class Catalog:
                 continue
             try:
                 if embed:
-                    assert self._embeddings is not None
+                    if self._embeddings is None:
+                        raise RuntimeError(
+                            "embed=True requires an EmbeddingProvider, but none was configured"
+                        )
                     out = await _embed_batch(self._embeddings, to_insert)
                 else:
                     out = [r.model_copy() for r in to_insert]
@@ -445,8 +452,11 @@ class Catalog:
             self._merge_remote_db(str(cache_path))
             logger.info("Downloaded %s catalog from GitHub", namespace)
             return True
-        except Exception as exc:
+        except httpx.HTTPStatusError as exc:
             logger.debug("GitHub download failed for %s: %s", namespace, exc)
+            return False
+        except Exception as exc:
+            logger.warning("Unexpected error downloading catalog for %s: %s", namespace, exc)
             return False
 
     def _merge_remote_db(self, remote_path: str) -> None:
@@ -456,9 +466,16 @@ class Catalog:
         """
         from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
+        # Validate path stays under _CACHE_DIR to prevent path-traversal attacks.
+        resolved = Path(remote_path).resolve()
+        if not resolved.is_relative_to(_CACHE_DIR.resolve()):
+            raise ValueError(
+                f"Remote catalog path {resolved} is outside the cache directory {_CACHE_DIR.resolve()}"
+            )
+
         if isinstance(self._store, SQLiteCatalogStore):
             conn = self._store._get_conn()
-            conn.execute(f'ATTACH DATABASE "{remote_path}" AS remote')
+            conn.execute(f'ATTACH DATABASE "{resolved}" AS remote')
             try:
                 conn.execute(
                     "INSERT OR REPLACE INTO series_catalog SELECT * FROM remote.series_catalog"

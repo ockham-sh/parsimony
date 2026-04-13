@@ -190,7 +190,6 @@ async def compare_catalog(db_path: Path, csv_dir: Path) -> None:
     Prints per-namespace coverage: live count, legacy count, missing, extra.
     """
     import csv as csv_mod
-    import json
 
     store = SQLiteCatalogStore(db_path)
     namespaces = await store.list_namespaces()

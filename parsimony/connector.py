@@ -517,11 +517,11 @@ def _validate_loader_output(output: OutputConfig) -> None:
 def loader(
     *,
     output: OutputConfig,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    params: Optional[Type[BaseModel]] = None,
-    tags: Optional[List[str]] = None,
-    properties: Optional[Dict[str, Any]] = None,
+    name: str | None = None,
+    description: str | None = None,
+    params: type[BaseModel] | None = None,
+    tags: list[str] | None = None,
+    properties: dict[str, Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate an async **loader** — same as :func:`connector`, with a stricter ``output`` contract.
 

@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from parsimony.connector import Connectors, connector
 from parsimony.result import Column, ColumnRole, OutputConfig
 
-
 # ---------------------------------------------------------------------------
 # Param models
 # ---------------------------------------------------------------------------

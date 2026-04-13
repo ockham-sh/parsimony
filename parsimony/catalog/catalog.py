@@ -24,7 +24,7 @@ from parsimony.stores.catalog_store import CatalogStore
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DB_DIR = Path.home() / ".parsimony"
-_CATALOG_REPO = os.environ.get("PARSIMONY_CATALOG_REPO", "ockham-sh/catalogs")
+_CATALOG_REPO = os.environ.get("PARSIMONY_CATALOG_REPO", "ockham-sh/parsimony-catalogs")
 _CATALOG_BRANCH = os.environ.get("PARSIMONY_CATALOG_BRANCH", "main")
 _CACHE_DIR = (
     Path(os.environ["PARSIMONY_CACHE_DIR"])

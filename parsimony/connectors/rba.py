@@ -6,6 +6,10 @@ TLS fingerprint impersonation (falls back to httpx).
 
 Discovery scrapes the tables index page for CSV links, then parses
 each CSV's metadata header rows to extract series info.
+
+The fetch connector accepts a CSV filename (e.g. ``f1-data``) as the
+``table_id`` and resolves it against the live tables page. This avoids
+hard-coding URL patterns that break when the RBA renames files.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.result import (
@@ -31,7 +35,7 @@ from parsimony.result import (
 
 _BASE_URL = "https://www.rba.gov.au"
 _TABLES_URL = f"{_BASE_URL}/statistics/tables/"
-_CSV_LINK_PATTERN = re.compile(r'href="(/statistics/tables/csv/[^"]+\.csv)"')
+_CSV_LINK_PATTERN = re.compile(r'href="(/statistics/tables/csv/([^"]+)\.csv)"')
 _REQUEST_DELAY = 0.5
 
 _USER_AGENT = "parsimony-data/1.0 (https://parsimony.dev)"
@@ -58,8 +62,24 @@ class RbaFetchParams(BaseModel):
     """Parameters for fetching RBA statistical table data."""
 
     table_id: Annotated[str, Namespace("rba")] = Field(
-        ..., description="RBA table identifier (e.g. f01, a01, d01)"
+        ...,
+        description=(
+            "RBA CSV table identifier — the filename stem without .csv "
+            "(e.g. 'f1-data', 'a1-data', 'g1-data'). "
+            "Use the enumerator to discover available tables."
+        ),
     )
+
+    @field_validator("table_id")
+    @classmethod
+    def _normalize(cls, v: str) -> str:
+        v = v.strip().lower()
+        # Strip .csv suffix if accidentally included
+        if v.endswith(".csv"):
+            v = v[:-4]
+        if not v:
+            raise ValueError("table_id must be non-empty")
+        return v
 
 
 class RbaEnumerateParams(BaseModel):
@@ -115,6 +135,42 @@ async def _http_get(url: str) -> str:
         resp = await client.get(url)
         resp.raise_for_status()
         return resp.text
+
+
+# ---------------------------------------------------------------------------
+# URL resolution
+# ---------------------------------------------------------------------------
+
+
+async def _resolve_csv_url(table_id: str) -> str:
+    """Scrape the RBA tables page and resolve *table_id* to a full CSV URL.
+
+    Matches the table_id against known CSV filenames on the page.
+    """
+    html = await _http_get(_TABLES_URL)
+    matches = _CSV_LINK_PATTERN.findall(html)
+
+    # Build lookup: filename stem (lowercase) → full path
+    stem_to_path: dict[str, str] = {}
+    for path, stem in matches:
+        stem_to_path[stem.lower()] = path
+
+    tid = table_id.lower()
+
+    # Exact match
+    if tid in stem_to_path:
+        return f"{_BASE_URL}{stem_to_path[tid]}"
+
+    # Fuzzy: caller might use "f1" when actual stem is "f1-data"
+    for stem, path in stem_to_path.items():
+        if stem.startswith(tid + "-") or stem == tid:
+            return f"{_BASE_URL}{path}"
+
+    available = sorted(stem_to_path.keys())[:20]
+    raise ValueError(
+        f"RBA table '{table_id}' not found. "
+        f"Available tables include: {', '.join(available)}..."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -246,18 +302,13 @@ def _parse_csv_metadata(text: str, csv_url: str) -> list[dict[str, str]]:
 
 @connector(output=RBA_FETCH_OUTPUT, tags=["macro", "au"])
 async def rba_fetch(params: RbaFetchParams) -> Result:
-    """Fetch RBA statistical table data by table ID."""
-    tid = params.table_id
-    # RBA changed CSV naming: try "{id}-data.csv" first, fall back to "{id}.csv"
-    for suffix in ("-data.csv", ".csv"):
-        url = f"{_BASE_URL}/statistics/tables/csv/{tid}{suffix}"
-        try:
-            text = await _http_get(url)
-            break
-        except Exception:
-            continue
-    else:
-        raise ValueError(f"RBA CSV not found for table: {tid} (tried -data.csv and .csv)")
+    """Fetch RBA statistical table data by table ID.
+
+    Resolves the table_id against the live RBA tables page to find the
+    correct CSV URL, then downloads and parses the data.
+    """
+    url = await _resolve_csv_url(params.table_id)
+    text = await _http_get(url)
 
     df = _parse_rba_csv(text, params.table_id)
     if df.empty:
@@ -279,7 +330,7 @@ async def enumerate_rba(params: RbaEnumerateParams) -> pd.DataFrame:
     """
     # Step 1: scrape tables index for CSV links
     html = await _http_get(_TABLES_URL)
-    csv_links = _CSV_LINK_PATTERN.findall(html)
+    csv_links = [m[0] for m in _CSV_LINK_PATTERN.findall(html)]
 
     if not csv_links:
         return pd.DataFrame(columns=["series_id", "title", "category", "frequency"])

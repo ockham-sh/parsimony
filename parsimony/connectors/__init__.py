@@ -63,12 +63,11 @@ def build_fetch_connectors_from_env(
         result = result + FR_FETCH.bind_deps(api_key=fr_key)
 
     # --- Public data connectors (no or optional API key) ---
-    from parsimony.connectors.boe import FETCH_CONNECTORS as BOE_FETCH
     from parsimony.connectors.rba import FETCH_CONNECTORS as RBA_FETCH
     from parsimony.connectors.snb import FETCH_CONNECTORS as SNB_FETCH
     from parsimony.connectors.treasury import FETCH_CONNECTORS as TREASURY_FETCH
 
-    result = result + TREASURY_FETCH + SNB_FETCH + BOE_FETCH + RBA_FETCH
+    result = result + TREASURY_FETCH + SNB_FETCH + RBA_FETCH
 
     from parsimony.connectors.riksbank import FETCH_CONNECTORS as RIKSBANK_FETCH
 
@@ -156,12 +155,11 @@ def build_connectors_from_env(
         result = result + FR.bind_deps(api_key=fr_key)
 
     # --- Public data connectors (no or optional API key) ---
-    from parsimony.connectors.boe import CONNECTORS as BOE
     from parsimony.connectors.rba import CONNECTORS as RBA
     from parsimony.connectors.snb import CONNECTORS as SNB
     from parsimony.connectors.treasury import CONNECTORS as TREASURY
 
-    result = result + TREASURY + SNB + BOE + RBA
+    result = result + TREASURY + SNB + RBA
 
     from parsimony.connectors.riksbank import CONNECTORS as RIKSBANK
 

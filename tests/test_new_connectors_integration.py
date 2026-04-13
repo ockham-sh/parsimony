@@ -135,22 +135,6 @@ async def test_eia_fetch():
     assert "title" in df.columns
 
 
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_boe_fetch():
-    from parsimony.connectors.boe import BoeFetchParams, boe_fetch
-
-    result = await boe_fetch(BoeFetchParams(
-        series_ids="IUDBEDR",
-        start_date="2024-01-01",
-        end_date="2024-06-01",
-    ))
-    df = result.data
-    assert len(df) > 0
-    assert "series_id" in df.columns
-    assert "date" in df.columns
-    assert "value" in df.columns
-
 
 @pytest.mark.integration
 @pytest.mark.asyncio

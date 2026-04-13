@@ -304,7 +304,6 @@ class FrCompanyRetrieveParams(BaseModel):
 class FrFilingsSearchParams(BaseModel):
     """Parameters for searching/listing filings on Financial Reports."""
 
-    search: str | None = Field(default=None, description="Full-text search query")
     company: int | None = Field(default=None, description="Filter by company ID")
     company_isin: str | None = Field(default=None, description="Filter by company ISIN (case-insensitive)")
     lei: str | None = Field(default=None, description="Filter by LEI")

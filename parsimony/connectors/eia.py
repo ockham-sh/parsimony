@@ -11,7 +11,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -22,6 +22,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://api.eia.gov/v2"
+
+ENV_VARS: dict[str, str] = {"api_key": "EIA_API_KEY"}
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +109,7 @@ async def eia_fetch(params: EiaFetchParams, *, api_key: str) -> Result:
     resp = body.get("response", {})
     data = resp.get("data", [])
     if not data:
-        raise ValueError(f"No data returned for route: {params.route}")
+        raise EmptyDataError(provider="eia", message=f"No data returned for route: {params.route}")
 
     description = resp.get("description", params.route)
 

@@ -16,7 +16,7 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, EmptyDataError, ParseError, connector
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +24,8 @@ from parsimony.result import (
     Provenance,
     Result,
 )
+
+ENV_VARS: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -55,7 +57,7 @@ def _resolve_company(identifier: str) -> Any:
     _ensure_edgar_identity()
     result = find(query)
     if result is None:
-        raise ValueError(f"No SEC company found for '{query}'")
+        raise EmptyDataError(provider="sec_edgar", message=f"No SEC company found for '{query}'")
     return result
 
 
@@ -63,7 +65,7 @@ def _resolve_to_entity(identifier: str) -> Any:
     result = _resolve_company(identifier)
     if _is_company_search_results(result):
         if len(result) == 0:
-            raise ValueError(f"No SEC company found for '{identifier}'")
+            raise EmptyDataError(provider="sec_edgar", message=f"No SEC company found for '{identifier}'")
         return result[0]
     return result
 
@@ -87,7 +89,7 @@ def _sanitize_detailed_statement_df(df: pd.DataFrame) -> pd.DataFrame:
 
 def _to_dataframe(value: Any) -> pd.DataFrame:
     if value is None:
-        raise ValueError("No data returned")
+        raise EmptyDataError(provider="sec_edgar", message="No data returned")
     if isinstance(value, pd.DataFrame):
         return value
     if hasattr(value, "to_dataframe"):
@@ -98,7 +100,7 @@ def _to_dataframe(value: Any) -> pd.DataFrame:
         return out if isinstance(out, pd.DataFrame) else pd.DataFrame(out)
     if hasattr(value, "data") and isinstance(value.data, pd.DataFrame):
         return value.data
-    raise ValueError("Unsupported output type")
+    raise ParseError(provider="sec_edgar", message="Unsupported output type")
 
 
 # ---------------------------------------------------------------------------
@@ -315,11 +317,11 @@ def _statement_from_single_filing(
     forms = ["10-K"] if annual else ["10-K", "10-Q"]
     filings = entity.get_filings(form=forms)
     if filings is None or len(filings) == 0:
-        raise ValueError("No filings found")
+        raise EmptyDataError(provider="sec_edgar", message="No filings found")
     filing = filings[0]
     xbrl = filing.xbrl()
     if xbrl is None:
-        raise ValueError("No XBRL data found")
+        raise EmptyDataError(provider="sec_edgar", message="No XBRL data found")
     stmt_getter = {
         "income_statement": xbrl.statements.income_statement,
         "balance_sheet": xbrl.statements.balance_sheet,
@@ -344,7 +346,7 @@ def _statement_from_multi_filings(
     forms = ["10-K"] if annual else ["10-K", "10-Q"]
     filings = entity.get_filings(form=forms)
     if filings is None or len(filings) == 0:
-        raise ValueError("No filings found")
+        raise EmptyDataError(provider="sec_edgar", message="No filings found")
     selected = filings.head(max(int(periods), 1))
     multi = MultiFinancials.extract(selected)
     method = {
@@ -392,7 +394,7 @@ def _get_filing_by_accession(accession_number: str) -> Any:
     _ensure_edgar_identity()
     filing = get_by_accession_number(accession)
     if filing is None:
-        raise ValueError(f"Filing not found: {accession}")
+        raise EmptyDataError(provider="sec_edgar", message=f"Filing not found: {accession}")
     return filing
 
 
@@ -414,7 +416,7 @@ async def sec_edgar_find_company(params: SecEdgarFindCompanyParams) -> Result:
         if "company" in df.columns and "name" not in df.columns:
             df = df.rename(columns={"company": "name"})
         if df.empty:
-            raise ValueError(f"No companies found for '{params.identifier}'")
+            raise EmptyDataError(provider="sec_edgar", message=f"No companies found for '{params.identifier}'")
     else:
         entity = result
         tickers = getattr(entity, "tickers", None) or []
@@ -527,7 +529,7 @@ async def sec_edgar_search_filings(params: SecEdgarSearchFilingsParams) -> Resul
         else pd.DataFrame(columns=["form", "company", "filed", "accession", "cik"])
     )
     if df.empty:
-        raise ValueError(f"No filings found for search: '{params.query}'")
+        raise EmptyDataError(provider="sec_edgar", message=f"No filings found for search: '{params.query}'")
     return SEARCH_FILINGS_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
@@ -552,12 +554,12 @@ async def sec_edgar_filings(params: SecEdgarFilingsParams) -> Result:
             get_filings, form=params.form, filing_date=params.filing_date
         )
     if filings is None:
-        raise ValueError("No filings found")
+        raise EmptyDataError(provider="sec_edgar", message="No filings found")
     df = await asyncio.to_thread(filings.head(params.limit).to_pandas)
     if "accession_no" in df.columns and "accession_number" not in df.columns:
         df = df.rename(columns={"accession_no": "accession_number"})
     if df.empty:
-        raise ValueError("No filings found")
+        raise EmptyDataError(provider="sec_edgar", message="No filings found")
     return FILINGS_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
@@ -574,7 +576,7 @@ async def sec_edgar_company_facts(params: SecEdgarCompanyFactsParams) -> Result:
     entity = await asyncio.to_thread(_resolve_to_entity, params.identifier)
     facts = await asyncio.to_thread(entity.get_facts)
     if facts is None:
-        raise ValueError(f"No company facts found for '{params.identifier}'")
+        raise EmptyDataError(provider="sec_edgar", message=f"No company facts found for '{params.identifier}'")
     df = await asyncio.to_thread(_to_dataframe, facts)
     return Result.from_dataframe(
         df,
@@ -593,7 +595,7 @@ async def sec_edgar_filing_document(params: SecEdgarFilingDocumentParams) -> Res
     markdown = await asyncio.to_thread(filing.markdown)
     content = str(markdown or "").strip()
     if not content:
-        raise ValueError(f"No content available for filing {params.accession_number}")
+        raise EmptyDataError(provider="sec_edgar", message=f"No content available for filing {params.accession_number}")
     return Result(
         data=content,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
@@ -627,7 +629,7 @@ async def sec_edgar_filing_metadata(params: SecEdgarFilingMetadataParams) -> Res
     # Fall back to filing-level to_context()
     content = await asyncio.to_thread(filing.to_context, detail="full")
     if not content or not content.strip():
-        raise ValueError(f"No metadata available for filing {params.accession_number}")
+        raise EmptyDataError(provider="sec_edgar", message=f"No metadata available for filing {params.accession_number}")
     return Result(
         data=content,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
@@ -648,7 +650,7 @@ async def sec_edgar_filing_sections(params: SecEdgarFilingSectionsParams) -> Res
 
     items = getattr(obj, "items", None)
     if items is None or (isinstance(items, (list, tuple)) and len(items) == 0):
-        raise ValueError(f"No sections found for filing {params.accession_number}")
+        raise EmptyDataError(provider="sec_edgar", message=f"No sections found for filing {params.accession_number}")
 
     # Build a DataFrame from the items list
     if isinstance(items, (list, tuple)):
@@ -696,8 +698,9 @@ async def sec_edgar_filing_item(params: SecEdgarFilingItemParams) -> Result:
 
     content = obj[params.item]
     if content is None or (isinstance(content, str) and not content.strip()):
-        raise ValueError(
-            f"Item '{params.item}' not found or empty in filing {params.accession_number}"
+        raise EmptyDataError(
+            provider="sec_edgar",
+            message=f"Item '{params.item}' not found or empty in filing {params.accession_number}",
         )
 
     text = str(content).strip()
@@ -719,9 +722,12 @@ async def sec_edgar_filing_tables(params: SecEdgarFilingTablesParams) -> Result:
     tables = await asyncio.to_thread(_get_tables_from_filing, filing, params.item)
 
     if not tables:
-        raise ValueError(
-            f"No tables found in filing {params.accession_number}"
-            + (f" section '{params.item}'" if params.item else "")
+        raise EmptyDataError(
+            provider="sec_edgar",
+            message=(
+                f"No tables found in filing {params.accession_number}"
+                + (f" section '{params.item}'" if params.item else "")
+            ),
         )
 
     rows = []
@@ -753,7 +759,7 @@ async def sec_edgar_filing_table(params: SecEdgarFilingTableParams) -> Result:
     tables = await asyncio.to_thread(_get_tables_from_filing, filing, params.item)
 
     if not tables:
-        raise ValueError(f"No tables found in filing {params.accession_number}")
+        raise EmptyDataError(provider="sec_edgar", message=f"No tables found in filing {params.accession_number}")
     if params.table_index >= len(tables):
         raise ValueError(
             f"table_index {params.table_index} out of range (filing has {len(tables)} tables)"
@@ -762,9 +768,12 @@ async def sec_edgar_filing_table(params: SecEdgarFilingTableParams) -> Result:
     table = tables[params.table_index]
     df = await asyncio.to_thread(table.to_dataframe)
     if df.empty:
-        raise ValueError(
-            f"Table {params.table_index} could not be converted to a DataFrame "
-            "(may contain only headers or unsupported structure). Try a different table_index."
+        raise ParseError(
+            provider="sec_edgar",
+            message=(
+                f"Table {params.table_index} could not be converted to a DataFrame "
+                "(may contain only headers or unsupported structure). Try a different table_index."
+            ),
         )
 
     # Flatten MultiIndex columns to prevent downstream serialization errors
@@ -821,7 +830,7 @@ async def sec_edgar_insider_trades(params: SecEdgarInsiderTradesParams) -> Resul
 
     filings = entity.get_filings(form="4", filing_date=filing_date)
     if filings is None or len(filings) == 0:
-        raise ValueError(f"No Form 4 filings found for '{params.identifier}'")
+        raise EmptyDataError(provider="sec_edgar", message=f"No Form 4 filings found for '{params.identifier}'")
 
     selected = filings.head(params.limit)
     all_dfs: list[pd.DataFrame] = []
@@ -856,7 +865,7 @@ async def sec_edgar_insider_trades(params: SecEdgarInsiderTradesParams) -> Resul
     await asyncio.to_thread(_extract_form4_data)
 
     if not all_dfs:
-        raise ValueError(f"No insider transactions extracted for '{params.identifier}'")
+        raise EmptyDataError(provider="sec_edgar", message=f"No insider transactions extracted for '{params.identifier}'")
 
     df = pd.concat(all_dfs, ignore_index=True)
 
@@ -884,7 +893,7 @@ def _get_filing_obj(filing: Any) -> Any:
     """Get the parsed form object from a filing. Raises ValueError if unavailable."""
     obj = filing.obj()
     if obj is None:
-        raise ValueError("This filing type does not support structured parsing")
+        raise ParseError(provider="sec_edgar", message="This filing type does not support structured parsing")
     return obj
 
 
@@ -894,19 +903,19 @@ def _get_tables_from_filing(filing: Any, item: str | None) -> list[Any]:
     if item is not None:
         sections = getattr(obj, "sections", None)
         if sections is None:
-            raise ValueError("This filing does not have sections")
+            raise ParseError(provider="sec_edgar", message="This filing does not have sections")
         section = sections.get_item(item) if hasattr(sections, "get_item") else None
         if section is None:
-            raise ValueError(f"Section '{item}' not found in this filing")
+            raise EmptyDataError(provider="sec_edgar", message=f"Section '{item}' not found in this filing")
         # section.tables() returns list of TableNode for section-scoped access
         tables_method = getattr(section, "tables", None)
         if tables_method is None:
-            raise ValueError("Section does not support table extraction")
+            raise ParseError(provider="sec_edgar", message="Section does not support table extraction")
         return tables_method() if callable(tables_method) else tables_method
     # Document-level tables
     doc = getattr(obj, "document", None)
     if doc is None:
-        raise ValueError("This filing does not have a parsed document")
+        raise ParseError(provider="sec_edgar", message="This filing does not have a parsed document")
     tables = getattr(doc, "tables", None)
     if tables is None:
         return []

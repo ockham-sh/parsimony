@@ -13,7 +13,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, ParseError, ProviderError, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +24,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://www-genesis.destatis.de/genesisWS/rest/2020"
+
+ENV_VARS: dict[str, str] = {"username": "DESTATIS_USERNAME", "password": "DESTATIS_PASSWORD"}
 
 _GERMAN_MONTHS = {
     "Januar": "01", "Februar": "02", "März": "03", "April": "04",
@@ -148,13 +150,17 @@ async def destatis_fetch(
         response = await client.get(f"{_BASE_URL}/data/tablefile", params=req_params)
 
     if response.status_code != 200:
-        raise ValueError(f"Destatis API error: HTTP {response.status_code}")
+        raise ProviderError(provider="destatis", status_code=response.status_code, message=f"Destatis API error: HTTP {response.status_code}")
 
     text = response.text
     if "<html" in text.lower() or "announcement" in text.lower() or "datenbank/online" in str(response.url):
-        raise ValueError(
-            "Destatis GAST credentials redirected to announcement page. "
-            "Try again later or use registered credentials via DESTATIS_USERNAME/DESTATIS_PASSWORD."
+        raise ProviderError(
+            provider="destatis",
+            status_code=0,
+            message=(
+                "Destatis GAST credentials redirected to announcement page. "
+                "Try again later or use registered credentials via DESTATIS_USERNAME/DESTATIS_PASSWORD."
+            ),
         )
 
     # Parse ffcsv: find header (first line with semicolons)
@@ -169,10 +175,10 @@ async def destatis_fetch(
     try:
         df = pd.read_csv(io.StringIO(data_text), sep=";", dtype=str)
     except Exception as exc:
-        raise ValueError(f"Failed to parse Destatis response: {exc}") from exc
+        raise ParseError(provider="destatis", message=f"Failed to parse Destatis response: {exc}") from exc
 
     if df.empty:
-        raise ValueError(f"No data returned for table: {params.table_id}")
+        raise EmptyDataError(provider="destatis", message=f"No data returned for table: {params.table_id}")
 
     # Identify and normalize time columns
     time_cols: list[str] = []

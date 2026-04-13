@@ -14,7 +14,7 @@ from requests.exceptions import HTTPError
 
 from parsimony.catalog.models import code_token as _code_token
 from parsimony.catalog.models import normalize_code
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, EmptyDataError, ParseError, ProviderError, connector
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -23,6 +23,8 @@ from parsimony.result import (
     Result,
     SemanticTableResult,
 )
+
+ENV_VARS: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Parameter models
@@ -481,12 +483,20 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
             )
         except HTTPError as exc:
             text = getattr(exc.response, "text", str(exc))
-            raise ValueError(
-                f"Upstream request failed ({exc.response.status_code}): {text}. "
-                "Validate the series_key against the codelists using sdmx_codelist or sdmx_series_keys."
+            raise ProviderError(
+                provider="sdmx",
+                status_code=getattr(exc.response, "status_code", 0),
+                message=(
+                    f"Upstream request failed ({exc.response.status_code}): {text}. "
+                    "Validate the series_key against the codelists using sdmx_codelist or sdmx_series_keys."
+                ),
             ) from exc
         except Exception as exc:
-            raise ValueError(f"Failed to fetch {dataset_id}: {exc}") from exc
+            raise ProviderError(
+                provider="sdmx",
+                status_code=0,
+                message=f"Failed to fetch {dataset_id}: {exc}",
+            ) from exc
 
     raw = sdmx_lib.to_pandas(msg.data)
     if isinstance(raw, pd.Series):
@@ -494,12 +504,12 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
     else:
         df = pd.DataFrame(raw).reset_index()
     if df.empty:
-        raise ValueError("No data returned for requested series.")
+        raise EmptyDataError(provider="sdmx", message="No data returned for requested series.")
 
     if "value" not in df.columns:
         value_columns = [col for col in df.columns if col not in {"TIME_PERIOD"}]
         if len(value_columns) != 1:
-            raise ValueError("Unable to determine SDMX value column")
+            raise ParseError(provider="sdmx", message="Unable to determine SDMX value column")
         df = df.rename(columns={value_columns[0]: "value"})
 
     dim_ids = _resolve_series_dimension_ids(
@@ -507,7 +517,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
         _ordered_non_time_dimension_ids(dsd),
     )
     if not dim_ids:
-        raise ValueError("Unable to determine SDMX series dimensions for series_key")
+        raise ParseError(provider="sdmx", message="Unable to determine SDMX series dimensions for series_key")
     for dim_id in dim_ids:
         df[dim_id] = df[dim_id].astype("string").fillna("")
     df["series_key"] = df[dim_ids].agg(".".join, axis=1)
@@ -572,7 +582,7 @@ async def sdmx_list_datasets(params: SdmxListDatasetsParams) -> Result:
 
     df = await asyncio.to_thread(_run)
     if df.empty:
-        raise ValueError(f"No dataflows returned for agency {agency!r}.")
+        raise EmptyDataError(provider="sdmx", message=f"No dataflows returned for agency {agency!r}.")
     ns = sdmx_agency_namespace(agency)
     prov = Provenance(source="sdmx_list_datasets", params={"agency": agency})
     return _sdmx_list_datasets_output(ns).build_table_result(df, provenance=prov, params=params.model_dump())
@@ -608,7 +618,7 @@ async def sdmx_dsd(params: SdmxDsdParams) -> Result:
 
     df, template = await asyncio.to_thread(_run)
     if df.empty:
-        raise ValueError(f"No non-time dimensions in DSD for {dataset_key!r}.")
+        raise EmptyDataError(provider="sdmx", message=f"No non-time dimensions in DSD for {dataset_key!r}.")
     prov = Provenance(
         source="sdmx_dsd",
         params={"dataset_key": dataset_key},
@@ -631,14 +641,16 @@ async def sdmx_codelist(params: SdmxCodelistParams) -> Result:
             if dim.id == dimension:
                 identity = _get_dimension_codelist_identity(dim, msg)
                 if identity is None:
-                    raise ValueError(
-                        f"Dimension {dimension!r} has no resolvable codelist identity for {dataset_key!r}."
+                    raise EmptyDataError(
+                        provider="sdmx",
+                        message=f"Dimension {dimension!r} has no resolvable codelist identity for {dataset_key!r}.",
                     )
                 maintainer_id, codelist_id, version = identity
                 pairs = _get_dimension_codelist(dim, msg)
                 if not pairs:
-                    raise ValueError(
-                        f"Dimension {dimension!r} has no resolvable codelist for {dataset_key!r}."
+                    raise EmptyDataError(
+                        provider="sdmx",
+                        message=f"Dimension {dimension!r} has no resolvable codelist for {dataset_key!r}.",
                     )
                 return (
                     pd.DataFrame([{"code": c, "name": n} for c, n in pairs]),
@@ -646,7 +658,7 @@ async def sdmx_codelist(params: SdmxCodelistParams) -> Result:
                     codelist_id,
                     version,
                 )
-        raise ValueError(f"Unknown dimension {dimension!r} for dataset {dataset_key!r}.")
+        raise EmptyDataError(provider="sdmx", message=f"Unknown dimension {dimension!r} for dataset {dataset_key!r}.")
 
     df, maintainer_id, codelist_id, version = await asyncio.to_thread(_run)
     ns = sdmx_codelist_namespace(maintainer_id, codelist_id)
@@ -722,9 +734,12 @@ async def sdmx_series_keys(params: SdmxSeriesKeysParams) -> Result:
 
     df, dim_ids = await asyncio.to_thread(_run)
     if df.empty:
-        raise ValueError(
-            f"No series keys returned for {dataset_key!r} (after filters). "
-            "Try different filters or another dataset."
+        raise EmptyDataError(
+            provider="sdmx",
+            message=(
+                f"No series keys returned for {dataset_key!r} (after filters). "
+                "Try different filters or another dataset."
+            ),
         )
     ns = sdmx_namespace_from_dataset_key(dataset_key)
     prov = Provenance(
@@ -778,7 +793,7 @@ def _build_dataset_codelists_tables_sync(dataset_key: str) -> list[SemanticTable
         )
         out.append(table)
     if not out:
-        raise ValueError(f"No codelist dimensions found for {dataset_key!r}")
+        raise EmptyDataError(provider="sdmx", message=f"No codelist dimensions found for {dataset_key!r}")
     return out
 
 

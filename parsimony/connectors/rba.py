@@ -24,7 +24,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -32,6 +32,8 @@ from parsimony.result import (
     Provenance,
     Result,
 )
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.rba.gov.au"
 _TABLES_URL = f"{_BASE_URL}/statistics/tables/"
@@ -312,7 +314,7 @@ async def rba_fetch(params: RbaFetchParams) -> Result:
 
     df = _parse_rba_csv(text, params.table_id)
     if df.empty:
-        raise ValueError(f"No data returned for table: {params.table_id}")
+        raise EmptyDataError(provider="rba", message=f"No data returned for table: {params.table_id}")
 
     return Result.from_dataframe(
         df,

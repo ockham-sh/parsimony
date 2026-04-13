@@ -11,7 +11,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, ProviderError, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -22,6 +22,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://api.bls.gov/publicAPI/v2"
+
+ENV_VARS: dict[str, str] = {"api_key": "BLS_API_KEY"}
 
 
 # ---------------------------------------------------------------------------
@@ -144,11 +146,11 @@ async def bls_fetch(params: BlsFetchParams, *, api_key: str = "") -> Result:
     status = body.get("status", "")
     if status != "REQUEST_SUCCEEDED":
         messages = body.get("message", [])
-        raise ValueError(f"BLS API error ({status}): {'; '.join(messages)}")
+        raise ProviderError(provider="bls", status_code=0, message=f"BLS API error ({status}): {'; '.join(messages)}")
 
     series_list = body.get("Results", {}).get("series", [])
     if not series_list:
-        raise ValueError(f"No data returned for series: {params.series_id}")
+        raise EmptyDataError(provider="bls", message=f"No data returned for series: {params.series_id}")
 
     series_block = series_list[0]
     catalog = series_block.get("catalog", {})
@@ -175,7 +177,7 @@ async def bls_fetch(params: BlsFetchParams, *, api_key: str = "") -> Result:
         })
 
     if not rows:
-        raise ValueError(f"No observations for series: {params.series_id}")
+        raise EmptyDataError(provider="bls", message=f"No observations for series: {params.series_id}")
 
     metadata_list = [
         {"name": k, "value": str(v)}

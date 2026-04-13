@@ -14,7 +14,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +24,8 @@ from parsimony.result import (
 )
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.stat-search.boj.or.jp/api/v1"
 
@@ -167,7 +169,7 @@ async def boj_fetch(params: BojFetchParams) -> Result:
 
     result_set = json_data.get("RESULTSET", [])
     if not result_set:
-        raise ValueError(f"No data returned for db={params.db}, code={params.code}")
+        raise EmptyDataError(provider="boj", message=f"No data returned for db={params.db}, code={params.code}")
 
     rows: list[dict[str, Any]] = []
     for series in result_set:
@@ -197,7 +199,7 @@ async def boj_fetch(params: BojFetchParams) -> Result:
             })
 
     if not rows:
-        raise ValueError(f"No observations parsed for db={params.db}, code={params.code}")
+        raise EmptyDataError(provider="boj", message=f"No observations parsed for db={params.db}, code={params.code}")
 
     return Result.from_dataframe(
         pd.DataFrame(rows),

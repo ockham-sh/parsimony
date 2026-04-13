@@ -473,39 +473,47 @@ class TestFmpErrorHandling:
     async def test_401_friendly_message(self) -> None:
         from parsimony.connectors.fmp import fmp_company_profile
 
+        from parsimony.connector import UnauthorizedError
+
         with _patch_http(_make_response({}, status_code=401)):
-            with pytest.raises(ValueError, match="Invalid or missing FMP API key"):
+            with pytest.raises(UnauthorizedError, match="Invalid or missing FMP API key"):
                 await _call(fmp_company_profile, symbol="AAPL")
 
     @pytest.mark.asyncio
     async def test_402_plan_message(self) -> None:
         from parsimony.connectors.fmp import fmp_company_profile
 
-        with _patch_http(_make_response({}, status_code=402)), pytest.raises(ValueError, match="not eligible"):
+        from parsimony.connector import PaymentRequiredError
+
+        with _patch_http(_make_response({}, status_code=402)), pytest.raises(PaymentRequiredError, match="not eligible"):
             await _call(fmp_company_profile, symbol="AAPL")
 
     @pytest.mark.asyncio
     async def test_500_generic_message(self) -> None:
         from parsimony.connectors.fmp import fmp_company_profile
 
+        from parsimony.connector import ProviderError
+
         with _patch_http(_make_response({}, status_code=500)):
-            with pytest.raises(ValueError, match="FMP API error 500"):
+            with pytest.raises(ProviderError, match="FMP API error 500"):
                 await _call(fmp_company_profile, symbol="AAPL")
 
     @pytest.mark.asyncio
     async def test_api_key_never_exposed(self) -> None:
+        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.fmp import fmp_company_profile
 
         with _patch_http(_make_response({}, status_code=401)):
-            with pytest.raises(ValueError) as exc_info:
+            with pytest.raises(UnauthorizedError) as exc_info:
                 await _call(fmp_company_profile, symbol="AAPL")
             assert API_KEY not in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_empty_response_raises(self) -> None:
+        from parsimony.connector import EmptyDataError
         from parsimony.connectors.fmp import fmp_company_profile
 
-        with _patch_http(_make_response([])), pytest.raises(ValueError, match="No data returned"):
+        with _patch_http(_make_response([])), pytest.raises(EmptyDataError, match="No data returned"):
             await _call(fmp_company_profile, symbol="INVALID")
 
 
@@ -614,7 +622,9 @@ class TestFmpScreener:
     async def test_empty_screener_raises(self) -> None:
         from parsimony.connectors.fmp_screener import fmp_screener
 
-        with _patch_http(_make_response([])), pytest.raises(ValueError, match="no rows"):
+        from parsimony.connector import EmptyDataError
+
+        with _patch_http(_make_response([])), pytest.raises(EmptyDataError, match="no rows"):
             await _call(fmp_screener, sector="Nonexistent", limit=10)
 
 

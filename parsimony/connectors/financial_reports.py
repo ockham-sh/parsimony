@@ -16,7 +16,8 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, EmptyDataError, connector
+from parsimony.connector import RateLimitError
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -26,6 +27,8 @@ from parsimony.result import (
 )
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {"api_key": "FINANCIAL_REPORTS_API_KEY"}
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,28 +93,31 @@ async def _with_retry(coro_factory: Any, api_key: str) -> Any:
     Burst-limit 429s (retry_after < 60s) are retried up to 3 times.
     Quota-limit 429s raise immediately with a clear message.
     """
-    for attempt in range(_MAX_BURST_RETRIES + 1):
-        try:
-            async with _sdk_client(api_key) as client:
+    from financial_reports_generated_client.exceptions import ApiException
+
+    async with _sdk_client(api_key) as client:
+        for attempt in range(_MAX_BURST_RETRIES + 1):
+            try:
                 return await coro_factory(client)
-        except Exception as exc:
-            if getattr(exc, "status", None) != 429:
-                raise
-            retry_after = _parse_retry_after(exc)
-            if retry_after > 60:
-                raise ValueError(
-                    "Financial Reports API quota exhausted for the current billing period. "
-                    "Upgrade your plan or wait for the next billing cycle."
-                ) from exc
-            if attempt < _MAX_BURST_RETRIES:
-                wait = max(retry_after, 1.0) * (2 ** attempt)
-                logger.info("FR API burst limit hit, retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, _MAX_BURST_RETRIES)
-                await asyncio.sleep(wait)
-            else:
-                raise ValueError(
-                    f"Financial Reports API rate limit exceeded after {_MAX_BURST_RETRIES} retries. "
-                    "Try again in a few seconds."
-                ) from exc
+            except ApiException as exc:
+                if exc.status != 429:
+                    raise
+                retry_after = _parse_retry_after(exc)
+                if retry_after > 60:
+                    raise RateLimitError(
+                        provider="financial_reports",
+                        retry_after=retry_after,
+                        quota_exhausted=True,
+                    ) from exc
+                if attempt < _MAX_BURST_RETRIES:
+                    wait = max(retry_after, 1.0) * (2 ** attempt)
+                    logger.info("FR API burst limit hit, retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, _MAX_BURST_RETRIES)
+                    await asyncio.sleep(wait)
+                else:
+                    raise RateLimitError(
+                        provider="financial_reports",
+                        retry_after=retry_after,
+                    ) from exc
     raise RuntimeError("Unreachable")  # pragma: no cover
 
 
@@ -450,7 +456,7 @@ async def fr_companies_search(params: FrCompaniesSearchParams, *, api_key: str) 
     resp = await _with_retry(lambda c: c.companies.list(**kwargs), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No companies found for: {params}")
+        raise EmptyDataError(provider="financial_reports", message=f"No companies found for: {params}")
     return COMPANIES_SEARCH_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -469,7 +475,7 @@ async def fr_company_retrieve(params: FrCompanyRetrieveParams, *, api_key: str) 
     resp = await _with_retry(lambda c: c.companies.retrieve(id=params.id), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No company found with id={params.id}")
+        raise EmptyDataError(provider="financial_reports", message=f"No company found with id={params.id}")
     return COMPANY_RETRIEVE_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -490,7 +496,7 @@ async def fr_filings_search(params: FrFilingsSearchParams, *, api_key: str) -> R
     resp = await _with_retry(lambda c: c.filings.list(**kwargs), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No filings found for: {params}")
+        raise EmptyDataError(provider="financial_reports", message=f"No filings found for: {params}")
     return FILINGS_SEARCH_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -509,7 +515,7 @@ async def fr_filing_retrieve(params: FrFilingRetrieveParams, *, api_key: str) ->
     resp = await _with_retry(lambda c: c.filings.retrieve(id=params.id), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No filing found with id={params.id}")
+        raise EmptyDataError(provider="financial_reports", message=f"No filing found with id={params.id}")
     return FILING_RETRIEVE_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -530,7 +536,7 @@ async def fr_filing_markdown(params: FrFilingMarkdownParams, *, api_key: str) ->
         else (text.decode() if isinstance(text, bytes) else str(text or ""))
     )
     if not content.strip():
-        raise ValueError(f"No markdown content available for filing {params.id}")
+        raise EmptyDataError(provider="financial_reports", message=f"No markdown content available for filing {params.id}")
     return Result(
         data=content,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -548,7 +554,7 @@ async def fr_filing_history(params: FrFilingHistoryParams, *, api_key: str) -> R
     resp = await _with_retry(lambda c: c.filings.history_retrieve(id=params.id), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No history found for filing {params.id}")
+        raise EmptyDataError(provider="financial_reports", message=f"No history found for filing {params.id}")
     return FILING_HISTORY_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -568,7 +574,7 @@ async def fr_next_annual_report(params: FrNextAnnualReportParams, *, api_key: st
     )
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No annual report prediction available for company {params.id}")
+        raise EmptyDataError(provider="financial_reports", message=f"No annual report prediction available for company {params.id}")
     return Result.from_dataframe(
         df,
         Provenance(source="financial_reports", params=params.model_dump()),
@@ -612,7 +618,7 @@ async def fr_isic_browse(params: FrIsicBrowseParams, *, api_key: str) -> Result:
     resp = await _with_retry(_call, api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No ISIC {params.level} data returned")
+        raise EmptyDataError(provider="financial_reports", message=f"No ISIC {params.level} data returned")
     return ISIC_BROWSE_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -639,7 +645,7 @@ async def fr_isin_lookup(params: FrIsinLookupParams, *, api_key: str) -> Result:
     resp = await _with_retry(_call, api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No ISINs found for: {params}")
+        raise EmptyDataError(provider="financial_reports", message=f"No ISINs found for: {params}")
     return ISIN_LOOKUP_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -695,7 +701,7 @@ async def fr_reference_data(params: FrReferenceDataParams, *, api_key: str) -> R
     resp = await _with_retry(_call, api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise ValueError(f"No {params.resource} data returned")
+        raise EmptyDataError(provider="financial_reports", message=f"No {params.resource} data returned")
     output = _REFERENCE_OUTPUT_MAP.get(params.resource, REFERENCE_GENERIC_OUTPUT)
     return output.build_table_result(
         df,

@@ -18,7 +18,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, ParseError, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -30,6 +30,8 @@ from parsimony.result import (
 logger = logging.getLogger(__name__)
 
 _SDMX_BASE = "https://api.webstat.banque-france.fr/webstat-en/v1"
+
+ENV_VARS: dict[str, str] = {"api_key": "BANQUEDEFRANCE_KEY"}
 
 
 # ---------------------------------------------------------------------------
@@ -118,10 +120,10 @@ async def bdf_fetch(params: BdfFetchParams, *, api_key: str) -> Result:
     try:
         df = pd.read_csv(io.StringIO(text), sep=";", dtype=str)
     except Exception as exc:
-        raise ValueError(f"Failed to parse BdF CSV response: {exc}") from exc
+        raise ParseError(provider="bdf", message=f"Failed to parse BdF CSV response: {exc}") from exc
 
     if df.empty:
-        raise ValueError(f"No data returned for key: {params.key}")
+        raise EmptyDataError(provider="bdf", message=f"No data returned for key: {params.key}")
 
     # Normalize column names
     col_map = {c: c.lower().replace(" ", "_") for c in df.columns}
@@ -150,7 +152,7 @@ async def bdf_fetch(params: BdfFetchParams, *, api_key: str) -> Result:
             })
 
     if not result_rows:
-        raise ValueError(f"Could not parse observations for key: {params.key}")
+        raise ParseError(provider="bdf", message=f"Could not parse observations for key: {params.key}")
 
     return Result.from_dataframe(
         pd.DataFrame(result_rows),

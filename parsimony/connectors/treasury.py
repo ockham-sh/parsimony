@@ -11,7 +11,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -23,6 +23,8 @@ from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
 _METADATA_URL = "https://api.fiscaldata.treasury.gov/services/dtg/metadata/"
+
+ENV_VARS: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +109,7 @@ async def treasury_fetch(params: TreasuryFetchParams) -> Result:
 
     data = body.get("data", [])
     if not data:
-        raise ValueError(f"No data returned for endpoint: {params.endpoint}")
+        raise EmptyDataError(provider="treasury", message=f"No data returned for endpoint: {params.endpoint}")
 
     meta = body.get("meta", {})
     labels = meta.get("labels", {})

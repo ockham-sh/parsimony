@@ -1,21 +1,13 @@
-"""Connector primitives: @connector / @enumerator / @loader decorators, Connector, Connectors.
+"""Connector primitives, typed exceptions, and collection.
 
-The :func:`connector` decorator infers **name** from the function name, **description** from the
-stripped docstring, and the params **Pydantic model** from the first parameter's type annotation.
-Pass ``output=`` when the connector should apply a tabular :class:`~parsimony.result.OutputConfig`.
-Optional ``name=``, ``description=``, and ``params=`` override inference for generated or
-factory-built connectors where the wrapped function is not the public contract.
+**Connectors:** :func:`connector` / :func:`enumerator` / :func:`loader` decorators produce
+:class:`Connector` instances.  :class:`Connectors` is an immutable composable collection.
 
-The :func:`enumerator` decorator is a constrained :func:`connector` for **catalog population**:
-``output=`` is required, the schema must have no DATA columns, exactly one KEY with
-``namespace=...``, exactly one TITLE, and optional METADATA columns. Results are indexed by
-:class:`~parsimony.catalog.catalog.Catalog`.
-
-The :func:`loader` decorator is a constrained :func:`connector` for **observation persistence**:
-``output=`` is required, the schema must have only KEY (with ``namespace=...``) and DATA columns
-(no TITLE/METADATA). Results are persisted via :class:`~parsimony.data_store.DataStore`.
-
-Both decorators still return a :class:`Connector` instance.
+**Exceptions:** :class:`ConnectorError` is the base for all operational errors.
+Subclasses (``PaymentRequiredError``, ``RateLimitError``, ``UnauthorizedError``, ``ProviderError``,
+``EmptyDataError``, ``ParseError``) carry structured fields — callers handle errors
+programmatically, not by parsing message strings.  Not for programmer errors — those
+stay as ``TypeError``, ``ValueError``, or Pydantic ``ValidationError``.
 """
 
 from __future__ import annotations
@@ -768,4 +760,121 @@ class Connectors:
             out.append(c)
         return Connectors(out)
 
+
+# ---------------------------------------------------------------------------
+# Typed exceptions — operational errors raised by connectors
+# ---------------------------------------------------------------------------
+
+
+class ConnectorError(Exception):
+    """Base for all connector operational errors.
+
+    Every subclass carries ``provider: str`` so callers can identify the source
+    without parsing message strings.
+    """
+
+    def __init__(self, message: str, *, provider: str) -> None:
+        super().__init__(message)
+        self.provider = provider
+
+
+class UnauthorizedError(ConnectorError):
+    """Invalid or missing API credentials (HTTP 401/403).
+
+    This is a configuration error — the credentials are wrong or absent.
+    Do not retry; fix the credentials.
+    """
+
+    def __init__(self, provider: str, message: str | None = None) -> None:
+        msg = message or f"{provider}: invalid or missing API credentials"
+        super().__init__(msg, provider=provider)
+
+
+class PaymentRequiredError(ConnectorError):
+    """The user's API plan does not permit access to this endpoint (HTTP 402).
+
+    This is a terminal error — never retry.  The user must upgrade their plan
+    or use a different connector.
+    """
+
+    def __init__(self, provider: str, message: str | None = None) -> None:
+        msg = message or f"{provider}: your plan is not eligible for this data request"
+        super().__init__(msg, provider=provider)
+
+
+class RateLimitError(ConnectorError):
+    """The provider returned a rate-limit response (HTTP 429).
+
+    Callers should check :attr:`quota_exhausted`:
+
+    * ``False`` — burst limit; may retry after :attr:`retry_after` seconds.
+    * ``True`` — billing-period quota exhausted; do not retry.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        retry_after: float,
+        *,
+        quota_exhausted: bool = False,
+        message: str | None = None,
+    ) -> None:
+        self.retry_after = retry_after
+        self.quota_exhausted = quota_exhausted
+        if message:
+            msg = message
+        elif quota_exhausted:
+            msg = (
+                f"{provider}: API quota exhausted for the current billing period. "
+                "Upgrade your plan or wait for the next billing cycle."
+            )
+        else:
+            msg = f"{provider}: rate limit hit, retry after {retry_after:.0f}s"
+        super().__init__(msg, provider=provider)
+
+
+class ProviderError(ConnectorError):
+    """The remote provider returned an HTTP error (5xx or unexpected status).
+
+    Carries ``status_code`` for programmatic handling.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        status_code: int,
+        message: str | None = None,
+    ) -> None:
+        self.status_code = status_code
+        msg = message or f"{provider}: provider error (HTTP {status_code})"
+        super().__init__(msg, provider=provider)
+
+
+class EmptyDataError(ConnectorError):
+    """Provider returned HTTP 200 but the result set is empty.
+
+    This is a valid operational outcome — the query succeeded but has no data.
+    Carries ``query_params`` for diagnostic context in batch pipelines.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        message: str | None = None,
+        query_params: dict[str, Any] | None = None,
+    ) -> None:
+        self.query_params = query_params or {}
+        msg = message or f"{provider}: no data returned"
+        super().__init__(msg, provider=provider)
+
+
+class ParseError(ConnectorError):
+    """Provider returned HTTP 200 but the response could not be parsed.
+
+    The provider's response format was unexpected or malformed.
+    """
+
+    def __init__(self, provider: str, message: str | None = None) -> None:
+        msg = message or f"{provider}: failed to parse provider response"
+        super().__init__(msg, provider=provider)
 

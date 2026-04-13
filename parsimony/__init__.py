@@ -88,6 +88,14 @@ __all__ = [
     "normalize_code",
     "normalize_series_catalog_row",
     "series_match_from_entry",
+    # Errors
+    "ConnectorError",
+    "PaymentRequiredError",
+    "RateLimitError",
+    "UnauthorizedError",
+    "ProviderError",
+    "EmptyDataError",
+    "ParseError",
     # Convenience
     "client",
 ]
@@ -156,6 +164,35 @@ def __getattr__(name: str) -> Any:
         from parsimony.catalog.catalog import build_embedding_text
 
         return build_embedding_text
+    # Errors
+    if name == "ConnectorError":
+        from parsimony.connector import ConnectorError
+
+        return ConnectorError
+    if name == "PaymentRequiredError":
+        from parsimony.connector import PaymentRequiredError
+
+        return PaymentRequiredError
+    if name == "RateLimitError":
+        from parsimony.connector import RateLimitError
+
+        return RateLimitError
+    if name == "UnauthorizedError":
+        from parsimony.connector import UnauthorizedError
+
+        return UnauthorizedError
+    if name == "ProviderError":
+        from parsimony.connector import ProviderError
+
+        return ProviderError
+    if name == "EmptyDataError":
+        from parsimony.connector import EmptyDataError
+
+        return EmptyDataError
+    if name == "ParseError":
+        from parsimony.connector import ParseError
+
+        return ParseError
     # Convenience: `from parsimony import client` builds a ready-to-use Connectors
     # collection with API keys from environment variables.
     if name == "client":

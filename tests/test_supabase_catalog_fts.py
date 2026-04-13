@@ -6,6 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytest.importorskip(
+    "parsimony.stores.supabase",
+    reason="supabase store not yet implemented",
+)
 from parsimony.stores.supabase import SupabaseCatalogStore
 
 

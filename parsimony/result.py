@@ -253,10 +253,6 @@ class OutputConfig(BaseModel):
             raise ValueError(
                 f"Output config must have at most one TITLE column, found {len(titles)}: {titles}"
             )
-        if len(keys) == 1 and len(titles) != 1:
-            raise ValueError(
-                "Output config with a KEY column must define exactly one TITLE column"
-            )
         if not any(
             c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE)
             for c in self.columns

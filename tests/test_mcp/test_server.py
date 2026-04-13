@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import pytest
+
+pytest.importorskip("mcp", reason="mcp is an optional dependency")
+
 from mcp.server.lowlevel.server import Server
 
 from parsimony.mcp.server import create_server

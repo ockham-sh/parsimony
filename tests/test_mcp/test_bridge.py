@@ -5,6 +5,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+pytest.importorskip("mcp", reason="mcp is an optional dependency")
+
 from parsimony.mcp.bridge import connector_to_tool, result_to_content
 from parsimony.result import Provenance, Result
 

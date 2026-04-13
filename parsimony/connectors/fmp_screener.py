@@ -20,7 +20,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, EmptyDataError, ParseError, ProviderError, UnauthorizedError, connector
 from parsimony.result import (
     Column,
     OutputConfig,
@@ -30,6 +30,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {"api_key": "FMP_API_KEY"}
 
 _SEMAPHORE_LIMIT = 10  # max concurrent FMP requests per screener call
 
@@ -192,17 +194,25 @@ async def _fetch_json(
     except httpx.HTTPStatusError as exc:
         match exc.response.status_code:
             case 401:
-                raise ValueError("Invalid or missing FMP API key") from None
+                raise UnauthorizedError(provider="fmp", message="Invalid or missing FMP API key") from exc
             case 402:
-                raise ValueError("Your FMP plan is not eligible for this data request") from None
+                raise ProviderError(
+                    provider="fmp",
+                    status_code=402,
+                    message="Your FMP plan is not eligible for this data request",
+                ) from exc
             case 429:
-                raise ValueError(
-                    "FMP rate limit reached. Screener enrichment endpoints are rate-limited; retry shortly."
-                ) from None
+                raise ProviderError(
+                    provider="fmp",
+                    status_code=429,
+                    message="FMP rate limit reached. Screener enrichment endpoints are rate-limited; retry shortly.",
+                ) from exc
             case _:
-                raise ValueError(
-                    f"FMP API error {exc.response.status_code} on endpoint '{path}'"
-                ) from None
+                raise ProviderError(
+                    provider="fmp",
+                    status_code=exc.response.status_code,
+                    message=f"FMP API error {exc.response.status_code} on endpoint '{path}'",
+                ) from exc
     return response.json()
 
 
@@ -283,13 +293,13 @@ async def fmp_screener(
     screener_raw = await _fetch_json(http, "company-screener", screener_params)
     screener_df = pd.json_normalize(screener_raw) if screener_raw else pd.DataFrame()
     if screener_df.empty:
-        raise ValueError("FMP company-screener returned no rows for the selected filter set.")
+        raise EmptyDataError(provider="fmp", message="FMP company-screener returned no rows for the selected filter set.")
     if "symbol" not in screener_df.columns:
-        raise ValueError("Unexpected company-screener payload: missing 'symbol' column.")
+        raise ParseError(provider="fmp", message="Unexpected company-screener payload: missing 'symbol' column.")
 
     symbols = [s for s in screener_df["symbol"].dropna().astype(str).str.strip().tolist() if s]
     if not symbols:
-        raise ValueError("FMP company-screener did not return any valid symbols.")
+        raise EmptyDataError(provider="fmp", message="FMP company-screener did not return any valid symbols.")
 
     # Step 2: Determine which enrichment endpoints are needed
     need_metrics = (
@@ -406,7 +416,7 @@ async def fmp_screener(
         df = df[keep]
 
     if df.empty:
-        raise ValueError("Screener returned no rows after applying all filters.")
+        raise EmptyDataError(provider="fmp", message="Screener returned no rows after applying all filters.")
 
     prov = Provenance(
         source="fmp_screener",

@@ -9,10 +9,12 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, ProviderError, connector
 from parsimony.result import Provenance, Result
 from parsimony.transport.http import HttpClient
 from parsimony.transport.json_helpers import interpolate_path
+
+ENV_VARS: dict[str, str] = {}
 
 
 class PolymarketFetchParams(BaseModel):
@@ -109,7 +111,11 @@ def make_polymarket_connector(
             response = await http.request(method, rendered_path, params=request_params)
             response.raise_for_status()
         except httpx.HTTPStatusError as e:
-            raise ValueError(f"HTTP {e.response.status_code}: {e.response.text}") from e
+            raise ProviderError(
+                provider="polymarket",
+                status_code=e.response.status_code,
+                message=f"HTTP {e.response.status_code}: {e.response.text}",
+            ) from e
 
         data = response.json()
         if response_path:

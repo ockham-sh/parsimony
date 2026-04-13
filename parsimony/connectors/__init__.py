@@ -18,6 +18,78 @@ from typing import Any
 from parsimony.connector import Connectors
 
 
+# ---------------------------------------------------------------------------
+# Dependency wiring
+# ---------------------------------------------------------------------------
+
+
+def _resolve_env_deps(
+    connectors: Connectors,
+    env_vars: dict[str, str],
+    env: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Resolve env vars to bind_deps kwargs using the Connector's own dep info.
+
+    Returns a dict of resolved deps, or ``None`` if the provider should be
+    skipped (a required dep's env var is absent).
+    """
+    if not env_vars:
+        return {}
+
+    sample = next(iter(connectors))
+    required_deps = sample.dep_names
+    deps: dict[str, Any] = {}
+
+    for dep_name, env_var in env_vars.items():
+        value = env.get(env_var, "")
+        if not value:
+            if dep_name in required_deps:
+                return None  # can't construct — caller decides raise vs skip
+            continue  # optional dep: skip binding, function default applies
+        deps[dep_name] = value
+
+    return deps
+
+
+def _require_provider(
+    result: Connectors,
+    connectors: Connectors,
+    env_vars: dict[str, str],
+    env: dict[str, Any],
+) -> Connectors:
+    """Bind env-var deps and add a required provider. Raises if any dep is missing."""
+    deps = _resolve_env_deps(connectors, env_vars, env)
+    if deps is None:
+        # Find which env var is missing for the error message
+        for dep_name, env_var in env_vars.items():
+            if not env.get(env_var, ""):
+                raise ValueError(f"{env_var} is not configured")
+        raise ValueError("Required provider dependency missing")  # unreachable
+    if deps:
+        connectors = connectors.bind_deps(**deps)
+    return result + connectors
+
+
+def _include_provider(
+    result: Connectors,
+    connectors: Connectors,
+    env_vars: dict[str, str],
+    env: dict[str, Any],
+) -> Connectors:
+    """Bind env-var deps and add an optional provider. Skips silently if a required dep is missing."""
+    deps = _resolve_env_deps(connectors, env_vars, env)
+    if deps is None:
+        return result  # skip — required dep absent
+    if deps:
+        connectors = connectors.bind_deps(**deps)
+    return result + connectors
+
+
+# ---------------------------------------------------------------------------
+# Factory functions
+# ---------------------------------------------------------------------------
+
+
 def build_fetch_connectors_from_env(
     *,
     env: dict[str, Any] | None = None,
@@ -28,86 +100,40 @@ def build_fetch_connectors_from_env(
     SDMX DSD/codelist/list helpers, FMP screener). The app layers
     :func:`parsimony.connectors.catalog.catalog_search` on top for discovery.
     """
-    from parsimony.connectors.fmp import FMP_FETCH_CONNECTORS as FMP_FETCH
-    from parsimony.connectors.fred import FETCH_CONNECTORS as FRED_FETCH
-    from parsimony.connectors.polymarket import CONNECTORS as POLYMARKET
-    from parsimony.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX_FETCH
-    from parsimony.connectors.sec_edgar import CONNECTORS as SEC_EDGAR
+    from parsimony.connectors import bde, bdf, bdp, bls, boc, boe, boj
+    from parsimony.connectors import destatis, eia, eodhd, financial_reports
+    from parsimony.connectors import fmp, fred, polymarket, rba, riksbank
+    from parsimony.connectors import sdmx, sec_edgar, snb, treasury
 
     _env = env if env is not None else os.environ
 
-    fred_key = _env.get("FRED_API_KEY")
-    if not fred_key:
-        raise ValueError("FRED_API_KEY is not configured")
-    result = FRED_FETCH.bind_deps(api_key=fred_key) + SDMX_FETCH
+    # Required providers (raise if key missing)
+    result = _require_provider(Connectors([]), fred.FETCH_CONNECTORS, fred.ENV_VARS, _env)
+    result = result + sdmx.SDMX_FETCH_CONNECTORS
+    result = _require_provider(result, fmp.FMP_FETCH_CONNECTORS, fmp.ENV_VARS, _env)
 
-    fmp_key = _env.get("FMP_API_KEY")
-    if not fmp_key:
-        raise ValueError("FMP_API_KEY is not configured")
-    result = result + FMP_FETCH.bind_deps(api_key=fmp_key)
+    # Optional providers (skipped if key absent)
+    result = _include_provider(result, eodhd.CONNECTORS, eodhd.ENV_VARS, _env)
+    result = _include_provider(result, financial_reports.FETCH_CONNECTORS, financial_reports.ENV_VARS, _env)
+    result = _include_provider(result, eia.FETCH_CONNECTORS, eia.ENV_VARS, _env)
+    result = _include_provider(result, bdf.FETCH_CONNECTORS, bdf.ENV_VARS, _env)
 
-    eod_key = _env.get("EODHD_API_KEY")
-    if eod_key:
-        from parsimony.connectors.eodhd import CONNECTORS as EODHD
-
-        result = result + EODHD.bind_deps(api_key=eod_key)
-
-    result = result + POLYMARKET
-
-    result = result + SEC_EDGAR
-
-    fr_key = _env.get("FINANCIAL_REPORTS_API_KEY")
-    if fr_key:
-        from parsimony.connectors.financial_reports import FETCH_CONNECTORS as FR_FETCH
-
-        result = result + FR_FETCH.bind_deps(api_key=fr_key)
-
-    # --- Public data connectors (no or optional API key) ---
-    from parsimony.connectors.boe import FETCH_CONNECTORS as BOE_FETCH
-    from parsimony.connectors.rba import FETCH_CONNECTORS as RBA_FETCH
-    from parsimony.connectors.snb import FETCH_CONNECTORS as SNB_FETCH
-    from parsimony.connectors.treasury import FETCH_CONNECTORS as TREASURY_FETCH
-
-    result = result + TREASURY_FETCH + SNB_FETCH + BOE_FETCH + RBA_FETCH
-
-    from parsimony.connectors.riksbank import FETCH_CONNECTORS as RIKSBANK_FETCH
-
-    result = result + RIKSBANK_FETCH.bind_deps(api_key=_env.get("RIKSBANK_API_KEY", ""))
-
-    from parsimony.connectors.destatis import FETCH_CONNECTORS as DESTATIS_FETCH
-
-    result = result + DESTATIS_FETCH.bind_deps(
-        username=_env.get("DESTATIS_USERNAME", "GAST"),
-        password=_env.get("DESTATIS_PASSWORD", "GAST"),
-    )
-
-    eia_key = _env.get("EIA_API_KEY")
-    if eia_key:
-        from parsimony.connectors.eia import FETCH_CONNECTORS as EIA_FETCH
-
-        result = result + EIA_FETCH.bind_deps(api_key=eia_key)
-
-    # BLS (optional API key for higher rate limits)
-    from parsimony.connectors.bls import FETCH_CONNECTORS as BLS_FETCH
-
-    result = result + BLS_FETCH.bind_deps(api_key=_env.get("BLS_API_KEY", ""))
-
-    # --- Central bank connectors (no or optional API key) ---
-    from parsimony.connectors.bde import FETCH_CONNECTORS as BDE_FETCH
-    from parsimony.connectors.bdp import FETCH_CONNECTORS as BDP_FETCH
-    from parsimony.connectors.boc import FETCH_CONNECTORS as BOC_FETCH
-    from parsimony.connectors.boj import FETCH_CONNECTORS as BOJ_FETCH
-
-    result = result + BDE_FETCH + BOC_FETCH + BOJ_FETCH + BDP_FETCH
-
-    bdf_key = _env.get("BANQUEDEFRANCE_KEY")
-    if bdf_key:
-        from parsimony.connectors.bdf import FETCH_CONNECTORS as BDF_FETCH
-
-        result = result + BDF_FETCH.bind_deps(api_key=bdf_key)
+    # Public data + default-value providers (always included)
+    result = _include_provider(result, polymarket.CONNECTORS, polymarket.ENV_VARS, _env)
+    result = _include_provider(result, sec_edgar.CONNECTORS, sec_edgar.ENV_VARS, _env)
+    result = _include_provider(result, treasury.FETCH_CONNECTORS, treasury.ENV_VARS, _env)
+    result = _include_provider(result, snb.FETCH_CONNECTORS, snb.ENV_VARS, _env)
+    result = _include_provider(result, boe.FETCH_CONNECTORS, boe.ENV_VARS, _env)
+    result = _include_provider(result, rba.FETCH_CONNECTORS, rba.ENV_VARS, _env)
+    result = _include_provider(result, bde.FETCH_CONNECTORS, bde.ENV_VARS, _env)
+    result = _include_provider(result, boc.FETCH_CONNECTORS, boc.ENV_VARS, _env)
+    result = _include_provider(result, boj.FETCH_CONNECTORS, boj.ENV_VARS, _env)
+    result = _include_provider(result, bdp.FETCH_CONNECTORS, bdp.ENV_VARS, _env)
+    result = _include_provider(result, riksbank.FETCH_CONNECTORS, riksbank.ENV_VARS, _env)
+    result = _include_provider(result, destatis.FETCH_CONNECTORS, destatis.ENV_VARS, _env)
+    result = _include_provider(result, bls.FETCH_CONNECTORS, bls.ENV_VARS, _env)
 
     return result
-
 
 
 def build_connectors_from_env(
@@ -122,81 +148,38 @@ def build_connectors_from_env(
 
     Pass *env* to override ``os.environ`` (useful for testing).
     """
-    from parsimony.connectors.fmp import CONNECTORS as FMP
-    from parsimony.connectors.fmp_screener import CONNECTORS as FMP_SCREENER
-    from parsimony.connectors.fred import CONNECTORS as FRED
-    from parsimony.connectors.polymarket import CONNECTORS as POLYMARKET
-    from parsimony.connectors.sdmx import CONNECTORS as SDMX
-    from parsimony.connectors.sec_edgar import CONNECTORS as SEC_EDGAR
+    from parsimony.connectors import bde, bdf, bdp, bls, boc, boe, boj
+    from parsimony.connectors import destatis, eia, eodhd, financial_reports
+    from parsimony.connectors import fmp, fmp_screener, fred, polymarket
+    from parsimony.connectors import rba, riksbank, sdmx, sec_edgar, snb, treasury
 
     _env = env if env is not None else os.environ
 
-    fred_key = _env.get("FRED_API_KEY")
-    if not fred_key:
-        raise ValueError("FRED_API_KEY is not configured")
-    result = FRED.bind_deps(api_key=fred_key) + SDMX
+    # Required providers (raise if key missing)
+    result = _require_provider(Connectors([]), fred.CONNECTORS, fred.ENV_VARS, _env)
+    result = result + sdmx.CONNECTORS
+    result = _require_provider(result, fmp.CONNECTORS, fmp.ENV_VARS, _env)
+    result = _require_provider(result, fmp_screener.CONNECTORS, fmp_screener.ENV_VARS, _env)
 
-    fmp_key = _env.get("FMP_API_KEY")
-    if not fmp_key:
-        raise ValueError("FMP_API_KEY is not configured")
-    result = result + FMP.bind_deps(api_key=fmp_key) + FMP_SCREENER.bind_deps(api_key=fmp_key)
+    # Optional providers (skipped if key absent)
+    result = _include_provider(result, eodhd.CONNECTORS, eodhd.ENV_VARS, _env)
+    result = _include_provider(result, financial_reports.CONNECTORS, financial_reports.ENV_VARS, _env)
+    result = _include_provider(result, eia.CONNECTORS, eia.ENV_VARS, _env)
+    result = _include_provider(result, bdf.CONNECTORS, bdf.ENV_VARS, _env)
 
-    eod_key = _env.get("EODHD_API_KEY")
-    if eod_key:
-        from parsimony.connectors.eodhd import CONNECTORS as EODHD
-        result = result + EODHD.bind_deps(api_key=eod_key)
-
-    result = result + POLYMARKET
-
-    result = result + SEC_EDGAR
-
-    fr_key = _env.get("FINANCIAL_REPORTS_API_KEY")
-    if fr_key:
-        from parsimony.connectors.financial_reports import CONNECTORS as FR
-        result = result + FR.bind_deps(api_key=fr_key)
-
-    # --- Public data connectors (no or optional API key) ---
-    from parsimony.connectors.boe import CONNECTORS as BOE
-    from parsimony.connectors.rba import CONNECTORS as RBA
-    from parsimony.connectors.snb import CONNECTORS as SNB
-    from parsimony.connectors.treasury import CONNECTORS as TREASURY
-
-    result = result + TREASURY + SNB + BOE + RBA
-
-    from parsimony.connectors.riksbank import CONNECTORS as RIKSBANK
-
-    result = result + RIKSBANK.bind_deps(api_key=_env.get("RIKSBANK_API_KEY", ""))
-
-    from parsimony.connectors.destatis import CONNECTORS as DESTATIS
-
-    result = result + DESTATIS.bind_deps(
-        username=_env.get("DESTATIS_USERNAME", "GAST"),
-        password=_env.get("DESTATIS_PASSWORD", "GAST"),
-    )
-
-    eia_key = _env.get("EIA_API_KEY")
-    if eia_key:
-        from parsimony.connectors.eia import CONNECTORS as EIA
-
-        result = result + EIA.bind_deps(api_key=eia_key)
-
-    # BLS (optional API key for higher rate limits)
-    from parsimony.connectors.bls import CONNECTORS as BLS
-
-    result = result + BLS.bind_deps(api_key=_env.get("BLS_API_KEY", ""))
-
-    # --- Central bank connectors (no or optional API key) ---
-    from parsimony.connectors.bde import CONNECTORS as BDE
-    from parsimony.connectors.bdp import CONNECTORS as BDP
-    from parsimony.connectors.boc import CONNECTORS as BOC
-    from parsimony.connectors.boj import CONNECTORS as BOJ
-
-    result = result + BDE + BOC + BOJ + BDP
-
-    bdf_key = _env.get("BANQUEDEFRANCE_KEY")
-    if bdf_key:
-        from parsimony.connectors.bdf import CONNECTORS as BDF
-
-        result = result + BDF.bind_deps(api_key=bdf_key)
+    # Public data + default-value providers (always included)
+    result = _include_provider(result, polymarket.CONNECTORS, polymarket.ENV_VARS, _env)
+    result = _include_provider(result, sec_edgar.CONNECTORS, sec_edgar.ENV_VARS, _env)
+    result = _include_provider(result, treasury.CONNECTORS, treasury.ENV_VARS, _env)
+    result = _include_provider(result, snb.CONNECTORS, snb.ENV_VARS, _env)
+    result = _include_provider(result, boe.CONNECTORS, boe.ENV_VARS, _env)
+    result = _include_provider(result, rba.CONNECTORS, rba.ENV_VARS, _env)
+    result = _include_provider(result, bde.CONNECTORS, bde.ENV_VARS, _env)
+    result = _include_provider(result, boc.CONNECTORS, boc.ENV_VARS, _env)
+    result = _include_provider(result, boj.CONNECTORS, boj.ENV_VARS, _env)
+    result = _include_provider(result, bdp.CONNECTORS, bdp.ENV_VARS, _env)
+    result = _include_provider(result, riksbank.CONNECTORS, riksbank.ENV_VARS, _env)
+    result = _include_provider(result, destatis.CONNECTORS, destatis.ENV_VARS, _env)
+    result = _include_provider(result, bls.CONNECTORS, bls.ENV_VARS, _env)
 
     return result

@@ -16,7 +16,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -26,6 +26,8 @@ from parsimony.result import (
 )
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://app.bde.es/bierest/resources/srdatosapp"
 
@@ -201,11 +203,11 @@ async def bde_fetch(params: BdeFetchParams) -> Result:
                 json_data.extend(data)
 
     if not isinstance(json_data, list) or not json_data:
-        raise ValueError(f"BdE returned empty or invalid response for: {params.key}")
+        raise EmptyDataError(provider="bde", message=f"BdE returned empty or invalid response for: {params.key}")
 
     df = _parse_bde_response(json_data)
     if df.empty:
-        raise ValueError(f"No observations parsed for: {params.key}")
+        raise EmptyDataError(provider="bde", message=f"No observations parsed for: {params.key}")
 
     return Result.from_dataframe(
         df,

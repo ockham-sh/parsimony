@@ -14,7 +14,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +24,8 @@ from parsimony.result import (
 )
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://bpstat.bportugal.pt/data/v1"
 
@@ -158,8 +160,9 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
 
     values = json_data.get("value", [])
     if not dates or not values:
-        raise ValueError(
-            f"No observations for domain={params.domain_id}, dataset={params.dataset_id}"
+        raise EmptyDataError(
+            provider="bdp",
+            message=f"No observations for domain={params.domain_id}, dataset={params.dataset_id}",
         )
 
     # Extract series metadata
@@ -189,8 +192,9 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
             })
 
     if not rows:
-        raise ValueError(
-            f"No observations parsed for domain={params.domain_id}, dataset={params.dataset_id}"
+        raise EmptyDataError(
+            provider="bdp",
+            message=f"No observations parsed for domain={params.domain_id}, dataset={params.dataset_id}",
         )
 
     return Result.from_dataframe(

@@ -17,7 +17,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -28,6 +28,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://data.snb.ch"
+
+ENV_VARS: dict[str, str] = {}
 
 # Well-known SNB cube IDs for catalog seeding (external cube list CSV is no longer available)
 _KNOWN_CUBES = [
@@ -228,7 +230,7 @@ async def snb_fetch(params: SnbFetchParams) -> Result:
 
     df = _parse_snb_csv(response.text)
     if df.empty:
-        raise ValueError(f"No data returned for cube: {params.cube_id}")
+        raise EmptyDataError(provider="snb", message=f"No data returned for cube: {params.cube_id}")
 
     df["cube_id"] = params.cube_id
     df["title"] = params.cube_id

@@ -16,6 +16,7 @@ import pandas as pd
 from pydantic import BaseModel, Field
 
 from parsimony.connector import Connectors, Namespace, connector
+from parsimony.connector import EmptyDataError, ParseError, PaymentRequiredError, ProviderError, UnauthorizedError
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +25,9 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+
+ENV_VARS: dict[str, str] = {"api_key": "FMP_API_KEY"}
 
 
 def _make_http(api_key: str, base_url: str = "https://financialmodelingprep.com/stable") -> HttpClient:
@@ -68,15 +72,18 @@ async def _fmp_fetch(
     except httpx.HTTPStatusError as e:
         match e.response.status_code:
             case 401:
-                raise ValueError("Invalid or missing FMP API key") from None
+                raise UnauthorizedError(provider="fmp", message="Invalid or missing FMP API key") from e
             case 402:
-                raise ValueError(
-                    "Your FMP plan is not eligible for this data request"
-                ) from None
+                raise PaymentRequiredError(
+                    provider="fmp",
+                    message="Your FMP plan is not eligible for this data request",
+                ) from e
             case _:
-                raise ValueError(
-                    f"FMP API error {e.response.status_code} on endpoint '{op_name}'"
-                ) from None
+                raise ProviderError(
+                    provider="fmp",
+                    status_code=e.response.status_code,
+                    message=f"FMP API error {e.response.status_code} on endpoint '{op_name}'",
+                ) from e
 
     data = response.json()
 
@@ -90,10 +97,10 @@ async def _fmp_fetch(
         else:
             df = pd.DataFrame([data])
     else:
-        raise ValueError(f"Unexpected response type from FMP: {type(data)}")
+        raise ParseError(provider="fmp", message=f"Unexpected response type from FMP: {type(data)}")
 
     if df.empty:
-        raise ValueError(f"No data returned from FMP endpoint '{op_name}'")
+        raise EmptyDataError(provider="fmp", message=f"No data returned from FMP endpoint '{op_name}'")
 
     prov = Provenance(source=op_name, params=dict(params))
 
@@ -532,7 +539,7 @@ async def fmp_search(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Search for companies by name fragment or partial ticker. Returns matches ranked by relevance. Use to resolve a company name to its ticker symbol."""
+    """[All plans] Search for companies by name fragment or partial ticker. Returns matches ranked by relevance. Use to resolve a company name to its ticker symbol."""
     http = _make_http(api_key, base_url)
     p: dict[str, Any] = {"query": params.query, "limit": params.limit}
     if params.exchange:
@@ -550,7 +557,7 @@ async def fmp_taxonomy(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Return valid values for a taxonomy type: sectors, industries, exchanges, or symbols_with_financials. Use before building screener filters to ensure field values are valid."""
+    """[All plans] Return valid values for a taxonomy type: sectors, industries, exchanges, or symbols_with_financials. Use before building screener filters to ensure field values are valid."""
     http = _make_http(api_key, base_url)
     path = _TAXONOMY_DISPATCH[params.type]
     return await _fmp_fetch(
@@ -571,7 +578,7 @@ async def fmp_quotes(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch real-time quotes for one or more symbols in a single request. Returns price, change, 52-week range, market cap, volume, moving averages. Pass comma-separated symbols (e.g. AAPL,MSFT,GOOGL)."""
+    """[Starter+] Fetch real-time quotes for one or more symbols in a single request. Returns price, change, 52-week range, market cap, volume, moving averages. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="batch-quote", params={"symbols": params.symbols},
@@ -586,7 +593,7 @@ async def fmp_prices(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch price history for a symbol. Supports daily, dividend_adjusted, and intraday frequencies (1min, 5min, 15min, 30min, 1hour, 4hour). Daily returns full OHLCV + adjClose; intraday returns last ~5 days."""
+    """[Starter+] Fetch price history for a symbol. Supports daily, dividend_adjusted, and intraday frequencies (1min, 5min, 15min, 30min, 1hour, 4hour). Daily returns full OHLCV + adjClose; intraday returns last ~5 days. Intraday (1min-4hour) requires Professional tier."""
     http = _make_http(api_key, base_url)
     freq = params.frequency
 
@@ -619,7 +626,7 @@ async def fmp_company_profile(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch company profile: name, sector, industry, market cap, CEO, employees, website, ETF/ADR flags."""
+    """[Starter+] Fetch company profile: name, sector, industry, market cap, CEO, employees, website, ETF/ADR flags. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="profile", params={"symbol": params.symbol},
@@ -634,7 +641,7 @@ async def fmp_peers(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Return the peer group for a company — stocks in the same sector with comparable market cap on the same exchange."""
+    """[Starter+] Return the peer group for a company — stocks in the same sector with comparable market cap on the same exchange. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="stock-peers", params={"symbol": params.symbol},
@@ -649,7 +656,7 @@ async def fmp_income_statements(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch income statements: revenue, EBITDA, net income, EPS for multiple periods."""
+    """[Starter+] Fetch income statements: revenue, EBITDA, net income, EPS for multiple periods. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols with multi-year history."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="income-statement", params=params.model_dump(),
@@ -664,7 +671,7 @@ async def fmp_balance_sheet_statements(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch balance sheet: assets, liabilities, equity, debt, cash for multiple periods."""
+    """[Starter+] Fetch balance sheet: assets, liabilities, equity, debt, cash for multiple periods. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols with multi-year history."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="balance-sheet-statement", params=params.model_dump(),
@@ -679,7 +686,7 @@ async def fmp_cash_flow_statements(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch cash flow statement: operating, investing, financing activities, free cash flow for multiple periods."""
+    """[Starter+] Fetch cash flow statement: operating, investing, financing activities, free cash flow for multiple periods. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols with multi-year history."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="cash-flow-statement", params=params.model_dump(),
@@ -699,7 +706,7 @@ async def fmp_corporate_history(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch historical corporate events for a symbol: earnings (EPS, revenue actual vs estimated), dividends, or splits."""
+    """[Starter+] Fetch historical corporate events for a symbol: earnings (EPS, revenue actual vs estimated), dividends, or splits. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols."""
     http = _make_http(api_key, base_url)
     path = _CORPORATE_HISTORY_DISPATCH[params.event_type]
     return await _fmp_fetch(
@@ -715,7 +722,7 @@ async def fmp_event_calendar(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Return the market-wide calendar for earnings, dividends, or splits within a date window (max 90 days)."""
+    """[All plans] Return the market-wide calendar for earnings, dividends, or splits within a date window (max 90 days)."""
     http = _make_http(api_key, base_url)
     path = _EVENT_CALENDAR_DISPATCH[params.event_type]
     p: dict[str, Any] = {}
@@ -736,7 +743,7 @@ async def fmp_analyst_estimates(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch forward analyst consensus estimates: revenue, EBITDA, net income, EPS low/avg/high plus analyst coverage counts."""
+    """[Professional+] Fetch forward analyst consensus estimates: revenue, EBITDA, net income, EPS low/avg/high plus analyst coverage counts. Requires Professional tier or above."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="analyst-estimates",
@@ -757,7 +764,7 @@ async def fmp_news(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch stock news articles or official press releases for one or more symbols. Pass type='news' for third-party articles or 'press_releases' for company IR communications."""
+    """[Starter+] Fetch stock news articles or official press releases for one or more symbols. Pass type='news' for third-party articles or 'press_releases' for company IR communications. Demo: 3 symbols (AAPL, TSLA, MSFT). Starter+: all symbols."""
     http = _make_http(api_key, base_url)
     path = _NEWS_DISPATCH[params.type]
     p: dict[str, Any] = {"symbols": params.symbols, "limit": params.limit, "page": params.page}
@@ -778,7 +785,7 @@ async def fmp_insider_trades(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch insider trading activity (executive and director trades): transaction type, shares, price, insider name."""
+    """[Professional+] Fetch insider trading activity (executive and director trades): transaction type, shares, price, insider name."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="insider-trading/search",
@@ -794,7 +801,7 @@ async def fmp_institutional_positions(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch quarterly institutional (13F) ownership snapshot: investor count, share changes, invested value, ownership %."""
+    """[Professional+] Fetch quarterly institutional (13F) ownership snapshot: investor count, share changes, invested value, ownership %."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="institutional-ownership/symbol-positions-summary",
@@ -810,7 +817,7 @@ async def fmp_earnings_transcript(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Fetch the full text transcript of an earnings call for a symbol, year, and quarter."""
+    """[Professional+] Fetch the full text transcript of an earnings call for a symbol, year, and quarter."""
     http = _make_http(api_key, base_url)
     return await _fmp_fetch(
         http, path="earning-call-transcript",
@@ -831,7 +838,7 @@ async def fmp_index_constituents(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Return current constituents of SP500, NASDAQ, or DOW_JONES: symbol, name, sector, headquarters."""
+    """[All plans] Return current constituents of SP500, NASDAQ, or DOW_JONES: symbol, name, sector, headquarters."""
     http = _make_http(api_key, base_url)
     path = _INDEX_DISPATCH[params.index]
     return await _fmp_fetch(
@@ -847,7 +854,7 @@ async def fmp_market_movers(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Return today's biggest market movers: gainers (highest % up), losers (biggest % down), or most_actives (highest volume)."""
+    """[All plans] Return today's biggest market movers: gainers (highest % up), losers (biggest % down), or most_actives (highest volume)."""
     http = _make_http(api_key, base_url)
     path = _MARKET_MOVERS_DISPATCH[params.type]
     return await _fmp_fetch(

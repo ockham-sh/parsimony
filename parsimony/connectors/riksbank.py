@@ -14,7 +14,7 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -25,6 +25,8 @@ from parsimony.result import (
 from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://api.riksbank.se/swea/v1"
+
+ENV_VARS: dict[str, str] = {"api_key": "RIKSBANK_API_KEY"}
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ async def riksbank_fetch(params: RiksbankFetchParams, *, api_key: str = "") -> R
         })
 
     if not rows:
-        raise ValueError(f"No observations returned for: {params.series_id}")
+        raise EmptyDataError(provider="riksbank", message=f"No observations returned for: {params.series_id}")
 
     return Result.from_dataframe(
         pd.DataFrame(rows),

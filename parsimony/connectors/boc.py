@@ -14,7 +14,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -24,6 +24,8 @@ from parsimony.result import (
 )
 
 logger = logging.getLogger(__name__)
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.bankofcanada.ca/valet"
 
@@ -168,7 +170,7 @@ async def boc_fetch(params: BocFetchParams) -> Result:
     series_details = json_data.get("seriesDetail")
     df = _parse_observations(json_data, series_details)
     if df.empty:
-        raise ValueError(f"No observations returned for: {params.series_name}")
+        raise EmptyDataError(provider="boc", message=f"No observations returned for: {params.series_name}")
 
     return Result.from_dataframe(
         df,

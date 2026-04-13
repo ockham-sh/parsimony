@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, ProviderError, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -32,6 +32,8 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.bankofengland.co.uk"
 _XML_URL = f"{_BASE_URL}/boeapps/database/_iadb-fromshowcolumns.asp"
@@ -219,11 +221,11 @@ async def boe_fetch(params: BoeFetchParams) -> Result:
     # Detect error page redirect
     resp_url = str(response.url)
     if "errorpage" in resp_url.lower():
-        raise ValueError(f"BOE redirected to error page for: {params.series_ids}")
+        raise ProviderError(provider="boe", status_code=0, message=f"BOE redirected to error page for: {params.series_ids}")
 
     xml_text = response.text
     if xml_text.lstrip().startswith(("<!DOCTYPE", "<html", "<HTML")):
-        raise ValueError(f"BOE returned HTML instead of XML for: {params.series_ids}")
+        raise ProviderError(provider="boe", status_code=0, message=f"BOE returned HTML instead of XML for: {params.series_ids}")
 
     root = ET.fromstring(xml_text)
 
@@ -255,7 +257,7 @@ async def boe_fetch(params: BoeFetchParams) -> Result:
             })
 
     if not all_rows:
-        raise ValueError(f"No observations parsed for: {params.series_ids}")
+        raise EmptyDataError(provider="boe", message=f"No observations parsed for: {params.series_ids}")
 
     return Result.from_dataframe(
         pd.DataFrame(all_rows),

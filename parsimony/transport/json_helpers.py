@@ -1,4 +1,4 @@
-"""JSON/tabular helpers for HTTP connectors (no parsimony_agents dependency)."""
+"""JSON/tabular helpers for HTTP connectors."""
 
 from __future__ import annotations
 

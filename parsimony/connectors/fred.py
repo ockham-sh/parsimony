@@ -7,7 +7,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -16,6 +16,8 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+ENV_VARS: dict[str, str] = {"api_key": "FRED_API_KEY"}
 
 # ---------------------------------------------------------------------------
 # Parameter models
@@ -133,7 +135,7 @@ async def fred_search(params: FredSearchParams, *, api_key: str) -> Result:
     response.raise_for_status()
     seriess = response.json().get("seriess", [])
     if not seriess:
-        raise ValueError(f"No series found for: {params.search_text}")
+        raise EmptyDataError(provider="fred", message=f"No series found for: {params.search_text}")
     df = pd.DataFrame(seriess)
     cols = [c for c in SEARCH_COLUMNS if c in df.columns]
     df = df[cols]

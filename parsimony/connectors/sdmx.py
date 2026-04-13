@@ -24,7 +24,6 @@ from parsimony.result import (
     SemanticTableResult,
 )
 
-ENV_VARS: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Parameter models

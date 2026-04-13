@@ -14,7 +14,6 @@ from parsimony.result import Provenance, Result
 from parsimony.transport.http import HttpClient
 from parsimony.transport.json_helpers import interpolate_path
 
-ENV_VARS: dict[str, str] = {}
 
 
 class PolymarketFetchParams(BaseModel):

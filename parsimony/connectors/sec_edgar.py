@@ -25,7 +25,6 @@ from parsimony.result import (
     Result,
 )
 
-ENV_VARS: dict[str, str] = {}
 
 # ---------------------------------------------------------------------------
 # Helpers

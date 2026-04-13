@@ -29,7 +29,6 @@ from parsimony.transport.http import HttpClient
 
 _BASE_URL = "https://data.snb.ch"
 
-ENV_VARS: dict[str, str] = {}
 
 # Well-known SNB cube IDs for catalog seeding (external cube list CSV is no longer available)
 _KNOWN_CUBES = [

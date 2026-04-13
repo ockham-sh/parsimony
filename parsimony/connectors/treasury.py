@@ -24,7 +24,6 @@ from parsimony.transport.http import HttpClient
 _BASE_URL = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
 _METADATA_URL = "https://api.fiscaldata.treasury.gov/services/dtg/metadata/"
 
-ENV_VARS: dict[str, str] = {}
 
 
 # ---------------------------------------------------------------------------

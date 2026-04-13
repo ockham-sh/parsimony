@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -12,6 +13,8 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, Field, model_validator
+
+logger = logging.getLogger(__name__)
 
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
@@ -265,6 +268,19 @@ class OutputConfig(BaseModel):
             )
         return self
 
+    def validate_columns(self, df: pd.DataFrame) -> list[str]:
+        """Return declared column names absent from *df* (excludes wildcards).
+
+        Useful for diagnosing schema mismatches — a non-empty return value
+        means some config columns will be silently skipped during
+        :meth:`build_table_result`::
+
+            missing = config.validate_columns(sample_df)
+            # missing == ['close'] → typo? API renamed the column?
+        """
+        declared = {c.name for c in self.columns if c.name != "*"}
+        return sorted(declared - set(df.columns))
+
     def _apply_columns(
         self,
         df: pd.DataFrame,
@@ -332,6 +348,17 @@ class OutputConfig(BaseModel):
             frame,
             merge_params,
         )
+
+        declared = {c.name for c in self.columns if c.name != "*"}
+        unmatched = sorted(declared - consumed)
+        if unmatched:
+            logger.warning(
+                "OutputConfig columns not found in DataFrame: %s. "
+                "Available columns: %s",
+                unmatched,
+                sorted(frame.columns),
+            )
+
         if not columns_info:
             raise ValueError("Column config matched no input columns.")
 

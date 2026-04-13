@@ -33,7 +33,6 @@ from parsimony.result import (
     Result,
 )
 
-ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.rba.gov.au"
 _TABLES_URL = f"{_BASE_URL}/statistics/tables/"

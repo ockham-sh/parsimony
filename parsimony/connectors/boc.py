@@ -25,7 +25,6 @@ from parsimony.result import (
 
 logger = logging.getLogger(__name__)
 
-ENV_VARS: dict[str, str] = {}
 
 _BASE_URL = "https://www.bankofcanada.ca/valet"
 

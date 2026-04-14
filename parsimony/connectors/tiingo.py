@@ -19,17 +19,20 @@ Free-tier restrictions: news (403), fundamentals daily/statements (404).
 
 from __future__ import annotations
 
+import re
 from typing import Annotated, Any
 
 import httpx
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_TICKER_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
+_TICKERS_RE = re.compile(r"^[a-zA-Z0-9._,\-/]+$")
 
 from parsimony.connector import (
     Connectors,
     EmptyDataError,
     Namespace,
-    ParseError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
@@ -45,7 +48,6 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
-
 
 ENV_VARS: dict[str, str] = {"api_key": "TIINGO_API_KEY"}
 
@@ -210,6 +212,13 @@ class TiingoEodParams(BaseModel):
     end_date: str | None = Field(
         default=None, description="End date ISO 8601, e.g. '2024-12-31'."
     )
+
+    @field_validator("ticker")
+    @classmethod
+    def _path_safe_ticker(cls, v: str) -> str:
+        if not _TICKER_RE.match(v):
+            raise ValueError(f"ticker contains unsafe characters for URL path: {v!r}")
+        return v
 
 
 @connector(output=_EOD_OUTPUT, tags=["equities"])
@@ -380,6 +389,13 @@ class TiingoIexHistParams(BaseModel):
         description="Resample frequency: '1min', '5min', '15min', '30min', '1hour', '2hour', '4hour'.",
     )
 
+    @field_validator("ticker")
+    @classmethod
+    def _path_safe_ticker(cls, v: str) -> str:
+        if not _TICKER_RE.match(v):
+            raise ValueError(f"ticker contains unsafe characters for URL path: {v!r}")
+        return v
+
 
 @connector(output=_IEX_HIST_OUTPUT, tags=["equities"])
 async def tiingo_iex_historical(params: TiingoIexHistParams, *, api_key: str) -> Result:
@@ -438,6 +454,13 @@ class TiingoMetaParams(BaseModel):
     ticker: Annotated[str, Namespace("tiingo_ticker")] = Field(
         ..., description="Stock ticker, e.g. 'AAPL'. Use tiingo_search to resolve tickers."
     )
+
+    @field_validator("ticker")
+    @classmethod
+    def _path_safe_ticker(cls, v: str) -> str:
+        if not _TICKER_RE.match(v):
+            raise ValueError(f"ticker contains unsafe characters for URL path: {v!r}")
+        return v
 
 
 @connector(tags=["equities"], result_type="dict")

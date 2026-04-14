@@ -580,9 +580,12 @@ async def _invoke_result_callbacks(
     result: Result,
 ) -> None:
     for cb in callbacks:
-        ret = cb(result)
-        if inspect.isawaitable(ret):
-            await ret
+        try:
+            ret = cb(result)
+            if inspect.isawaitable(ret):
+                await ret
+        except Exception:
+            logger.exception("Result callback %r failed; data was fetched successfully", cb)
 
 
 class Connectors:

@@ -15,7 +15,6 @@ from parsimony.transport.http import HttpClient
 from parsimony.transport.json_helpers import interpolate_path
 
 
-
 class PolymarketFetchParams(BaseModel):
     model_config = ConfigDict(extra="allow")
 

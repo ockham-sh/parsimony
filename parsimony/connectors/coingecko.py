@@ -16,12 +16,15 @@ Provides 11 connectors:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import re
+from datetime import UTC, datetime
 from typing import Annotated, Any, Literal
 
 import httpx
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 from parsimony.connector import (
     Connectors,
@@ -44,7 +47,6 @@ from parsimony.result import (
 )
 from parsimony.transport.http import HttpClient
 
-
 ENV_VARS: dict[str, str] = {"api_key": "COINGECKO_API_KEY"}
 
 _BASE_URL = "https://api.coingecko.com/api/v3"
@@ -66,7 +68,7 @@ def _make_http(api_key: str) -> HttpClient:
 
 def _iso_to_unix(date_str: str) -> int:
     """Convert YYYY-MM-DD ISO date string to Unix timestamp (seconds, UTC)."""
-    dt = datetime.fromisoformat(date_str).replace(tzinfo=timezone.utc)
+    dt = datetime.fromisoformat(date_str).replace(tzinfo=UTC)
     return int(dt.timestamp())
 
 
@@ -484,6 +486,13 @@ class CoinGeckoCoinDetailParams(BaseModel):
     community_data: bool = Field(default=False, description="Include community stats")
     developer_data: bool = Field(default=False, description="Include developer/GitHub stats")
 
+    @field_validator("coin_id")
+    @classmethod
+    def _path_safe_coin_id(cls, v: str) -> str:
+        if not _PATH_SAFE_RE.match(v):
+            raise ValueError(f"coin_id contains unsafe characters for URL path: {v!r}")
+        return v
+
 
 @connector(tags=["crypto"], result_type="dict")
 async def coingecko_coin_detail(params: CoinGeckoCoinDetailParams, *, api_key: str) -> Result:
@@ -541,6 +550,13 @@ class CoinGeckoMarketChartParams(BaseModel):
         description="Force data interval: '5m', 'hourly', or 'daily'. None = auto.",
     )
 
+    @field_validator("coin_id")
+    @classmethod
+    def _path_safe_coin_id(cls, v: str) -> str:
+        if not _PATH_SAFE_RE.match(v):
+            raise ValueError(f"coin_id contains unsafe characters for URL path: {v!r}")
+        return v
+
 
 @connector(output=_MARKET_CHART_OUTPUT, tags=["crypto"])
 async def coingecko_market_chart(params: CoinGeckoMarketChartParams, *, api_key: str) -> Result:
@@ -588,6 +604,13 @@ class CoinGeckoMarketChartRangeParams(BaseModel):
         alias="to",
         description="End date ISO 8601, e.g. '2024-12-31'. Use as to_date='2024-12-31'",
     )
+
+    @field_validator("coin_id")
+    @classmethod
+    def _path_safe_coin_id(cls, v: str) -> str:
+        if not _PATH_SAFE_RE.match(v):
+            raise ValueError(f"coin_id contains unsafe characters for URL path: {v!r}")
+        return v
 
 
 @connector(output=_MARKET_CHART_OUTPUT, tags=["crypto"])
@@ -655,6 +678,13 @@ class CoinGeckoOhlcParams(BaseModel):
         default=30, description="Candle range in days: 1, 7, 14, 30, 90, 180, or 365"
     )
 
+    @field_validator("coin_id")
+    @classmethod
+    def _path_safe_coin_id(cls, v: str) -> str:
+        if not _PATH_SAFE_RE.match(v):
+            raise ValueError(f"coin_id contains unsafe characters for URL path: {v!r}")
+        return v
+
 
 @connector(output=_OHLC_OUTPUT, tags=["crypto"])
 async def coingecko_ohlc(params: CoinGeckoOhlcParams, *, api_key: str) -> Result:
@@ -696,6 +726,10 @@ _ONCHAIN_PRICE_OUTPUT = OutputConfig(
 )
 
 
+_NETWORK_RE = re.compile(r"^[a-zA-Z0-9_\-]+$")
+_CONTRACT_ADDR_RE = re.compile(r"^[a-zA-Z0-9x,]+$")
+
+
 class CoinGeckoTokenPriceOnchainParams(BaseModel):
     """Parameters for on-chain token price lookup via GeckoTerminal."""
 
@@ -714,6 +748,20 @@ class CoinGeckoTokenPriceOnchainParams(BaseModel):
         default="usd",
         description="Comma-separated target currencies for price. Only 'usd' is reliably available.",
     )
+
+    @field_validator("network")
+    @classmethod
+    def _path_safe_network(cls, v: str) -> str:
+        if not _NETWORK_RE.match(v):
+            raise ValueError(f"network contains unsafe characters for URL path: {v!r}")
+        return v
+
+    @field_validator("contract_addresses")
+    @classmethod
+    def _path_safe_addresses(cls, v: str) -> str:
+        if not _CONTRACT_ADDR_RE.match(v):
+            raise ValueError(f"contract_addresses contains unsafe characters for URL path: {v!r}")
+        return v
 
 
 @connector(output=_ONCHAIN_PRICE_OUTPUT, tags=["crypto", "onchain"])

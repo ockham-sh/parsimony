@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import sqlite3
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pandas as pd
 import platformdirs
 
@@ -18,6 +20,7 @@ from parsimony.catalog.models import (
     normalize_code,
     normalize_entity_code,
 )
+from parsimony.connector import ConnectorError
 from parsimony.result import ColumnRole, SemanticTableResult
 from parsimony.stores.catalog_store import CatalogStore
 
@@ -311,8 +314,8 @@ class Catalog:
                     out = [r.model_copy() for r in to_insert]
                 await self._store.upsert(out)
                 result.indexed += len(out)
-            except Exception:
-                logger.exception("ingest batch failed")
+            except (OSError, RuntimeError, httpx.HTTPError) as exc:
+                logger.warning("ingest batch failed: %s", exc)
                 result.errors += len(to_insert)
         return result
 
@@ -427,7 +430,7 @@ class Catalog:
         cache_path = _CACHE_DIR / namespace / "catalog.db"
 
         if cache_path.exists():
-            self._merge_remote_db(str(cache_path))
+            await self._merge_remote_db(str(cache_path))
             return True
 
         url = (
@@ -449,20 +452,21 @@ class Catalog:
             await asyncio.to_thread(tmp_path.write_bytes, resp.content)
             tmp_path.rename(cache_path)
 
-            self._merge_remote_db(str(cache_path))
+            await self._merge_remote_db(str(cache_path))
             logger.info("Downloaded %s catalog from GitHub", namespace)
             return True
         except httpx.HTTPStatusError as exc:
             logger.debug("GitHub download failed for %s: %s", namespace, exc)
             return False
-        except Exception as exc:
+        except (httpx.HTTPError, OSError, sqlite3.Error) as exc:
             logger.warning("Unexpected error downloading catalog for %s: %s", namespace, exc)
             return False
 
-    def _merge_remote_db(self, remote_path: str) -> None:
-        """ATTACH a remote SQLite catalog and INSERT its rows.
+    async def _merge_remote_db(self, remote_path: str) -> None:
+        """Merge a remote SQLite catalog into the local store.
 
-        Uses SQLiteCatalogStore internals for efficiency.
+        Routes through the store's ``merge_from_file`` method so FTS triggers
+        and vec0 synchronization are handled correctly.
         """
         from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
@@ -474,15 +478,7 @@ class Catalog:
             )
 
         if isinstance(self._store, SQLiteCatalogStore):
-            conn = self._store._get_conn()
-            conn.execute(f'ATTACH DATABASE "{resolved}" AS remote')
-            try:
-                conn.execute(
-                    "INSERT OR REPLACE INTO series_catalog SELECT * FROM remote.series_catalog"
-                )
-                conn.commit()
-            finally:
-                conn.execute("DETACH DATABASE remote")
+            await self._store.merge_from_file(str(resolved))
         else:
             logger.warning(
                 "Remote catalog merge not yet supported for %s stores",
@@ -506,7 +502,7 @@ class Catalog:
             idx = await self.ingest(entries, embed=False, force=True)
             logger.info("Enumerated %s: %d entries", namespace, idx.indexed)
             return idx.indexed > 0
-        except Exception as exc:
+        except ConnectorError as exc:
             logger.warning("Enumerator failed for %s: %s", namespace, exc)
             return False
 

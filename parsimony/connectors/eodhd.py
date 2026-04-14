@@ -47,7 +47,6 @@ from parsimony.result import (
 )
 from parsimony.transport.http import HttpClient
 
-
 ENV_VARS: dict[str, str] = {"api_key": "EODHD_API_KEY"}
 
 _LATENCY_TIMEOUT: float = 10.0

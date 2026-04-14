@@ -58,7 +58,6 @@ from parsimony.result import (
 )
 from parsimony.transport.http import HttpClient
 
-
 ENV_VARS: dict[str, str] = {"api_key": "ALPHA_VANTAGE_API_KEY"}
 
 _BASE_URL = "https://www.alphavantage.co"

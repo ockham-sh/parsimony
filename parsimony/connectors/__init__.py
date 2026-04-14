@@ -18,7 +18,6 @@ from typing import Any
 
 from parsimony.connector import Connectors
 
-
 # ---------------------------------------------------------------------------
 # Dependency wiring
 # ---------------------------------------------------------------------------
@@ -101,10 +100,31 @@ def build_fetch_connectors_from_env(
     SDMX DSD/codelist/list helpers, FMP screener). The app layers
     :func:`parsimony.connectors.catalog.catalog_search` on top for discovery.
     """
-    from parsimony.connectors import alpha_vantage, bde, bdf, bdp, bls, boc, boj
-    from parsimony.connectors import coingecko, destatis, eia, eodhd, financial_reports
-    from parsimony.connectors import finnhub, fmp, fred, polymarket, rba, riksbank
-    from parsimony.connectors import sdmx, sec_edgar, snb, tiingo, treasury
+    from parsimony.connectors import (
+        alpha_vantage,
+        bde,
+        bdf,
+        bdp,
+        bls,
+        boc,
+        boj,
+        coingecko,
+        destatis,
+        eia,
+        eodhd,
+        financial_reports,
+        finnhub,
+        fmp,
+        fred,
+        polymarket,
+        rba,
+        riksbank,
+        sdmx,
+        sec_edgar,
+        snb,
+        tiingo,
+        treasury,
+    )
 
     _env = env if env is not None else os.environ
 
@@ -157,10 +177,32 @@ def build_connectors_from_env(
 
     Pass *env* to override ``os.environ`` (useful for testing).
     """
-    from parsimony.connectors import alpha_vantage, bde, bdf, bdp, bls, boc, boj
-    from parsimony.connectors import coingecko, destatis, eia, eodhd, financial_reports
-    from parsimony.connectors import finnhub, fmp, fmp_screener, fred, polymarket
-    from parsimony.connectors import rba, riksbank, sdmx, sec_edgar, snb, tiingo, treasury
+    from parsimony.connectors import (
+        alpha_vantage,
+        bde,
+        bdf,
+        bdp,
+        bls,
+        boc,
+        boj,
+        coingecko,
+        destatis,
+        eia,
+        eodhd,
+        financial_reports,
+        finnhub,
+        fmp,
+        fmp_screener,
+        fred,
+        polymarket,
+        rba,
+        riksbank,
+        sdmx,
+        sec_edgar,
+        snb,
+        tiingo,
+        treasury,
+    )
 
     _env = env if env is not None else os.environ
 

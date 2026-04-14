@@ -143,6 +143,7 @@ class SQLiteCatalogStore(CatalogStore):
         self._embedding_dim = embedding_dim
         self._conn: sqlite3.Connection | None = None
         self._has_vec: bool = False
+        self._db_lock = asyncio.Lock()
 
     @property
     def has_vec(self) -> bool:
@@ -156,6 +157,7 @@ class SQLiteCatalogStore(CatalogStore):
                 Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
             conn = sqlite3.connect(self._db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
 
             # Try loading sqlite-vec for vector search
@@ -166,13 +168,16 @@ class SQLiteCatalogStore(CatalogStore):
                 )
 
             self._conn = conn
+            self._db_lock = asyncio.Lock()
         return self._conn
 
     def _run_sync(self, fn, *args):  # noqa: ANN001, ANN002, ANN202
         return fn(self._get_conn(), *args)
 
     async def _run(self, fn, *args):  # noqa: ANN001, ANN002, ANN202
-        return await asyncio.to_thread(self._run_sync, fn, *args)
+        self._get_conn()  # ensure initialized (and lock exists)
+        async with self._db_lock:
+            return await asyncio.to_thread(self._run_sync, fn, *args)
 
     # ------------------------------------------------------------------
     # CatalogStore implementation
@@ -515,6 +520,24 @@ class SQLiteCatalogStore(CatalogStore):
             return ([_row_to_entry(r) for r in rows], total)
 
         return await self._run(_list)
+
+    async def merge_from_file(self, remote_path: str) -> None:
+        """ATTACH a remote SQLite catalog and merge its rows via the upsert path.
+
+        Reads entries from the remote database and upserts them through the
+        normal code path so FTS triggers and vec0 sync are handled correctly.
+        """
+        def _merge(conn: sqlite3.Connection) -> builtins.list[SeriesEntry]:
+            conn.execute(f'ATTACH DATABASE "{remote_path}" AS remote')
+            try:
+                rows = conn.execute("SELECT * FROM remote.series_catalog").fetchall()
+                return [_row_to_entry(r) for r in rows]
+            finally:
+                conn.execute("DETACH DATABASE remote")
+
+        entries = await self._run(_merge)
+        if entries:
+            await self.upsert(entries)
 
     async def close(self) -> None:
         """Close the underlying SQLite connection."""

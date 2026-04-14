@@ -32,7 +32,6 @@ from parsimony.connector import (
     Connectors,
     EmptyDataError,
     Namespace,
-    ParseError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
@@ -48,7 +47,6 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
-
 
 ENV_VARS: dict[str, str] = {"api_key": "FINNHUB_API_KEY"}
 

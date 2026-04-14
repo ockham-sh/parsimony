@@ -15,8 +15,16 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, Namespace, connector
-from parsimony.connector import EmptyDataError, ParseError, PaymentRequiredError, ProviderError, UnauthorizedError
+from parsimony.connector import (
+    Connectors,
+    EmptyDataError,
+    Namespace,
+    ParseError,
+    PaymentRequiredError,
+    ProviderError,
+    UnauthorizedError,
+    connector,
+)
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -25,7 +33,6 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
-
 
 ENV_VARS: dict[str, str] = {"api_key": "FMP_API_KEY"}
 

@@ -263,7 +263,7 @@ def _sdmx_client(agency_id: str):
             )
         return original_send(request, **kwargs)
 
-    client.session.send = _patched_send  # type: ignore[method-assign]
+    client.session.send = _patched_send  # type: ignore[assignment]
     try:
         yield client
     finally:

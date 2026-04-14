@@ -121,7 +121,7 @@ RBA_FETCH_OUTPUT = OutputConfig(
 async def _http_get(url: str) -> str:
     """GET a URL, using curl_cffi if available (Akamai bypass)."""
     try:
-        from curl_cffi.requests import AsyncSession  # type: ignore[import-untyped]
+        from curl_cffi.requests import AsyncSession
 
         async with AsyncSession() as s:
             resp = await s.get(url, impersonate="chrome")

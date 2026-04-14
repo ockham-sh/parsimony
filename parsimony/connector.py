@@ -67,7 +67,7 @@ def _resolve_type(spec: dict[str, Any]) -> str:
     return types[0] if types else "any"
 
 
-def _summarize_params(schema: dict[str, Any]) -> str:
+def _summarize_params(schema: Mapping[str, Any]) -> str:
     props = schema.get("properties", {})
     required = set(schema.get("required", []))
     parts: list[str] = []
@@ -582,7 +582,7 @@ async def _invoke_result_callbacks(
     for cb in callbacks:
         ret = cb(result)
         if inspect.isawaitable(ret):
-            await ret  # type: ignore[misc]
+            await ret
 
 
 class Connectors:

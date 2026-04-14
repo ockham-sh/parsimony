@@ -47,10 +47,10 @@ class HttpClient:
     """
     Async HTTP client with base URL, default headers/query params, and redacted logging.
 
-    Each request creates a short-lived ``httpx.AsyncClient`` so that TCP
-    connections are never shared across different ``asyncio.run()`` event loops.
-    This avoids ``RuntimeError: TCPTransport closed`` when successive synchronous
-    entrypoints spin up isolated event loops.
+    By default each request creates a short-lived ``httpx.AsyncClient`` so that
+    TCP connections are never shared across different ``asyncio.run()`` event
+    loops.  Pass ``shared_client=`` to reuse a single client for connection
+    pooling within one async call (e.g. screener fan-out).
     """
 
     def __init__(
@@ -64,6 +64,7 @@ class HttpClient:
         follow_redirects: bool = True,
         max_redirects: int = 5,
         _transport: httpx.AsyncBaseTransport | None = None,
+        shared_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -73,13 +74,40 @@ class HttpClient:
         self._follow_redirects = follow_redirects
         self._max_redirects = max_redirects
         self._transport = _transport
+        self._shared_client = shared_client
 
     @property
     def base_url(self) -> str:
         return self._base_url
 
+    def with_shared_client(self, client: httpx.AsyncClient) -> HttpClient:
+        """Return a new HttpClient that reuses *client* for connection pooling."""
+        return HttpClient(
+            self._base_url,
+            timeout=self._timeout,
+            verify_ssl=self._verify_ssl,
+            headers=self._default_headers or None,
+            query_params=self._default_query_params or None,
+            follow_redirects=self._follow_redirects,
+            max_redirects=self._max_redirects,
+            _transport=self._transport,
+            shared_client=client,
+        )
+
     async def aclose(self) -> None:
         """No-op retained for backward compatibility."""
+
+    def _client_kwargs(self) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "headers": self._default_headers,
+            "verify": self._verify_ssl,
+            "follow_redirects": self._follow_redirects,
+            "max_redirects": self._max_redirects,
+        }
+        if self._transport is not None:
+            kwargs["transport"] = self._transport
+        return kwargs
 
     async def request(
         self,
@@ -105,24 +133,23 @@ class HttpClient:
             },
         )
 
-        client_kwargs: dict[str, Any] = {
-            "timeout": self._timeout,
-            "headers": self._default_headers,
-            "verify": self._verify_ssl,
-            "follow_redirects": self._follow_redirects,
-            "max_redirects": self._max_redirects,
-        }
-        if self._transport is not None:
-            client_kwargs["transport"] = self._transport
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            response = await client.request(
+        if self._shared_client is not None:
+            response = await self._shared_client.request(
                 method=method,
                 url=url,
                 params=request_params,
                 json=json,
                 headers=request_headers,
             )
+        else:
+            async with httpx.AsyncClient(**self._client_kwargs()) as client:
+                response = await client.request(
+                    method=method,
+                    url=url,
+                    params=request_params,
+                    json=json,
+                    headers=request_headers,
+                )
 
         if response.history:
             final_url = _safe_redirect_url(response.url)

@@ -498,8 +498,8 @@ class Catalog:
             return False
 
         try:
-            params = enumerator.param_type() if enumerator.param_type else None  # type: ignore[union-attr]
-            result = await enumerator(params)  # type: ignore[misc]
+            params = enumerator.param_type() if enumerator.param_type else None
+            result = await enumerator(params)
             entries = _entries_from_table_result(result)
             if not entries:
                 return False

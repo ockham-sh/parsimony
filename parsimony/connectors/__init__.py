@@ -13,6 +13,7 @@ environment variables — used for indexing, examples, and integration tests.
 from __future__ import annotations
 
 import os
+from collections.abc import Mapping
 from typing import Any
 
 from parsimony.connector import Connectors
@@ -26,7 +27,7 @@ from parsimony.connector import Connectors
 def _resolve_env_deps(
     connectors: Connectors,
     env_vars: dict[str, str],
-    env: dict[str, Any],
+    env: Mapping[str, Any],
 ) -> dict[str, Any] | None:
     """Resolve env vars to bind_deps kwargs using the Connector's own dep info.
 
@@ -55,7 +56,7 @@ def _bind_required_deps(
     result: Connectors,
     connectors: Connectors,
     env_vars: dict[str, str],
-    env: dict[str, Any],
+    env: Mapping[str, Any],
 ) -> Connectors:
     """Bind env-var deps and add a provider. Raises if any required dep is missing."""
     deps = _resolve_env_deps(connectors, env_vars, env)
@@ -74,7 +75,7 @@ def _bind_optional_deps(
     result: Connectors,
     connectors: Connectors,
     env_vars: dict[str, str],
-    env: dict[str, Any],
+    env: Mapping[str, Any],
 ) -> Connectors:
     """Bind env-var deps and add a provider. Skips silently if a required dep is missing."""
     deps = _resolve_env_deps(connectors, env_vars, env)

@@ -20,7 +20,15 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, EmptyDataError, ParseError, ProviderError, UnauthorizedError, connector
+from parsimony.connector import (
+    Connectors,
+    EmptyDataError,
+    ParseError,
+    PaymentRequiredError,
+    ProviderError,
+    UnauthorizedError,
+    connector,
+)
 from parsimony.result import (
     Column,
     OutputConfig,
@@ -316,34 +324,61 @@ async def fmp_screener(
         len(symbols), need_metrics, need_ratios,
     )
 
-    # Step 3: Concurrent enrichment with semaphore-limited fan-out
+    # Step 3: Concurrent enrichment with semaphore-limited fan-out and shared connection pool
     metrics_semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
     ratios_semaphore = asyncio.Semaphore(_SEMAPHORE_LIMIT)
 
-    async def _fetch_enrich(semaphore: asyncio.Semaphore, path: str, symbol: str) -> pd.DataFrame:
-        async with semaphore:
-            data = await _fetch_json(http, path, {"symbol": symbol})
-            if not data:
-                return pd.DataFrame()
-            df_s = pd.json_normalize(data if isinstance(data, list) else [data])
-            if df_s.empty:
-                return pd.DataFrame()
-            if "symbol" not in df_s.columns:
-                df_s.insert(0, "symbol", symbol)
-            return df_s
+    async def _run_enrichment(
+        enrich_http: HttpClient,
+    ) -> list:
+        async def _fetch_enrich(semaphore: asyncio.Semaphore, path: str, symbol: str) -> pd.DataFrame:
+            async with semaphore:
+                data = await _fetch_json(enrich_http, path, {"symbol": symbol})
+                if not data:
+                    return pd.DataFrame()
+                df_s = pd.json_normalize(data if isinstance(data, list) else [data])
+                if df_s.empty:
+                    return pd.DataFrame()
+                if "symbol" not in df_s.columns:
+                    df_s.insert(0, "symbol", symbol)
+                return df_s
 
-    gather_coros: list[Any] = []
-    if need_metrics:
-        metrics_tasks = [asyncio.create_task(_fetch_enrich(metrics_semaphore, "key-metrics-ttm", s)) for s in symbols]
-        gather_coros.append(asyncio.gather(*metrics_tasks, return_exceptions=True))
-    if need_ratios:
-        ratios_tasks = [asyncio.create_task(_fetch_enrich(ratios_semaphore, "ratios-ttm", s)) for s in symbols]
-        gather_coros.append(asyncio.gather(*ratios_tasks, return_exceptions=True))
+        gather_coros: list[Any] = []
+        if need_metrics:
+            metrics_tasks = [
+                asyncio.create_task(_fetch_enrich(metrics_semaphore, "key-metrics-ttm", s)) for s in symbols
+            ]
+            gather_coros.append(asyncio.gather(*metrics_tasks, return_exceptions=True))
+        if need_ratios:
+            ratios_tasks = [
+                asyncio.create_task(_fetch_enrich(ratios_semaphore, "ratios-ttm", s)) for s in symbols
+            ]
+            gather_coros.append(asyncio.gather(*ratios_tasks, return_exceptions=True))
 
-    gathered = await asyncio.gather(*gather_coros) if gather_coros else []
+        return await asyncio.gather(*gather_coros) if gather_coros else []
+
+    # Use a shared httpx.AsyncClient for connection pooling across enrichment requests
+    async with httpx.AsyncClient(**http._client_kwargs()) as shared:
+        enrich_http = http.with_shared_client(shared)
+        gathered = await _run_enrichment(enrich_http)
 
     def _collect_dfs(results: list) -> pd.DataFrame:
-        dfs = [r for r in results if isinstance(r, pd.DataFrame) and not r.empty]
+        dfs: list[pd.DataFrame] = []
+        errors: list[Exception] = []
+        for r in results:
+            if isinstance(r, pd.DataFrame) and not r.empty:
+                dfs.append(r)
+            elif isinstance(r, Exception):
+                errors.append(r)
+        if errors:
+            # Propagate auth and rate-limit errors — these are not transient
+            for err in errors:
+                if isinstance(err, (UnauthorizedError, PaymentRequiredError)):
+                    raise err
+            logger.warning(
+                "fmp_screener: %d/%d enrichment requests failed (first: %s)",
+                len(errors), len(results), errors[0],
+            )
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=["symbol"])
 
     idx = 0
@@ -393,10 +428,10 @@ async def fmp_screener(
     # Step 6: Sort and limit
     if sort_by is not None:
         if sort_by not in df.columns:
-            suggestions = difflib.get_close_matches(sort_by, allowed_cols, n=5, cutoff=0.6)
+            sort_suggestions = difflib.get_close_matches(sort_by, allowed_cols, n=5, cutoff=0.6)
             raise ValueError(
                 f"Invalid sort_by column: '{sort_by}'. "
-                f"Suggestions: {suggestions if suggestions else 'no close matches'}. "
+                f"Suggestions: {sort_suggestions if sort_suggestions else 'no close matches'}. "
                 f"Available columns ({len(allowed_cols)}): {allowed_cols}"
             )
         df = df.sort_values(by=sort_by, ascending=(sort_order == "asc"))

@@ -107,7 +107,7 @@ def _row_to_entry(row: sqlite3.Row) -> SeriesEntry:
 def _try_load_sqlite_vec(conn: sqlite3.Connection) -> bool:
     """Load the sqlite-vec extension if available. Returns True on success."""
     try:
-        import sqlite_vec  # type: ignore[import-untyped]
+        import sqlite_vec
 
         conn.enable_load_extension(True)
         sqlite_vec.load(conn)

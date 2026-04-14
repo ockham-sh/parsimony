@@ -100,10 +100,10 @@ def build_fetch_connectors_from_env(
     SDMX DSD/codelist/list helpers, FMP screener). The app layers
     :func:`parsimony.connectors.catalog.catalog_search` on top for discovery.
     """
-    from parsimony.connectors import bde, bdf, bdp, bls, boc, boj
-    from parsimony.connectors import destatis, eia, eodhd, financial_reports
-    from parsimony.connectors import fmp, fred, polymarket, rba, riksbank
-    from parsimony.connectors import sdmx, sec_edgar, snb, treasury
+    from parsimony.connectors import alpha_vantage, bde, bdf, bdp, bls, boc, boj
+    from parsimony.connectors import coingecko, destatis, eia, eodhd, financial_reports
+    from parsimony.connectors import finnhub, fmp, fred, polymarket, rba, riksbank
+    from parsimony.connectors import sdmx, sec_edgar, snb, tiingo, treasury
 
     _env = env if env is not None else os.environ
 
@@ -113,10 +113,14 @@ def build_fetch_connectors_from_env(
     result = _bind_required_deps(result, fmp.FMP_FETCH_CONNECTORS, fmp.ENV_VARS, _env)
 
     # Optional providers (skipped if key absent)
-    result = _bind_optional_deps(result, eodhd.CONNECTORS, eodhd.ENV_VARS, _env)
+    result = _bind_optional_deps(result, eodhd.EODHD_FETCH_CONNECTORS, eodhd.ENV_VARS, _env)
+    result = _bind_optional_deps(result, coingecko.FETCH_CONNECTORS, coingecko.ENV_VARS, _env)
+    result = _bind_optional_deps(result, finnhub.FETCH_CONNECTORS, finnhub.ENV_VARS, _env)
+    result = _bind_optional_deps(result, tiingo.FETCH_CONNECTORS, tiingo.ENV_VARS, _env)
     result = _bind_optional_deps(result, financial_reports.FETCH_CONNECTORS, financial_reports.ENV_VARS, _env)
     result = _bind_optional_deps(result, eia.FETCH_CONNECTORS, eia.ENV_VARS, _env)
     result = _bind_optional_deps(result, bdf.FETCH_CONNECTORS, bdf.ENV_VARS, _env)
+    result = _bind_optional_deps(result, alpha_vantage.FETCH_CONNECTORS, alpha_vantage.ENV_VARS, _env)
 
     # Public data providers (no credentials needed)
     result = (
@@ -152,10 +156,10 @@ def build_connectors_from_env(
 
     Pass *env* to override ``os.environ`` (useful for testing).
     """
-    from parsimony.connectors import bde, bdf, bdp, bls, boc, boj
-    from parsimony.connectors import destatis, eia, eodhd, financial_reports
-    from parsimony.connectors import fmp, fmp_screener, fred, polymarket
-    from parsimony.connectors import rba, riksbank, sdmx, sec_edgar, snb, treasury
+    from parsimony.connectors import alpha_vantage, bde, bdf, bdp, bls, boc, boj
+    from parsimony.connectors import coingecko, destatis, eia, eodhd, financial_reports
+    from parsimony.connectors import finnhub, fmp, fmp_screener, fred, polymarket
+    from parsimony.connectors import rba, riksbank, sdmx, sec_edgar, snb, tiingo, treasury
 
     _env = env if env is not None else os.environ
 
@@ -167,9 +171,13 @@ def build_connectors_from_env(
 
     # Optional providers with credentials (skipped if key absent)
     result = _bind_optional_deps(result, eodhd.CONNECTORS, eodhd.ENV_VARS, _env)
+    result = _bind_optional_deps(result, coingecko.CONNECTORS, coingecko.ENV_VARS, _env)
+    result = _bind_optional_deps(result, finnhub.CONNECTORS, finnhub.ENV_VARS, _env)
+    result = _bind_optional_deps(result, tiingo.CONNECTORS, tiingo.ENV_VARS, _env)
     result = _bind_optional_deps(result, financial_reports.CONNECTORS, financial_reports.ENV_VARS, _env)
     result = _bind_optional_deps(result, eia.CONNECTORS, eia.ENV_VARS, _env)
     result = _bind_optional_deps(result, bdf.CONNECTORS, bdf.ENV_VARS, _env)
+    result = _bind_optional_deps(result, alpha_vantage.CONNECTORS, alpha_vantage.ENV_VARS, _env)
 
     # Public data providers (no credentials needed)
     result = (

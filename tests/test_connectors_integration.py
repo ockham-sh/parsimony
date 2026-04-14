@@ -79,3 +79,50 @@ class TestPreboundComposition:
         assert "fmp_analyst_estimates" in names
         assert "fmp_index_constituents" in names
         assert "fmp_market_movers" in names
+
+    def test_alpha_vantage_connectors(self) -> None:
+        from parsimony.connectors.alpha_vantage import CONNECTORS as AV
+
+        c = AV.bind_deps(api_key="test-key")
+        names = set(c.names())
+        # Discovery
+        assert "alpha_vantage_search" in names
+        # Market data — equities
+        assert "alpha_vantage_quote" in names
+        assert "alpha_vantage_daily" in names
+        assert "alpha_vantage_weekly" in names
+        assert "alpha_vantage_monthly" in names
+        assert "alpha_vantage_intraday" in names
+        # Company fundamentals
+        assert "alpha_vantage_overview" in names
+        assert "alpha_vantage_income_statement" in names
+        assert "alpha_vantage_balance_sheet" in names
+        assert "alpha_vantage_cash_flow" in names
+        assert "alpha_vantage_earnings" in names
+        assert "alpha_vantage_etf_profile" in names
+        # Calendars
+        assert "alpha_vantage_earnings_calendar" in names
+        assert "alpha_vantage_ipo_calendar" in names
+        # Forex
+        assert "alpha_vantage_fx_rate" in names
+        assert "alpha_vantage_fx_daily" in names
+        assert "alpha_vantage_fx_weekly" in names
+        assert "alpha_vantage_fx_monthly" in names
+        # Crypto
+        assert "alpha_vantage_crypto_daily" in names
+        assert "alpha_vantage_crypto_weekly" in names
+        assert "alpha_vantage_crypto_monthly" in names
+        # Economic indicators
+        assert "alpha_vantage_econ" in names
+        # Precious metals
+        assert "alpha_vantage_metal_spot" in names
+        assert "alpha_vantage_metal_history" in names
+        # Alpha intelligence
+        assert "alpha_vantage_news" in names
+        assert "alpha_vantage_top_movers" in names
+        # Technical indicators
+        assert "alpha_vantage_technical" in names
+        # Options
+        assert "alpha_vantage_options" in names
+        # Enumerator
+        assert "enumerate_alpha_vantage" in names

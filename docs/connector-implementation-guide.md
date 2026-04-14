@@ -6,6 +6,35 @@ patterns from real implementations. For wrapping internal data sources
 (Postgres, Snowflake, S3) instead of public APIs, see
 [internal-connectors.md](internal-connectors.md).
 
+> **Key concept — Tags and MCP exposure:** Every `@connector` and `@enumerator`
+> takes a `tags=` argument that controls whether it appears as an MCP tool and
+> how it is categorized. Read [Tags and MCP Exposure](#tags-and-mcp-exposure)
+> before writing your first decorator.
+
+---
+
+## Quick Start: Prompt Template
+
+This guide is designed to be read by the agent, not memorized by you. Copy the template below, fill in the blanks, and paste it as your prompt:
+
+```
+Implement a {provider_name} connector in @parsimony/parsimony/connectors/ .
+
+Read @parsimony/docs/connector-implementation-guide.md carefully — it is your bible for structure, patterns, and registration.
+
+Provider details:
+- Auth: {env var(s) e.g. X_API_KEY, or X_USER/X_PASSWORD, or "no auth"}
+- Docs: {https://provider.com/docs/}
+- Plan tier: {free / basic / pro}
+- Connectors I want: {e.g. "search + company profile + historical prices"}
+
+The docs are large — delegate reading them to dedicated agents that report back with exactly what you need (endpoint URL, method, params, response
+shape, quirks, rate limits, tier restrictions). Don't bloat your own context.
+```
+
+Adapt freely — drop lines that don't apply, add specifics you already know
+(e.g. "responses come as CSV, not JSON" or "pagination uses cursor tokens").
+
 ---
 
 ## Phase 0: Provider Research
@@ -39,7 +68,24 @@ Do NOT trust any of the above. Every claim gets verified in step 2.
 - For central banks and statistical agencies: check if they mention SDMX
   compliance. Many publish SDMX endpoints they barely document.
 
-### 2. Live API Exploration (30-45 min -- the critical step)
+### 2. Authentication Setup (before any live testing)
+
+> **A human has to do this before hitting any endpoint.** Without credentials you can't test
+> commercial APIs at all, and you'll get misleading results from public APIs
+> that silently degrade unauthenticated requests.
+
+- [ ] Obtain credentials (register, generate key, etc.)
+- [ ] Set the environment variable locally:
+  ```bash
+  export MY_SOURCE_API_KEY="your-key-here"
+  ```
+- [ ] Verify credentials load correctly by running one authenticated request
+  before proceeding to full exploration.
+
+For commercial providers this step is **mandatory** — skip it and every test result below is invalid.
+
+
+### 3. Live API Exploration (30-45 min -- the critical step)
 
 This is where you actually learn how the API works. Documentation is a starting
 point, not the truth. Open a terminal and start hitting endpoints.
@@ -100,6 +146,10 @@ show. Techniques:
   docs and see which actually filter. Many APIs document filters they don't
   implement, or implement filters they don't document.
 - [ ] How does search relevance work? Full-text? Prefix match? Exact only?
+- [ ] **Verify every enum value live.** Docs often list values like `"stocks"`
+  but the API requires `"common_stock"`. A 422 Unprocessable Entity response is
+  the signal — inspect the error body for the valid values list, then test each
+  one. Use these verified values in your `Literal[...]` type annotations.
 
 **Test catalog/bulk access:**
 
@@ -119,22 +169,27 @@ show. Techniques:
 - [ ] These details directly determine your `OutputConfig` dtypes and DataFrame
   cleanup code. Getting them wrong means broken data at runtime.
 
-**Test rate limits and auth:**
+**Test auth and rate limits:**
 
-- [ ] Send 10-20 rapid requests. Note actual throttling behavior vs documented limits.
 - [ ] Try requests with and without auth. Some APIs work fine without keys but
   with lower rate limits. Some require keys but don't document it.
 - [ ] Check if different endpoints have different rate limits (common for search
   vs fetch).
+- [ ] For **public/open data** providers: rate limits are often undocumented or
+  inconsistently enforced — send a small burst (5-10 requests) to observe actual
+  throttling behavior.
+- [ ] For **commercial providers**: documented rate limits are reliable — trust
+  them and do NOT waste API calls testing limits empirically. Just record what
+  the docs say.
 
-### 3. Authentication
+### 4. Authentication (verify after setup)
 
 - [ ] Method: API key, OAuth, none, guest credentials
 - [ ] How to obtain: instant registration, approval queue, paid only
 - [ ] Where to pass: query param, header, POST body, cookie
-- [ ] **Verified live**: does auth actually change behavior?
+- [ ] **Verified live**: does auth actually change behavior (different data, higher limits, etc.)?
 
-### 4. Search Capability Assessment
+### 5. Search Capability Assessment
 
 Classify into a tier **based on live testing, not docs**:
 
@@ -148,22 +203,22 @@ Classify into a tier **based on live testing, not docs**:
 See [Building a Search Catalog](#building-a-search-catalog-tier-2-4) for the
 full indexing workflow for Tier 2-4 providers.
 
-### 5. Data Coverage
+### 6. Data Coverage
 
 - [ ] Topics: GDP, inflation, labor, trade, monetary, financial, etc.
 - [ ] Geography: EU, single country, global
 - [ ] Time depth: how far back? Update frequency?
 - [ ] Granularity: datasets only, or individual series?
 
-### 6. Technical Constraints (verified, not documented)
+### 7. Technical Constraints (verified, not documented)
 
-- [ ] Real rate limits (tested)
+- [ ] Rate limits (tested for public APIs; from docs for commercial)
 - [ ] Actual response format (fetched and inspected)
 - [ ] Pagination method (tested with real data)
 - [ ] Maximum response size (tested)
 - [ ] Quirks discovered during testing
 
-### 7. Existing Libraries
+### 8. Existing Libraries
 
 - [ ] Check PyPI for Python client libraries
 - [ ] Check if `sdmx1` supports this agency (if SDMX)
@@ -175,7 +230,7 @@ the transport layer instead of `HttpClient`. See
 [internal-connectors.md](internal-connectors.md) for the pattern of wrapping
 sync SDKs with `asyncio.to_thread()` and injecting clients via `bind_deps`.
 
-### 8. Document Findings
+### 9. Document Findings
 
 Add a section to `PROVIDERS.md` (or create it) using this template:
 
@@ -189,7 +244,7 @@ Add a section to `PROVIDERS.md` (or create it) using this template:
 - **Auth**: {method} -- verified: {works without auth / key required}
 - **Search tier**: {1-4} (based on live testing)
 - **Coverage**: {topics}
-- **Rate limits**: Real: {X req/sec} (docs claimed: {Y})
+- **Rate limits**: {X req/sec} — {source: tested empirically / from official docs (commercial)}
 - **Docs**: [{link text}]({url}) -- accuracy: {good / partially wrong / mostly wrong}
 - **Existing libraries**: {PyPI packages, quality}
 
@@ -226,10 +281,37 @@ Reference implementations:
 | `fmp_screener.py` | Concurrent enrichment with asyncio.Semaphore |
 | `sdmx.py` | Multi-step discovery (list → DSD → codelist → keys → fetch) |
 | `sec_edgar.py` | Third-party SDK integration, duck-typed DataFrame coercion |
+| `alpha_vantage.py` | 200-with-errors, unified Literal-param connectors, mixed JSON/CSV, response key normalization |
 
 Aim for < 400 lines per connector module. If a provider has 15+ connectors,
 500-600 lines is fine for a single-provider module. Don't split into multiple
 files unless you have genuinely separate concerns (e.g., separate SDK clients).
+
+---
+
+## Tags and MCP Exposure
+
+Tags control categorization and visibility. Every `@connector` and `@enumerator`
+decorator accepts a `tags=` list that determines two things: (1) whether the
+function is exposed as an interactive MCP tool, and (2) which domain category
+it belongs to for filtering and catalog organization.
+
+```python
+@connector(tags=["macro", "tool"])    # MCP tool + macro category
+@connector(tags=["macro"])            # fetch-only, not an MCP search tool
+@connector(tags=["equity", "tool"])   # equity MCP tool
+@enumerator(tags=["macro", "us"])     # US macro enumerator
+```
+
+- `"tool"` -- marks connectors exposed as interactive MCP tools (search, discovery,
+  screener). Fetch connectors typically omit `"tool"` because the agent invokes
+  them programmatically after catalog discovery.
+- Domain tags (`"macro"`, `"equity"`, `"us"`, `"global"`) are for filtering and
+  organization. Choose the most specific applicable domain.
+
+**Rule of thumb:** if the agent needs to *call it interactively* to discover or
+search data, add `"tool"`. If the agent calls it *programmatically* after finding
+what it needs via the catalog, omit `"tool"`.
 
 ---
 
@@ -325,6 +407,34 @@ Conventions:
 - `Annotated[str, Namespace("my_source")]` on the primary key to link it to the catalog.
 - `@field_validator` for input sanitization (strip whitespace, validate formats).
 
+**Aliasing reserved Python keywords.** Some APIs use Python keywords as
+parameter names (`from`, `type`, `in`, `class`). Use `alias=` with
+`populate_by_name=True` to give the field a legal Python name while serialising
+with the API's name. Critically, the `description=` must spell out the Python
+name explicitly, because an LLM agent will otherwise guess the alias, which is a
+syntax error:
+
+```python
+class MyParams(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    from_date: str | None = Field(
+        default=None,
+        alias="from",
+        description="Start date ISO 8601 e.g. 2024-01-15. Use as from_date='2024-01-15'",
+    )
+    to_date: str | None = Field(
+        default=None,
+        alias="to",
+        description="End date ISO 8601 e.g. 2024-12-31. Use as to_date='2024-12-31'",
+    )
+```
+
+The `alias=` controls how the field serialises to the API query string; the
+Python-facing name (e.g. `from_date`) is what callers and agents use. Without
+the `Use as from_date=` hint in the description, agents will attempt
+`from="2024-01-15"` and get a `SyntaxError`.
+
 **When to share param models:** Share a model across connectors only when the
 parameters are truly identical. For example, `income_statement`, `balance_sheet`,
 and `cashflow_statement` all accept the same `symbol, period, limit` fields --
@@ -374,6 +484,27 @@ Column options:
 
 Columns in the DataFrame not declared in OutputConfig automatically become DATA columns.
 
+### Multi-Namespace Providers
+
+Some providers serve multiple asset classes (equities, crypto, forex) under a
+single API. When the identifier spaces are disjoint — an equity ticker like
+`AAPL` is meaningless in the crypto endpoint, and a crypto pair like `btcusd`
+is meaningless in the equity endpoint — use **separate namespaces** per asset
+class:
+
+```python
+# Equities
+Column(name="ticker", role=ColumnRole.KEY, namespace="my_source_equity")
+# Crypto
+Column(name="ticker", role=ColumnRole.KEY, namespace="my_source_crypto")
+# Forex
+Column(name="ticker", role=ColumnRole.KEY, namespace="my_source_fx")
+```
+
+Each namespace indexes independently in the catalog. `Annotated[str, Namespace("my_source_crypto")]`
+on parameter models restricts which connectors accept which identifiers, preventing
+an agent from passing a crypto pair to an equity endpoint.
+
 ### OutputConfig Pitfalls
 
 **Match actual response columns, not API docs.** Column names in OutputConfig must
@@ -412,6 +543,43 @@ _OUTPUT_MAP = {
 output = _OUTPUT_MAP.get(params.resource, GENERIC_OUTPUT)
 return output.build_table_result(df, provenance=...)
 ```
+
+### OutputConfig dtype reference
+
+The `dtype` field on a `Column` controls how raw API values are coerced before
+the column is stored in the result DataFrame. Choose `dtype` based on what the
+API actually returns, not what you would prefer to store.
+
+| dtype | Coercion pipeline | Expected input | Failure mode |
+|-------|------------------|----------------|--------------|
+| `"auto"` | No coercion — pandas infers dtype | Any | No validation |
+| `"timestamp"` | `pd.to_numeric(errors="coerce")` → scale ms→s if value >1e11 → `pd.to_datetime(unit="s")` | Unix epoch seconds or milliseconds (int or float) | `ParseError` if all values are NaT |
+| `"date"` | `pd.to_datetime(series).dt.normalize()` | ISO 8601 date string or unix epoch | Raises on unparseable strings |
+| `"datetime"` | `pd.to_datetime(series)` | ISO 8601 datetime string or unix timestamp | Raises on unparseable strings |
+| `"numeric"` | `pd.to_numeric(errors="coerce")` | Numeric string or number | `ParseError` if all values are NaN |
+| `"bool"` | `.astype(bool)` | Truthy/falsy values | `ParseError` if `astype` raises |
+| `"str"` | `.astype(str)` | Any | Never fails |
+| custom (e.g. `"category"`) | `series.astype(column.dtype)` via pandas fallback | Must be a valid pandas dtype string | `ParseError` if `astype` raises |
+
+**`"timestamp"` vs `"date"` — the most common coercion trap:**
+
+- Use `"timestamp"` when the API returns **unix epoch values** (integers like `1704067200` or `1704067200000`).
+- Use `"date"` when the API returns **ISO 8601 date strings** (like `"2024-01-01"`).
+
+Mixing them up produces all-NaT values and raises `ParseError`. The error message
+will tell you which column failed and what input format is expected — but it will
+never include raw sample values from the response.
+
+**Partial NaN/NaT is expected.** The `ParseError` guard only triggers on *total*
+coercion failure (100% null result from a non-null input). If some values fail to
+coerce (e.g. a `"numeric"` column where 5% of rows are `"N/A"`), coercion silently
+converts those to `NaN` — which is normal pandas behaviour for `errors="coerce"`.
+
+**Missing data sentinels.** APIs use `"."`, `"None"` (string), `"-"`, or empty
+strings for missing values. The `"numeric"` dtype handles these automatically
+via `pd.to_numeric(errors="coerce")`. However, `"date"` and `"datetime"` dtypes
+**will crash** on these sentinels. Replace them with `None` in the row-building
+loop for any column that uses date coercion.
 
 ---
 
@@ -489,6 +657,39 @@ Rules:
 - The function can return a `pd.DataFrame`, a `Result`, or `Result.from_dataframe()`.
   When `output=` is set on the decorator and the return is a DataFrame, the framework
   wraps it as a `SemanticTableResult` automatically.
+
+### Flattening Nested Responses
+
+Some APIs nest data arrays inside parent objects instead of returning a flat
+list. For example, a crypto endpoint might return:
+
+```json
+[
+  {"ticker": "btcusd", "priceData": [{"date": "2024-01-01", "close": 44208}, ...]},
+  {"ticker": "ethusd", "priceData": [{"date": "2024-01-01", "close": 2281}, ...]}
+]
+```
+
+You can't pass this directly to `pd.DataFrame()`. Loop through the outer list,
+extract parent-level fields, and merge them into each nested row:
+
+```python
+all_rows: list[dict] = []
+for entry in data:
+    for p in entry.get("priceData", []):
+        all_rows.append({
+            "ticker": entry.get("ticker", ""),       # parent field → KEY
+            "exchange": entry.get("exchange", ""),    # parent field → METADATA
+            "date": p.get("date"),                    # nested field → DATA
+            "close": p.get("close"),                  # nested field → DATA
+        })
+df = pd.DataFrame(all_rows)
+```
+
+Parent-level fields typically become KEY or METADATA columns (the identifier and
+context that applies to every nested row), while nested fields become DATA
+columns (the actual observations). Drop parent fields that are redundant with
+other columns already in the row — only carry fields that add information.
 
 ### Docstrings: Tier Annotations and Access Notes
 
@@ -611,6 +812,44 @@ Enumerator rules:
 - The `@enumerator` decorator validates the OutputConfig at import time: exactly one KEY
   with `namespace=`, exactly one TITLE, no DATA columns.
 
+### Static File Enumerators
+
+Some providers publish their catalog as a downloadable file (CSV, ZIP, Excel)
+from a CDN rather than a paginated REST endpoint. The enumerator downloads and
+parses the file in memory:
+
+```python
+@enumerator(output=ENUMERATE_OUTPUT, tags=["equities"])
+async def enumerate_my_source(params: MySourceEnumerateParams, *, api_key: str) -> pd.DataFrame:
+    """Enumerate tickers from MySource's static catalog file."""
+    import csv
+    import io
+    import zipfile
+
+    async with httpx.AsyncClient(timeout=120.0, follow_redirects=True) as client:
+        resp = await client.get("https://media.my-source.example.com/catalog.zip")
+        resp.raise_for_status()
+
+    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+    text = zf.read(zf.namelist()[0]).decode("utf-8")
+    reader = csv.DictReader(io.StringIO(text))
+
+    rows = [
+        {"series_id": row["id"], "title": row.get("name", "")}
+        for row in reader
+        if row.get("id")
+    ]
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["series_id", "title"])
+```
+
+Key differences from API-based enumerators:
+- **Longer timeouts** (60-120s) — file downloads are slow.
+- **`follow_redirects=True`** — CDNs often redirect.
+- **No rate-limit handling** — static files are served from CDNs, not rate-limited APIs.
+- **In-memory parsing** — use `io.BytesIO` / `io.StringIO` + stdlib `zipfile`, `csv`,
+  or `pandas.read_csv()`. Avoid writing temp files.
+- **Refresh at most once per day** — these are static snapshots, not live data.
+
 ---
 
 ## Step 7: Export the Bundles
@@ -704,6 +943,44 @@ response.raise_for_status()  # catches remaining 4xx/5xx as httpx errors
 
 For simpler sources, `response.raise_for_status()` + `EmptyDataError` is sufficient.
 
+### 401 repurposed for plan-gating (CoinGecko pattern)
+
+Some providers return HTTP 401 for **both** bad credentials **and** plan-tier
+restrictions -- the same status code, distinguished only by an `error_code` in
+the response body. CoinGecko is the canonical example: it never returns 402.
+
+The correct approach is body inspection inside the 401 handler. Raise
+`PaymentRequiredError` for known plan-gate error codes; fall through to
+`UnauthorizedError` for all others:
+
+```python
+case 401:
+    try:
+        body = e.response.json()
+        # Some providers use {"status": {...}}, others {"error": {"status": {...}}}
+        status = body.get("status") or body.get("error", {}).get("status", {})
+        code = status.get("error_code", 0)
+        msg = status.get("error_message", "")
+        if code in (10005, 10006, 10012):  # CoinGecko Pro-only / plan-gated codes
+            raise PaymentRequiredError(
+                provider="coingecko",
+                message=f"CoinGecko plan restriction (error_code={code}): {msg}",
+            ) from e
+    except (ValueError, AttributeError):
+        pass
+    raise UnauthorizedError(provider="coingecko", message="Invalid or missing API key") from e
+```
+
+Key points:
+- Wrap the body parse in `try/except` -- if the body is not JSON or the structure
+  is unexpected, fall through to `UnauthorizedError` rather than crashing.
+- The error body schema may vary across endpoints of the same provider. CoinGecko
+  uses `{"status": {...}}` for some errors and `{"error": {"status": {...}}}` for
+  others. Use `body.get("status") or body.get("error", {}).get("status", {})` to
+  handle both without nested conditionals.
+- Document the plan-gated connectors with `[Pro+]` tier prefixes so the agent
+  skips them when it knows the configured key is on a lower plan.
+
 ### Rate Limits: Burst vs Quota
 
 Not every provider has aggressive rate limits, but when they do, distinguish
@@ -716,22 +993,74 @@ the connector module. The key insight: burst retries should be silent (the calle
 never sees the error), while quota exhaustion should surface immediately with a
 clear message.
 
----
+### Errors embedded in HTTP 200
 
-## Tags and MCP Exposure
-
-Tags control categorization and visibility:
+Some providers always return HTTP 200 and embed errors in the response body
+as dedicated keys or a different response shape. Check for error keys
+**before** parsing data, and put the checks in a shared `_fetch()` helper:
 
 ```python
-@connector(tags=["macro", "tool"])    # MCP tool + macro category
-@connector(tags=["macro"])            # fetch-only, not an MCP search tool
-@connector(tags=["equity", "tool"])   # equity MCP tool
-@enumerator(tags=["macro", "us"])     # US macro enumerator
+body = response.json()
+if "Error Message" in body:
+    raise EmptyDataError(provider="x", message=body["Error Message"])
+if "Note" in body:
+    raise RateLimitError(provider="x", retry_after=60.0, message=body["Note"])
+# Now safe to parse the actual data
 ```
 
-- `"tool"` -- marks connectors exposed as interactive MCP tools (search, discovery,
-  screener). Fetch connectors typically omit `"tool"` because the agent invokes them programmatically after catalog discovery.
-- Domain tags (`"macro"`, `"equity"`, `"us"`, `"global"`) are for filtering and organization.
+A single body key may signal different error types (rate limit vs premium
+gate) — inspect the message string to distinguish. Keep
+`response.raise_for_status()` for network-level errors, but don't rely on
+it for API-level ones. See `alpha_vantage.py:_av_fetch()`.
+
+### Unified connectors with Literal params
+
+When many API endpoints share the **same response schema and parameters**,
+they're not really separate operations — the endpoint name is just another
+parameter selecting from a family of same-shaped series. Treat it as one
+connector with a `Literal[...]` param:
+
+```python
+_INDICATORS = ("REAL_GDP", "CPI", "INFLATION", "UNEMPLOYMENT")
+
+class EconParams(BaseModel):
+    indicator: Literal[_INDICATORS] = Field(...)  # type: ignore[valid-type]
+
+@connector(output=ECON_OUTPUT, tags=["macro"])
+async def my_source_econ(params: EconParams, *, api_key: str) -> Result: ...
+```
+
+This is distinct from the generic path anti-pattern (see Anti-Pattern section)
+because the values are a closed, validated set — conceptually no different
+from `series_id`. The test: if every value produces the same column schema
+and accepts the same parameters, it's a parameter, not a separate operation.
+When schemas or params diverge, use separate connectors.
+
+See `alpha_vantage.py:alpha_vantage_econ()` and
+`alpha_vantage.py:alpha_vantage_technical()`.
+
+### Mixed JSON/CSV endpoints
+
+Some providers return CSV for certain endpoints (calendars, bulk listings)
+while the rest is JSON. Build a separate `_fetch_csv()` helper. Check raw
+text for embedded errors before passing to `pd.read_csv()` — error responses
+may still arrive as JSON or get garbled into CSV columns.
+
+```python
+text = response.text
+if text.startswith("{") or text.startswith("Information"):
+    raise RateLimitError(...)
+df = pd.read_csv(io.StringIO(text))
+```
+
+See `alpha_vantage.py:_av_fetch_csv()`.
+
+### Provider overlap
+
+When a new provider covers data available through an existing connector,
+implement only what's genuinely additive (e.g. real-time pricing not
+available elsewhere). Skip redundant endpoints and document the decision
+in the module docstring so future maintainers don't re-add them.
 
 ---
 
@@ -1048,6 +1377,8 @@ See `fmp_screener.py` for the canonical example.
 
 **Header**: `HttpClient(URL, headers={"Authorization": f"Bearer {key}"})`
 
+**Custom header** (CoinGecko): `HttpClient(URL, headers={"x-cg-demo-api-key": key})`
+
 **POST body** (BLS): `await http.request("POST", "/endpoint", json={"registrationkey": key})`
 
 **Username/password** (Destatis): `ENV_VARS = {"username": "...", "password": "..."}`
@@ -1342,11 +1673,11 @@ to the project beyond writing the connector code itself.
 - [ ] At least one `@enumerator` for catalog population
 - [ ] **Typed connectors per operation** -- not a generic path-based dispatcher (see Anti-Pattern section)
 - [ ] **Tier annotations** in docstrings for paid providers (`[Starter+]`, `[Professional+]`, etc.)
+- [ ] Tags: domain tags + `"tool"` for MCP-exposed search/discovery connectors
 
 ### Recommended
 
 - [ ] Integration test guarded with `pytest.mark.skipif`
-- [ ] Tags: domain tags + `"tool"` for MCP-exposed search/discovery connectors
 - [ ] `@field_validator` for input sanitization
 - [ ] Pagination for large result sets
 - [ ] `to_llm()` output reviewed for clarity

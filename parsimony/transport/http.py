@@ -38,6 +38,11 @@ def _redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
+def _safe_redirect_url(url: httpx.URL) -> str:
+    """Return ``scheme://host/path`` with all query params stripped."""
+    return f"{url.scheme}://{url.host}{url.path}"
+
+
 class HttpClient:
     """
     Async HTTP client with base URL, default headers/query params, and redacted logging.
@@ -56,12 +61,18 @@ class HttpClient:
         verify_ssl: bool = True,
         headers: dict[str, Any] | None = None,
         query_params: dict[str, Any] | None = None,
+        follow_redirects: bool = True,
+        max_redirects: int = 5,
+        _transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
         self._verify_ssl = verify_ssl
         self._default_headers = dict(headers or {})
         self._default_query_params = dict(query_params or {})
+        self._follow_redirects = follow_redirects
+        self._max_redirects = max_redirects
+        self._transport = _transport
 
     @property
     def base_url(self) -> str:
@@ -94,17 +105,35 @@ class HttpClient:
             },
         )
 
-        async with httpx.AsyncClient(
-            timeout=self._timeout,
-            headers=self._default_headers,
-            verify=self._verify_ssl,
-        ) as client:
+        client_kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            "headers": self._default_headers,
+            "verify": self._verify_ssl,
+            "follow_redirects": self._follow_redirects,
+            "max_redirects": self._max_redirects,
+        }
+        if self._transport is not None:
+            client_kwargs["transport"] = self._transport
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             response = await client.request(
                 method=method,
                 url=url,
                 params=request_params,
                 json=json,
                 headers=request_headers,
+            )
+
+        if response.history:
+            final_url = _safe_redirect_url(response.url)
+            logger.info(
+                "Followed %d redirect(s) to %s",
+                len(response.history),
+                final_url,
+                extra={
+                    "http_redirect_hops": len(response.history),
+                    "http_redirect_target": final_url,
+                },
             )
 
         logger.info(

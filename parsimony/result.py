@@ -66,6 +66,8 @@ def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
         case "datetime":
             return pd.to_datetime(series)
         case "timestamp":
+            if pd.api.types.is_datetime64_any_dtype(series):
+                return series
             s = pd.to_numeric(series, errors="coerce")
             s = s.where(s <= 1e11, s / 1000)
             return pd.to_datetime(s, unit="s", errors="coerce")
@@ -76,7 +78,12 @@ def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
         case "bool":
             return series.astype(bool)
         case _:
-            return series.astype(column.dtype)
+            try:
+                return series.astype(column.dtype)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"column '{column.name}': unsupported or incompatible dtype '{column.dtype}': {exc}"
+                ) from exc
 
 
 class Provenance(BaseModel):
@@ -303,7 +310,19 @@ class OutputConfig(BaseModel):
 
             for match_name in matches:
                 series = df[match_name].copy()
+                pre_all_na = series.isna().all()
                 series = _coerce_series_dtype(column, series)
+                if not series.empty and not pre_all_na:
+                    if column.dtype == "timestamp" and series.isna().all():
+                        raise ValueError(
+                            f"column '{column.name}': all values are NaT after 'timestamp' coercion — "
+                            "expected unix epoch (seconds or milliseconds), got non-numeric input"
+                        )
+                    elif column.dtype == "numeric" and series.isna().all():
+                        raise ValueError(
+                            f"column '{column.name}': all values are NaN after 'numeric' coercion — "
+                            "expected numeric input"
+                        )
                 if column.mapped_name:
                     new_name = column.mapped_name % params
                 else:

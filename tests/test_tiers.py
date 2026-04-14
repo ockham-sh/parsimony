@@ -90,7 +90,7 @@ class TestEodhdPaymentRequiredHttp:
 
         import httpx
 
-        from parsimony.connectors.eodhd import eodhd_fetch
+        from parsimony.connectors.eodhd import eodhd_eod
 
         mock_response = httpx.Response(402, request=httpx.Request("GET", "https://example.com"))
 
@@ -99,9 +99,9 @@ class TestEodhdPaymentRequiredHttp:
             new_callable=AsyncMock,
             return_value=mock_response,
         ):
-            bound = eodhd_fetch.bind_deps(api_key="test-key")
+            bound = eodhd_eod.bind_deps(api_key="test-key")
             with pytest.raises(PaymentRequiredError) as exc_info:
-                await bound(path="/test")
+                await bound(ticker="AAPL.US")
             assert exc_info.value.provider == "eodhd"
 
 
@@ -169,13 +169,13 @@ class TestTypedErrorsThroughCallPath:
         import httpx
 
         from parsimony.connector import UnauthorizedError
-        from parsimony.connectors.eodhd import eodhd_fetch
+        from parsimony.connectors.eodhd import eodhd_eod
 
         mock_response = httpx.Response(401, request=httpx.Request("GET", "https://example.com"))
         with patch("parsimony.connectors.eodhd.HttpClient.request", new_callable=AsyncMock, return_value=mock_response):
-            bound = eodhd_fetch.bind_deps(api_key="bad-key")
+            bound = eodhd_eod.bind_deps(api_key="bad-key")
             with pytest.raises(UnauthorizedError) as exc_info:
-                await bound(path="/test")
+                await bound(ticker="AAPL.US")
             assert exc_info.value.provider == "eodhd"
 
     def test_all_errors_catchable_via_connector_error(self) -> None:

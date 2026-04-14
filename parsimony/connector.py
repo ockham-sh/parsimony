@@ -255,7 +255,10 @@ class Connector:
             )
         model = self._validate_params(params, **kwargs)
         raw = await self.call_raw(model)
-        result = self._wrap_result(raw, model)
+        try:
+            result = self._wrap_result(raw, model)
+        except (ValueError, TypeError) as exc:
+            raise ParseError(self.name, str(exc)) from exc
         # Ensure provenance carries the connector name for UI display
         if result.provenance.source != self.name:
             result = result.model_copy(update={
@@ -819,6 +822,11 @@ class RateLimitError(ConnectorError):
         quota_exhausted: bool = False,
         message: str | None = None,
     ) -> None:
+        if retry_after > 86_400:
+            raise ValueError(
+                f"retry_after={retry_after!r} looks like a Unix epoch timestamp, not a duration. "
+                "Pass seconds-until-retry (e.g. 60.0), not an absolute timestamp."
+            )
         self.retry_after = retry_after
         self.quota_exhausted = quota_exhausted
         if message:

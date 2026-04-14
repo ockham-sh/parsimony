@@ -40,14 +40,16 @@ from pydantic import BaseModel, Field
 
 from parsimony.connector import (
     Connectors,
-    EmptyDataError,
     Namespace,
+    connector,
+    enumerator,
+)
+from parsimony.errors import (
+    EmptyDataError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
     UnauthorizedError,
-    connector,
-    enumerator,
 )
 from parsimony.result import (
     Column,

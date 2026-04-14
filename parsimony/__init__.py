@@ -101,102 +101,49 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str) -> Any:
+# Lazy-loaded symbols: maps name → (module_path, attribute_name).
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     # Core abstractions
-    if name == "Connector":
-        from parsimony.connector import Connector
-
-        return Connector
-    if name == "Connectors":
-        from parsimony.connector import Connectors
-
-        return Connectors
-    if name == "ResultCallback":
-        from parsimony.connector import ResultCallback
-
-        return ResultCallback
-    if name == "connector":
-        from parsimony.connector import connector
-
-        return connector
-    if name == "enumerator":
-        from parsimony.connector import enumerator
-
-        return enumerator
-    if name == "loader":
-        from parsimony.connector import loader
-
-        return loader
-    if name == "Namespace":
-        from parsimony.connector import Namespace
-
-        return Namespace
+    "Connector": ("parsimony.connector", "Connector"),
+    "Connectors": ("parsimony.connector", "Connectors"),
+    "ResultCallback": ("parsimony.connector", "ResultCallback"),
+    "connector": ("parsimony.connector", "connector"),
+    "enumerator": ("parsimony.connector", "enumerator"),
+    "loader": ("parsimony.connector", "loader"),
+    "Namespace": ("parsimony.connector", "Namespace"),
     # Catalog
-    if name == "Catalog":
-        from parsimony.catalog.catalog import Catalog
-
-        return Catalog
-    if name == "LiteLLMEmbeddingProvider":
-        from parsimony.embeddings.litellm import LiteLLMEmbeddingProvider
-
-        return LiteLLMEmbeddingProvider
-    if name == "SQLiteCatalogStore":
-        from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
-
-        return SQLiteCatalogStore
-    if name == "InMemoryDataStore":
-        from parsimony.stores.memory_data import InMemoryDataStore
-
-        return InMemoryDataStore
-    if name == "DataStore":
-        from parsimony.stores.data_store import DataStore
-
-        return DataStore
-    if name == "LoadResult":
-        from parsimony.stores.data_store import LoadResult
-
-        return LoadResult
-    if name == "code_token":
-        from parsimony.catalog.models import code_token
-
-        return code_token
-    if name == "build_embedding_text":
-        from parsimony.catalog.catalog import build_embedding_text
-
-        return build_embedding_text
+    "Catalog": ("parsimony.catalog.catalog", "Catalog"),
+    "LiteLLMEmbeddingProvider": ("parsimony.embeddings.litellm", "LiteLLMEmbeddingProvider"),
+    "SQLiteCatalogStore": ("parsimony.stores.sqlite_catalog", "SQLiteCatalogStore"),
+    "InMemoryDataStore": ("parsimony.stores.memory_data", "InMemoryDataStore"),
+    "DataStore": ("parsimony.stores.data_store", "DataStore"),
+    "LoadResult": ("parsimony.stores.data_store", "LoadResult"),
+    "code_token": ("parsimony.catalog.models", "code_token"),
+    "build_embedding_text": ("parsimony.catalog.catalog", "build_embedding_text"),
     # Errors
-    if name == "ConnectorError":
-        from parsimony.connector import ConnectorError
+    "ConnectorError": ("parsimony.errors", "ConnectorError"),
+    "PaymentRequiredError": ("parsimony.errors", "PaymentRequiredError"),
+    "RateLimitError": ("parsimony.errors", "RateLimitError"),
+    "UnauthorizedError": ("parsimony.errors", "UnauthorizedError"),
+    "ProviderError": ("parsimony.errors", "ProviderError"),
+    "EmptyDataError": ("parsimony.errors", "EmptyDataError"),
+    "ParseError": ("parsimony.errors", "ParseError"),
+}
 
-        return ConnectorError
-    if name == "PaymentRequiredError":
-        from parsimony.connector import PaymentRequiredError
 
-        return PaymentRequiredError
-    if name == "RateLimitError":
-        from parsimony.connector import RateLimitError
-
-        return RateLimitError
-    if name == "UnauthorizedError":
-        from parsimony.connector import UnauthorizedError
-
-        return UnauthorizedError
-    if name == "ProviderError":
-        from parsimony.connector import ProviderError
-
-        return ProviderError
-    if name == "EmptyDataError":
-        from parsimony.connector import EmptyDataError
-
-        return EmptyDataError
-    if name == "ParseError":
-        from parsimony.connector import ParseError
-
-        return ParseError
+def __getattr__(name: str) -> Any:
     # Convenience: `from parsimony import client` builds a ready-to-use Connectors
     # collection with API keys from environment variables.
     if name == "client":
         from parsimony.connectors import build_connectors_from_env
 
         return build_connectors_from_env()
+
+    spec = _LAZY_IMPORTS.get(name)
+    if spec is not None:
+        import importlib
+
+        module = importlib.import_module(spec[0])
+        return getattr(module, spec[1])
+
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

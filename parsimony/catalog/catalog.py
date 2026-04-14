@@ -20,7 +20,7 @@ from parsimony.catalog.models import (
     normalize_code,
     normalize_entity_code,
 )
-from parsimony.connector import ConnectorError
+from parsimony.errors import ConnectorError
 from parsimony.result import ColumnRole, SemanticTableResult
 from parsimony.stores.catalog_store import CatalogStore
 

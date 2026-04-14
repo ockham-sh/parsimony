@@ -14,7 +14,8 @@ from requests.exceptions import HTTPError
 
 from parsimony.catalog.models import code_token as _code_token
 from parsimony.catalog.models import normalize_code
-from parsimony.connector import Connectors, EmptyDataError, ParseError, ProviderError, connector
+from parsimony.connector import Connectors, connector
+from parsimony.errors import EmptyDataError, ParseError, ProviderError
 from parsimony.result import (
     Column,
     ColumnRole,

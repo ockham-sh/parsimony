@@ -16,7 +16,8 @@ from typing import Any, Literal
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, EmptyDataError, ParseError, connector
+from parsimony.connector import Connectors, connector
+from parsimony.errors import EmptyDataError, ParseError
 from parsimony.result import (
     Column,
     ColumnRole,

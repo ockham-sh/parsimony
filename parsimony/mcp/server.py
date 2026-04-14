@@ -8,10 +8,9 @@ from mcp.server.lowlevel.server import Server
 from mcp.types import TextContent, Tool
 from pydantic import ValidationError
 
-from parsimony.connector import (
-    Connector,
+from parsimony.connector import Connector, Connectors
+from parsimony.errors import (
     ConnectorError,
-    Connectors,
     EmptyDataError,
     PaymentRequiredError,
     RateLimitError,

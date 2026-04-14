@@ -28,15 +28,17 @@ _PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 from parsimony.connector import (
     Connectors,
-    EmptyDataError,
     Namespace,
+    connector,
+    enumerator,
+)
+from parsimony.errors import (
+    EmptyDataError,
     ParseError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
     UnauthorizedError,
-    connector,
-    enumerator,
 )
 from parsimony.result import (
     Column,

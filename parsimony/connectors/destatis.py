@@ -13,7 +13,8 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, EmptyDataError, Namespace, ParseError, ProviderError, connector, enumerator
+from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.errors import EmptyDataError, ParseError, ProviderError
 from parsimony.result import (
     Column,
     ColumnRole,

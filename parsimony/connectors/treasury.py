@@ -11,7 +11,8 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
+from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.errors import EmptyDataError
 from parsimony.result import (
     Column,
     ColumnRole,

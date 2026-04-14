@@ -29,14 +29,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from parsimony.connector import (
     Connectors,
-    EmptyDataError,
     Namespace,
+    connector,
+)
+from parsimony.errors import (
+    EmptyDataError,
     ParseError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
     UnauthorizedError,
-    connector,
 )
 from parsimony.result import (
     Column,

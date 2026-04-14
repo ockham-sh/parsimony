@@ -17,13 +17,15 @@ from pydantic import BaseModel, Field
 
 from parsimony.connector import (
     Connectors,
-    EmptyDataError,
     Namespace,
+    connector,
+)
+from parsimony.errors import (
+    EmptyDataError,
     ParseError,
     PaymentRequiredError,
     ProviderError,
     UnauthorizedError,
-    connector,
 )
 from parsimony.result import (
     Column,

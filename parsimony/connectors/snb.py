@@ -17,7 +17,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, EmptyDataError, Namespace, connector, enumerator
+from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.errors import EmptyDataError
 from parsimony.result import (
     Column,
     ColumnRole,

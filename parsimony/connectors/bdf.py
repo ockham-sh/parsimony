@@ -18,7 +18,8 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.connector import Connectors, EmptyDataError, Namespace, ParseError, connector, enumerator
+from parsimony.connector import Connectors, Namespace, connector, enumerator
+from parsimony.errors import EmptyDataError, ParseError
 from parsimony.result import (
     Column,
     ColumnRole,

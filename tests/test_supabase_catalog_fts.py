@@ -40,9 +40,7 @@ async def test_search_text_calls_search_series_fts_and_maps_rank() -> None:
     load_result.data = [row]
 
     table_chain = MagicMock()
-    table_chain.select.return_value.eq.return_value.in_.return_value.execute.return_value = (
-        load_result
-    )
+    table_chain.select.return_value.eq.return_value.in_.return_value.execute.return_value = load_result
 
     client = MagicMock()
     client.rpc.return_value = rpc_chain

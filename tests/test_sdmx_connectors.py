@@ -76,10 +76,7 @@ def test_build_sdmx_title_uses_labels_dash_separated() -> None:
 
     row = pd.Series({"FREQ": "M", "REF_AREA": "US"})
     labels = {"FREQ": {"M": "Monthly"}, "REF_AREA": {"US": "United States"}}
-    assert (
-        _build_sdmx_title(row, ["FREQ", "REF_AREA"], labels)
-        == "Monthly - United States"
-    )
+    assert _build_sdmx_title(row, ["FREQ", "REF_AREA"], labels) == "Monthly - United States"
 
 
 def test_ordered_non_time_dimension_ids_preserves_dsd_order() -> None:
@@ -154,6 +151,4 @@ async def test_sdmx_series_keys_invalid_filter_key() -> None:
     from parsimony.connectors.sdmx import sdmx_series_keys
 
     with pytest.raises(ValueError, match="not a dimension"):
-        await sdmx_series_keys(
-            SdmxSeriesKeysParams(dataset_key="ECB-YC", filters={"NO_SUCH_DIM": ["x"]})
-        )
+        await sdmx_series_keys(SdmxSeriesKeysParams(dataset_key="ECB-YC", filters={"NO_SUCH_DIM": ["x"]}))

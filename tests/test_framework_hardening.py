@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from parsimony.connector import connector
 from parsimony.errors import ParseError, RateLimitError
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputConfig, Result
 
 
 class _NoParams(BaseModel):
@@ -23,6 +23,7 @@ class _NoParams(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers: minimal in-process connectors for coercion testing
 # ---------------------------------------------------------------------------
+
 
 def _make_connector(df: pd.DataFrame, dtype: str, col_name: str = "value") -> object:
     """Build a minimal @connector that returns *df* through an OutputConfig with the given dtype."""

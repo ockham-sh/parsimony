@@ -98,11 +98,13 @@ async def test_delete_nonexistent_is_noop(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_search_basic(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(code="GDPC1", title="Real Gross Domestic Product"),
-        _entry(code="UNRATE", title="Unemployment Rate"),
-        _entry(code="CPIAUCSL", title="Consumer Price Index"),
-    ])
+    await store.upsert(
+        [
+            _entry(code="GDPC1", title="Real Gross Domestic Product"),
+            _entry(code="UNRATE", title="Unemployment Rate"),
+            _entry(code="CPIAUCSL", title="Consumer Price Index"),
+        ]
+    )
     results = await store.search("unemployment", 10)
     assert len(results) >= 1
     assert results[0].code == "UNRATE"
@@ -110,10 +112,12 @@ async def test_search_basic(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_search_namespace_filter(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="GDPC1", title="Real GDP"),
-        _entry(ns="bls", code="GDPC1", title="Real GDP BLS"),
-    ])
+    await store.upsert(
+        [
+            _entry(ns="fred", code="GDPC1", title="Real GDP"),
+            _entry(ns="bls", code="GDPC1", title="Real GDP BLS"),
+        ]
+    )
     results = await store.search("GDP", 10, namespaces=["bls"])
     assert len(results) == 1
     assert results[0].namespace == "bls"
@@ -128,10 +132,12 @@ async def test_search_empty_query(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_search_multiple_tokens(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(code="GDPC1", title="Real Gross Domestic Product"),
-        _entry(code="UNRATE", title="Unemployment Rate"),
-    ])
+    await store.upsert(
+        [
+            _entry(code="GDPC1", title="Real Gross Domestic Product"),
+            _entry(code="UNRATE", title="Unemployment Rate"),
+        ]
+    )
     results = await store.search("Real Domestic", 10)
     assert len(results) >= 1
     assert results[0].code == "GDPC1"
@@ -150,11 +156,13 @@ async def test_search_returns_similarity(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_namespaces(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="a"),
-        _entry(ns="bls", code="B", title="b"),
-        _entry(ns="fred", code="C", title="c"),
-    ])
+    await store.upsert(
+        [
+            _entry(ns="fred", code="A", title="a"),
+            _entry(ns="bls", code="B", title="b"),
+            _entry(ns="fred", code="C", title="c"),
+        ]
+    )
     ns = await store.list_namespaces()
     assert ns == ["bls", "fred"]
 
@@ -169,10 +177,12 @@ async def test_list_namespaces_empty(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_all(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="Alpha"),
-        _entry(ns="fred", code="B", title="Beta"),
-    ])
+    await store.upsert(
+        [
+            _entry(ns="fred", code="A", title="Alpha"),
+            _entry(ns="fred", code="B", title="Beta"),
+        ]
+    )
     entries, total = await store.list()
     assert total == 2
     assert len(entries) == 2
@@ -180,10 +190,12 @@ async def test_list_all(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_with_namespace_filter(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="A", title="Alpha"),
-        _entry(ns="bls", code="B", title="Beta"),
-    ])
+    await store.upsert(
+        [
+            _entry(ns="fred", code="A", title="Alpha"),
+            _entry(ns="bls", code="B", title="Beta"),
+        ]
+    )
     entries, total = await store.list(namespace="fred")
     assert total == 1
     assert entries[0].namespace == "fred"
@@ -191,10 +203,12 @@ async def test_list_with_namespace_filter(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_with_text_filter(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code="GDPC1", title="Real GDP"),
-        _entry(ns="fred", code="UNRATE", title="Unemployment"),
-    ])
+    await store.upsert(
+        [
+            _entry(ns="fred", code="GDPC1", title="Real GDP"),
+            _entry(ns="fred", code="UNRATE", title="Unemployment"),
+        ]
+    )
     entries, total = await store.list(q="GDP")
     assert total == 1
     assert entries[0].code == "GDPC1"
@@ -202,10 +216,7 @@ async def test_list_with_text_filter(store: SQLiteCatalogStore) -> None:
 
 @pytest.mark.asyncio
 async def test_list_pagination(store: SQLiteCatalogStore) -> None:
-    await store.upsert([
-        _entry(ns="fred", code=f"S{i:03d}", title=f"Series {i}")
-        for i in range(10)
-    ])
+    await store.upsert([_entry(ns="fred", code=f"S{i:03d}", title=f"Series {i}") for i in range(10)])
     page1, total = await store.list(limit=3, offset=0)
     assert total == 10
     assert len(page1) == 3
@@ -271,15 +282,21 @@ async def test_hybrid_search(tmp_path) -> None:
     # Create entries with embeddings
     entries = [
         SeriesEntry(
-            namespace="fred", code="GDPC1", title="Real Gross Domestic Product",
+            namespace="fred",
+            code="GDPC1",
+            title="Real Gross Domestic Product",
             embedding=[1.0, 0.0, 0.0, 0.0],
         ),
         SeriesEntry(
-            namespace="fred", code="UNRATE", title="Unemployment Rate",
+            namespace="fred",
+            code="UNRATE",
+            title="Unemployment Rate",
             embedding=[0.0, 1.0, 0.0, 0.0],
         ),
         SeriesEntry(
-            namespace="fred", code="CPIAUCSL", title="Consumer Price Index",
+            namespace="fred",
+            code="CPIAUCSL",
+            title="Consumer Price Index",
             embedding=[0.0, 0.0, 1.0, 0.0],
         ),
     ]
@@ -293,7 +310,9 @@ async def test_hybrid_search(tmp_path) -> None:
     # Hybrid search (FTS + vector)
     query_emb = [0.9, 0.1, 0.0, 0.0]  # close to GDPC1's embedding
     hybrid_results = await store.search(
-        "GDP", 10, query_embedding=query_emb,
+        "GDP",
+        10,
+        query_embedding=query_emb,
     )
     assert len(hybrid_results) >= 1
     assert hybrid_results[0].code == "GDPC1"
@@ -302,7 +321,9 @@ async def test_hybrid_search(tmp_path) -> None:
     # Vector-biased hybrid: keyword matches UNRATE, but vector is close to GDPC1
     # RRF should rank GDPC1 or UNRATE depending on fusion
     hybrid2 = await store.search(
-        "Rate", 10, query_embedding=[1.0, 0.0, 0.0, 0.0],
+        "Rate",
+        10,
+        query_embedding=[1.0, 0.0, 0.0, 0.0],
     )
     assert len(hybrid2) >= 1
     # Both UNRATE (keyword match for "Rate") and GDPC1 (vector match) should appear

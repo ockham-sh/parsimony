@@ -65,13 +65,11 @@ class _FixedEmbeddings(EmbeddingProvider):
         return [1.0] + [0.0] * (self._dim - 1)
 
 
-
 class _ShortEmbeddings(_FixedEmbeddings):
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if len(texts) <= 1:
             return await super().embed_texts(texts)
         return [[1.0] + [0.0] * (self._dim - 1) for _ in texts[:-1]]
-
 
 
 class _RecordingStore(CatalogStore):
@@ -115,8 +113,6 @@ class _RecordingStore(CatalogStore):
         offset: int = 0,
     ) -> tuple[builtins.list[SeriesEntry], int]:
         return [], 0
-
-
 
 
 @pytest.mark.asyncio
@@ -293,9 +289,7 @@ async def test_index_result_as_callback() -> None:
     )
     async def fetch_multi(_p: _AutoIndexFetchParams) -> pd.DataFrame:
         """Multi-row fetch for auto-index test."""
-        return pd.DataFrame(
-            {"code_col": ["A", "B", "A"], "title_col": ["One", "Two", "One"]}
-        )
+        return pd.DataFrame({"code_col": ["A", "B", "A"], "title_col": ["One", "Two", "One"]})
 
     store = _RecordingStore()
     catalog = Catalog(store, embeddings=_FixedEmbeddings(dim=4))
@@ -380,7 +374,3 @@ async def test_fred_enumerate_entries_have_metadata(
     assert by_code["GDPC1"].metadata["release_id"] == 51
     assert by_code["UNRATE"].metadata["frequency_short"] == "M"
     assert by_code["UNRATE"].metadata["units_short"] == "%"
-
-
-
-

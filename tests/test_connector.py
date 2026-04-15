@@ -124,6 +124,7 @@ class TestConnectorDecoratorOverrides:
 
     def test_missing_docstring_and_description_raises(self) -> None:
         with pytest.raises(ValueError, match="docstring"):
+
             @connector()
             async def _no_docs(params: SearchParams) -> pd.DataFrame:
                 return _make_search_df(params.query)
@@ -134,6 +135,7 @@ class TestEnumerator:
 
     def test_enumerator_rejects_data_columns(self) -> None:
         with pytest.raises(ValueError, match="DATA"):
+
             @enumerator(
                 output=OutputConfig(
                     columns=[
@@ -149,6 +151,7 @@ class TestEnumerator:
 
     def test_enumerator_requires_exactly_one_key(self) -> None:
         with pytest.raises(ValueError, match="exactly one KEY"):
+
             @enumerator(
                 output=OutputConfig(
                     columns=[
@@ -163,6 +166,7 @@ class TestEnumerator:
 
     def test_enumerator_requires_key_namespace(self) -> None:
         with pytest.raises(ValueError, match="namespace"):
+
             @enumerator(
                 output=OutputConfig(
                     columns=[
@@ -177,6 +181,7 @@ class TestEnumerator:
 
     def test_enumerator_requires_title_column(self) -> None:
         with pytest.raises(ValueError, match="TITLE"):
+
             @enumerator(
                 output=OutputConfig(
                     columns=[
@@ -213,6 +218,7 @@ class TestLoader:
 
     def test_loader_rejects_title_columns(self) -> None:
         with pytest.raises(ValueError, match="TITLE"):
+
             @loader(
                 output=OutputConfig(
                     columns=[
@@ -228,6 +234,7 @@ class TestLoader:
 
     def test_loader_rejects_metadata_columns(self) -> None:
         with pytest.raises(ValueError, match="METADATA"):
+
             @loader(
                 output=OutputConfig(
                     columns=[
@@ -243,6 +250,7 @@ class TestLoader:
 
     def test_loader_requires_data_columns(self) -> None:
         with pytest.raises(ValueError, match="DATA"):
+
             @loader(
                 output=OutputConfig(
                     columns=[
@@ -256,6 +264,7 @@ class TestLoader:
 
     def test_loader_requires_exactly_one_key(self) -> None:
         with pytest.raises(ValueError, match="exactly one KEY"):
+
             @loader(
                 output=OutputConfig(
                     columns=[
@@ -269,6 +278,7 @@ class TestLoader:
 
     def test_loader_requires_key_namespace(self) -> None:
         with pytest.raises(ValueError, match="namespace"):
+
             @loader(
                 output=OutputConfig(
                     columns=[
@@ -333,6 +343,7 @@ class TestConnector:
         c = Connectors([demo_fetch])
         with pytest.raises(ValidationError):
             asyncio.run(c["demo_fetch"](OtherParams(value="x")))
+
 
 # ---------------------------------------------------------------------------
 # Connectors collection

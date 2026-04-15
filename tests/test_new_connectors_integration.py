@@ -28,6 +28,7 @@ if _ENV_PATH.exists():
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _has_key(name: str) -> bool:
     return bool(os.environ.get(name))
 
@@ -42,11 +43,13 @@ def _has_key(name: str) -> bool:
 async def test_treasury_fetch():
     from parsimony.connectors.treasury import TreasuryFetchParams, treasury_fetch
 
-    result = await treasury_fetch(TreasuryFetchParams(
-        endpoint="v2/accounting/od/debt_to_penny",
-        page_size=5,
-        sort="-record_date",
-    ))
+    result = await treasury_fetch(
+        TreasuryFetchParams(
+            endpoint="v2/accounting/od/debt_to_penny",
+            page_size=5,
+            sort="-record_date",
+        )
+    )
     assert result.data is not None
     df = result.data
     assert len(df) > 0
@@ -63,11 +66,13 @@ async def test_bls_fetch():
     from parsimony.connectors.bls import BlsFetchParams, bls_fetch
 
     conn = bls_fetch.bind_deps(api_key=os.environ["BLS_API_KEY"])
-    result = await conn(BlsFetchParams(
-        series_id="LNS14000000",
-        start_year="2023",
-        end_year="2024",
-    ))
+    result = await conn(
+        BlsFetchParams(
+            series_id="LNS14000000",
+            start_year="2023",
+            end_year="2024",
+        )
+    )
     df = result.data
     assert len(df) > 0
     assert "series_id" in df.columns
@@ -85,11 +90,13 @@ async def test_riksbank_fetch():
 
     conn = riksbank_fetch.bind_deps(api_key="")
     try:
-        result = await conn(RiksbankFetchParams(
-            series_id="SEKEURPMI",
-            from_date="2024-01-01",
-            to_date="2024-03-01",
-        ))
+        result = await conn(
+            RiksbankFetchParams(
+                series_id="SEKEURPMI",
+                from_date="2024-01-01",
+                to_date="2024-03-01",
+            )
+        )
     except httpx.HTTPStatusError as exc:
         pytest.skip(f"Riksbank API unavailable: {exc.response.status_code}")
     df = result.data
@@ -104,11 +111,13 @@ async def test_riksbank_fetch():
 async def test_snb_fetch():
     from parsimony.connectors.snb import SnbFetchParams, snb_fetch
 
-    result = await snb_fetch(SnbFetchParams(
-        cube_id="rendoblim",
-        from_date="2024",
-        to_date="2024",
-    ))
+    result = await snb_fetch(
+        SnbFetchParams(
+            cube_id="rendoblim",
+            from_date="2024",
+            to_date="2024",
+        )
+    )
     df = result.data
     assert len(df) > 0
     assert "cube_id" in df.columns
@@ -123,17 +132,18 @@ async def test_eia_fetch():
     from parsimony.connectors.eia import EiaFetchParams, eia_fetch
 
     conn = eia_fetch.bind_deps(api_key=os.environ["EIA_API_KEY"])
-    result = await conn(EiaFetchParams(
-        route="petroleum/pri/spt",
-        frequency="monthly",
-        start="2024-01",
-        end="2024-06",
-    ))
+    result = await conn(
+        EiaFetchParams(
+            route="petroleum/pri/spt",
+            frequency="monthly",
+            start="2024-01",
+            end="2024-06",
+        )
+    )
     df = result.data
     assert len(df) > 0
     assert "route" in df.columns
     assert "title" in df.columns
-
 
 
 @pytest.mark.integration
@@ -143,11 +153,13 @@ async def test_destatis_fetch():
 
     conn = destatis_fetch.bind_deps(username="GAST", password="GAST")
     try:
-        result = await conn(DestatisFetchParams(
-            table_id="61111-0001",
-            start_year="2023",
-            end_year="2024",
-        ))
+        result = await conn(
+            DestatisFetchParams(
+                table_id="61111-0001",
+                start_year="2023",
+                end_year="2024",
+            )
+        )
         df = result.data
         assert len(df) > 0
         assert "table_id" in df.columns
@@ -389,10 +401,12 @@ async def test_multi_provider_catalog_search(tmp_path):
 async def test_bde_fetch():
     from parsimony.connectors.bde import BdeFetchParams, bde_fetch
 
-    result = await bde_fetch(BdeFetchParams(
-        key="D_1NBAF472",
-        time_range="30M",
-    ))
+    result = await bde_fetch(
+        BdeFetchParams(
+            key="D_1NBAF472",
+            time_range="30M",
+        )
+    )
     assert result.data is not None
     df = result.data
     assert isinstance(df, pd.DataFrame)
@@ -407,11 +421,13 @@ async def test_bde_fetch():
 async def test_boc_fetch():
     from parsimony.connectors.boc import BocFetchParams, boc_fetch
 
-    result = await boc_fetch(BocFetchParams(
-        series_name="FXUSDCAD",
-        start_date="2024-01-01",
-        end_date="2024-03-31",
-    ))
+    result = await boc_fetch(
+        BocFetchParams(
+            series_name="FXUSDCAD",
+            start_date="2024-01-01",
+            end_date="2024-03-31",
+        )
+    )
     assert result.data is not None
     df = result.data
     assert isinstance(df, pd.DataFrame)
@@ -426,11 +442,13 @@ async def test_boc_fetch():
 async def test_boj_fetch():
     from parsimony.connectors.boj import BojFetchParams, boj_fetch
 
-    result = await boj_fetch(BojFetchParams(
-        db="FM08",
-        code="FXERD01",
-        start_date="202401",
-    ))
+    result = await boj_fetch(
+        BojFetchParams(
+            db="FM08",
+            code="FXERD01",
+            start_date="202401",
+        )
+    )
     assert result.data is not None
     df = result.data
     assert isinstance(df, pd.DataFrame)

@@ -21,9 +21,7 @@ def test_redact_api_key_and_apikey() -> None:
 
 
 def test_redact_hyphenated_and_token_suffix() -> None:
-    out = _redact_params_for_logging(
-        {"api-key": "x", "foo_token": "y", "dataset_key": "ECB-YC"}
-    )
+    out = _redact_params_for_logging({"api-key": "x", "foo_token": "y", "dataset_key": "ECB-YC"})
     assert out["api-key"] == "***REDACTED***"
     assert out["foo_token"] == "***REDACTED***"
     assert out["dataset_key"] == "ECB-YC"

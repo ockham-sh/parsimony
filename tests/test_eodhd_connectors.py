@@ -248,9 +248,7 @@ class TestToBracketParams:
     def test_mixed_keys(self) -> None:
         from parsimony.connectors.eodhd import _to_bracket_params
 
-        result = _to_bracket_params(
-            {"ticker": "AAPL.US", "filter_pe": 30, "page_number": 1, "missing": None}
-        )
+        result = _to_bracket_params({"ticker": "AAPL.US", "filter_pe": 30, "page_number": 1, "missing": None})
         assert result == {
             "ticker": "AAPL.US",
             "filter[pe]": 30,
@@ -538,10 +536,20 @@ class TestEodhdCalendar:
     async def test_earnings_path(self) -> None:
         from parsimony.connectors.eodhd import eodhd_calendar
 
-        data = {"earnings": [{"code": "AAPL.US", "report_date": "2024-02-01",
-                               "before_after_market": "BMO", "currency": "USD",
-                               "actual": 2.18, "estimate": 2.12, "difference": 0.06,
-                               "percent": 2.83}]}
+        data = {
+            "earnings": [
+                {
+                    "code": "AAPL.US",
+                    "report_date": "2024-02-01",
+                    "before_after_market": "BMO",
+                    "currency": "USD",
+                    "actual": 2.18,
+                    "estimate": 2.12,
+                    "difference": 0.06,
+                    "percent": 2.83,
+                }
+            ]
+        }
         with _patch_http(_make_response(data)) as m:
             await _call(eodhd_calendar, type="earnings")
         assert "calendar/earnings" in m.call_args.args[1]
@@ -549,11 +557,24 @@ class TestEodhdCalendar:
     async def test_ipo_path(self) -> None:
         from parsimony.connectors.eodhd import eodhd_calendar
 
-        data = {"ipos": [{"code": "NEWCO.US", "name": "NewCo Inc", "exchange": "US",
-                           "currency": "USD", "start_date": "2024-02-15",
-                           "filing_date": "2024-01-20", "amended_date": None,
-                           "price_from": 18.0, "price_to": 20.0, "offer_price": 19.0,
-                           "shares": 10000000, "deal_size": 190000000.0}]}
+        data = {
+            "ipos": [
+                {
+                    "code": "NEWCO.US",
+                    "name": "NewCo Inc",
+                    "exchange": "US",
+                    "currency": "USD",
+                    "start_date": "2024-02-15",
+                    "filing_date": "2024-01-20",
+                    "amended_date": None,
+                    "price_from": 18.0,
+                    "price_to": 20.0,
+                    "offer_price": 19.0,
+                    "shares": 10000000,
+                    "deal_size": 190000000.0,
+                }
+            ]
+        }
         with _patch_http(_make_response(data)) as m:
             await _call(eodhd_calendar, type="ipo")
         assert "calendar/ipo" in m.call_args.args[1]
@@ -561,8 +582,20 @@ class TestEodhdCalendar:
     async def test_trends_path(self) -> None:
         from parsimony.connectors.eodhd import eodhd_calendar
 
-        data = {"trends": [{"code": "AAPL.US", "date": "2024-01-01", "period": "0m",
-                             "strong_buy": 15, "buy": 10, "hold": 5, "sell": 2, "strong_sell": 1}]}
+        data = {
+            "trends": [
+                {
+                    "code": "AAPL.US",
+                    "date": "2024-01-01",
+                    "period": "0m",
+                    "strong_buy": 15,
+                    "buy": 10,
+                    "hold": 5,
+                    "sell": 2,
+                    "strong_sell": 1,
+                }
+            ]
+        }
         with _patch_http(_make_response(data)) as m:
             await _call(eodhd_calendar, type="trends")
         assert "calendar/trends" in m.call_args.args[1]
@@ -570,10 +603,20 @@ class TestEodhdCalendar:
     async def test_earnings_result_unwrapped(self) -> None:
         from parsimony.connectors.eodhd import eodhd_calendar
 
-        data = {"earnings": [{"code": "AAPL.US", "report_date": "2024-02-01",
-                               "before_after_market": "BMO", "currency": "USD",
-                               "actual": 2.18, "estimate": 2.12, "difference": 0.06,
-                               "percent": 2.83}]}
+        data = {
+            "earnings": [
+                {
+                    "code": "AAPL.US",
+                    "report_date": "2024-02-01",
+                    "before_after_market": "BMO",
+                    "currency": "USD",
+                    "actual": 2.18,
+                    "estimate": 2.12,
+                    "difference": 0.06,
+                    "percent": 2.83,
+                }
+            ]
+        }
         with _patch_http(_make_response(data)):
             result = await _call(eodhd_calendar, type="earnings")
         assert "code" in result.df.columns

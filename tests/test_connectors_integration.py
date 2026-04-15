@@ -19,9 +19,7 @@ async def mock_fetch(params: MockParams, *, fail: bool = False) -> Result:
     """Fetch mock data."""
     if fail:
         raise ValueError("Simulated fetch failure")
-    df = pd.DataFrame(
-        {"date": pd.to_datetime(["2024-01-01", "2024-02-01"]), "value": [100.0, 200.0]}
-    )
+    df = pd.DataFrame({"date": pd.to_datetime(["2024-01-01", "2024-02-01"]), "value": [100.0, 200.0]})
     return Result.from_dataframe(df, Provenance(source="mock", params=params.model_dump()))
 
 

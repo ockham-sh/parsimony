@@ -23,7 +23,7 @@ class TestServerListTools:
         assert len(mcp_server.instructions) > 0
 
     async def test_tool_count_matches_connectors(self, tool_connectors):
-        server = create_server(tool_connectors)
+        create_server(tool_connectors)
         # The tool_connectors fixture filters to "tool" tag only
         # mock_search and mock_profile are tagged, mock_fetch is not
         assert len(list(tool_connectors)) == 2

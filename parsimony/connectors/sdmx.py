@@ -14,7 +14,7 @@ from requests.exceptions import HTTPError
 
 from parsimony.catalog.models import code_token as _code_token
 from parsimony.catalog.models import normalize_code
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connector, Connectors, connector, enumerator
 from parsimony.errors import EmptyDataError, ParseError, ProviderError
 from parsimony.result import (
     Column,
@@ -549,7 +549,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
     )
 
 
-@connector(tags=["sdmx", "tool"])
+@connector(tags=["sdmx"])
 async def sdmx_list_datasets(params: SdmxListDatasetsParams) -> Result:
     """List all dataflows (datasets) for an SDMX agency.
 
@@ -792,4 +792,67 @@ async def enumerate_sdmx_dataset_codelists(
     return await asyncio.to_thread(_build_dataset_codelists_tables_sync, params.dataset_key)
 
 
-CONNECTORS = Connectors([sdmx_fetch, sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys])
+# ---------------------------------------------------------------------------
+# Per-agency enumerators (catalog-backed dataset discovery)
+# ---------------------------------------------------------------------------
+
+# Curated agencies for catalog indexing.  Each gets a zero-arg enumerator
+# with a static namespace so _find_enumerator can match at import time.
+_SDMX_CURATED_AGENCIES: tuple[str, ...] = ("ECB", "ESTAT", "IMF_DATA", "WB_WDI", "OECD")
+
+
+class SdmxEnumerateParams(BaseModel):
+    """No parameters needed — agency is baked into each enumerator."""
+
+    pass
+
+
+def _sdmx_enumerate_output(agency_id: str) -> OutputConfig:
+    return OutputConfig(
+        columns=[
+            Column(name="dataset_id", role=ColumnRole.KEY, namespace=sdmx_agency_namespace(agency_id)),
+            Column(name="name", role=ColumnRole.TITLE),
+        ]
+    )
+
+
+def _make_sdmx_agency_enumerator(agency_id: str) -> Connector:
+    """Build an @enumerator for one SDMX agency."""
+    ns = sdmx_agency_namespace(agency_id)
+
+    @enumerator(
+        name=f"sdmx_enumerate_{agency_id.lower()}",
+        output=_sdmx_enumerate_output(agency_id),
+        tags=["sdmx"],
+        description=(
+            f"Enumerate all datasets (dataflows) for SDMX agency {agency_id}. "
+            f"Populates the catalog namespace '{ns}'."
+        ),
+    )
+    async def _enumerate(params: SdmxEnumerateParams) -> Result:
+        def _run() -> pd.DataFrame:
+            with _sdmx_client(agency_id) as client:
+                msg = client.dataflow(force=True)
+            rows: list[dict[str, str]] = []
+            for flow_id, df_def in msg.dataflow.items():
+                name = ""
+                if hasattr(df_def, "name") and df_def.name is not None:
+                    locs = getattr(df_def.name, "localizations", {}) or {}
+                    name = str(locs.get("en", str(df_def.name)))
+                rows.append({"dataset_id": str(flow_id), "name": name or str(flow_id)})
+            return pd.DataFrame(rows)
+
+        df = await asyncio.to_thread(_run)
+        if df.empty:
+            raise EmptyDataError(provider="sdmx", message=f"No dataflows returned for agency {agency_id!r}.")
+        prov = Provenance(source=f"sdmx_enumerate_{agency_id.lower()}", params={"agency": agency_id})
+        return _sdmx_enumerate_output(agency_id).build_table_result(df, provenance=prov, params={})
+
+    return _enumerate
+
+
+# Build the five curated enumerators
+_sdmx_enumerators: list[Connector] = [_make_sdmx_agency_enumerator(a) for a in _SDMX_CURATED_AGENCIES]
+
+
+CONNECTORS = Connectors([sdmx_fetch, sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys, *_sdmx_enumerators])

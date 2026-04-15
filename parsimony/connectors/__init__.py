@@ -182,3 +182,38 @@ def build_connectors_from_env(
             result = _bind_optional_deps(result, connectors, env_vars, _env)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Namespace registry
+# ---------------------------------------------------------------------------
+
+
+def list_enumerator_namespaces(connectors: Connectors | None = None) -> list[str]:
+    """Return sorted namespace strings from all ``@enumerator`` connectors.
+
+    Walks the connector collection, finds connectors tagged ``"enumerator"``,
+    and extracts the KEY column namespace from each one's ``output_config``.
+
+    When *connectors* is ``None``, loads the full provider registry via
+    :func:`build_connectors_from_env` with ``lenient=True`` (no API keys
+    needed — enumerator metadata is available at import time).
+
+    No network calls, no database access, no API keys.
+    """
+    from parsimony.result import ColumnRole
+
+    if connectors is None:
+        connectors = build_connectors_from_env(lenient=True)
+
+    namespaces: list[str] = []
+    for c in connectors:
+        if "enumerator" not in c.tags:
+            continue
+        oc = c.output_config
+        if oc is None:
+            continue
+        for col in oc.columns:
+            if col.role == ColumnRole.KEY and col.namespace:
+                namespaces.append(col.namespace)
+    return sorted(set(namespaces))

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sqlite3
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +37,23 @@ _CACHE_DIR = (
     if os.environ.get("PARSIMONY_CACHE_DIR")
     else Path(platformdirs.user_cache_dir("parsimony")) / "catalogs"
 )
+_CATALOG_TTL_DAYS = int(os.environ.get("PARSIMONY_CATALOG_TTL_DAYS", "7"))
+
+# warm() concurrency and timeout budgets
+_WARM_CONCURRENCY = 4
+_WARM_PER_DOWNLOAD_TIMEOUT = 15.0
+_WARM_GLOBAL_TIMEOUT = 90.0
+
+
+@dataclass
+class WarmResult:
+    """Summary of a :meth:`Catalog.warm` run."""
+
+    downloaded: int = 0
+    skipped: int = 0
+    failed: int = 0
+    elapsed_s: float = 0.0
+    errors: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +254,117 @@ class Catalog:
         return await self._store.search(query, limit, namespaces=namespaces, query_embedding=query_embedding)
 
     # ------------------------------------------------------------------
+    # Warm (startup pre-population)
+    # ------------------------------------------------------------------
+
+    async def warm(
+        self,
+        namespaces: list[str] | None = None,
+    ) -> WarmResult:
+        """Pre-populate the store from GitHub pre-built catalogs.
+
+        Downloads catalog.db files for each namespace in parallel (bounded
+        concurrency), then merges them into the store sequentially.  Files
+        fresher than ``PARSIMONY_CATALOG_TTL_DAYS`` (default 7) are skipped.
+
+        Soft-fails on individual downloads — logs warnings and continues.
+        Returns a :class:`WarmResult` summary.
+
+        When *namespaces* is ``None``, uses ``list_enumerator_namespaces()``
+        to discover all known namespaces.
+        """
+        t0 = time.monotonic()
+
+        if namespaces is None:
+            try:
+                from parsimony.connectors import list_enumerator_namespaces
+
+                namespaces = list_enumerator_namespaces(self._connectors)
+            except Exception:
+                logger.warning("Could not discover enumerator namespaces for warm()")
+                return WarmResult(elapsed_s=time.monotonic() - t0)
+
+        result = WarmResult()
+        sem = asyncio.Semaphore(_WARM_CONCURRENCY)
+        downloaded_files: list[tuple[str, str]] = []  # (namespace, cache_path)
+
+        async def _download_one(ns: str) -> None:
+            async with sem:
+                cache_path = _CACHE_DIR / ns / "catalog.db"
+
+                # TTL check — skip if cached file is fresh
+                if cache_path.exists():
+                    age_days = (time.time() - cache_path.stat().st_mtime) / 86400
+                    if age_days < _CATALOG_TTL_DAYS:
+                        # Still fresh but might not be merged yet
+                        if ns not in self._populated:
+                            downloaded_files.append((ns, str(cache_path)))
+                        result.skipped += 1
+                        return
+
+                url = (
+                    f"https://raw.githubusercontent.com/"
+                    f"{self._catalog_repo}/{self._catalog_branch}/{ns}/catalog.db"
+                )
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_path = cache_path.with_suffix(".tmp")
+
+                    async with httpx.AsyncClient(
+                        follow_redirects=True,
+                        timeout=_WARM_PER_DOWNLOAD_TIMEOUT,
+                    ) as client:
+                        resp = await client.get(url)
+                        if resp.status_code == 404:
+                            logger.debug("No catalog on GitHub for %s", ns)
+                            result.failed += 1
+                            return
+                        resp.raise_for_status()
+
+                    await asyncio.to_thread(tmp_path.write_bytes, resp.content)
+                    tmp_path.rename(cache_path)
+                    downloaded_files.append((ns, str(cache_path)))
+                    result.downloaded += 1
+                    logger.debug("Downloaded %s catalog from GitHub", ns)
+                except (httpx.HTTPError, OSError) as exc:
+                    logger.warning("warm() download failed for %s: %s", ns, exc)
+                    result.failed += 1
+                    result.errors.append(f"{ns}: {exc}")
+
+        # Download in parallel with global timeout
+        try:
+            tasks = [_download_one(ns) for ns in namespaces]
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=_WARM_GLOBAL_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "warm() global timeout (%.0fs) exceeded — continuing with partial results",
+                _WARM_GLOBAL_TIMEOUT,
+            )
+
+        # Merge sequentially (SQLite single-writer)
+        for ns, cache_path in downloaded_files:
+            try:
+                await self._merge_remote_db(cache_path)
+                self._populated.add(ns)
+            except (sqlite3.Error, OSError, ValueError) as exc:
+                logger.warning("warm() merge failed for %s: %s", ns, exc)
+                result.failed += 1
+                result.errors.append(f"{ns} merge: {exc}")
+
+        result.elapsed_s = round(time.monotonic() - t0, 2)
+        logger.info(
+            "Catalog warm complete: %d downloaded, %d skipped, %d failed in %.1fs",
+            result.downloaded,
+            result.skipped,
+            result.failed,
+            result.elapsed_s,
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # Indexing
     # ------------------------------------------------------------------
 
@@ -373,7 +504,15 @@ class Catalog:
     # ------------------------------------------------------------------
 
     async def _ensure_namespace(self, namespace: str) -> None:
-        """Populate *namespace* if not already in the local catalog."""
+        """Fallback population for a single namespace.
+
+        Called by :meth:`search` when an explicit namespace is requested.
+        The primary population mechanism is :meth:`warm` at startup; this
+        is a last-resort fallback for namespaces not in the pre-built set
+        (e.g. a new enumerator added after the last catalog build).
+
+        Flow: check ``_populated`` set → check store → try enumerator → mark done.
+        """
         if namespace in self._populated:
             return
 
@@ -382,53 +521,12 @@ class Catalog:
             self._populated.add(namespace)
             return
 
-        if await self._try_github_download(namespace):
-            self._populated.add(namespace)
-            return
-
         if await self._try_enumerate(namespace):
             self._populated.add(namespace)
             return
 
         self._populated.add(namespace)  # Don't retry
-        logger.debug("Namespace %r not available from GitHub or enumerator", namespace)
-
-    async def _try_github_download(self, namespace: str) -> bool:
-        """Download pre-built catalog.db from GitHub and merge."""
-        import asyncio
-
-        import httpx
-
-        cache_path = _CACHE_DIR / namespace / "catalog.db"
-
-        if cache_path.exists():
-            await self._merge_remote_db(str(cache_path))
-            return True
-
-        url = f"https://raw.githubusercontent.com/{self._catalog_repo}/{self._catalog_branch}/{namespace}/catalog.db"
-        try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = cache_path.with_suffix(".tmp")
-
-            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-                resp = await client.get(url)
-                if resp.status_code == 404:
-                    logger.debug("No catalog on GitHub for %s", namespace)
-                    return False
-                resp.raise_for_status()
-
-            await asyncio.to_thread(tmp_path.write_bytes, resp.content)
-            tmp_path.rename(cache_path)
-
-            await self._merge_remote_db(str(cache_path))
-            logger.info("Downloaded %s catalog from GitHub", namespace)
-            return True
-        except httpx.HTTPStatusError as exc:
-            logger.debug("GitHub download failed for %s: %s", namespace, exc)
-            return False
-        except (httpx.HTTPError, OSError, sqlite3.Error) as exc:
-            logger.warning("Unexpected error downloading catalog for %s: %s", namespace, exc)
-            return False
+        logger.debug("Namespace %r not available from enumerator", namespace)
 
     async def _merge_remote_db(self, remote_path: str) -> None:
         """Merge a remote SQLite catalog into the local store.

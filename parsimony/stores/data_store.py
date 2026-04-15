@@ -128,7 +128,7 @@ class DataStore(ABC):
             try:
                 await self.upsert(ns, code, sub_df)
                 result.loaded += 1
-            except Exception:
-                logger.exception("DataStore upsert failed for (%s, %s)", ns, code)
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                logger.warning("DataStore upsert failed for (%s, %s): %s", ns, code, exc)
                 result.errors += 1
         return result

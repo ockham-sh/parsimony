@@ -22,6 +22,10 @@ htmlcov/
 .tox/
 .nox/
 
+# Linting / type checking
+.mypy_cache/
+.ruff_cache/
+
 # IDE
 .idea/
 .vscode/
@@ -36,6 +40,12 @@ Thumbs.db
 # Environment variables
 .env
 .env.*
+
+# Claude Code
+.claude/
+
+# Council reviews
+.council/
 
 # mkdocs build output
 site/

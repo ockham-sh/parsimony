@@ -33,16 +33,14 @@ pip install parsimony
 
 ### Optional extras
 
+SDMX support (ECB, Eurostat, IMF, World Bank, BIS) is included in the base install.
+
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `sdmx` | `pip install "parsimony[sdmx]"` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
-| `embeddings` | `pip install "parsimony[embeddings]"` | Semantic catalog search via LiteLLM embeddings |
-
-Install multiple extras at once:
-
-```bash
-pip install "parsimony[sdmx,embeddings]"
-```
+| `search` | `pip install "parsimony[search]"` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
+| `sec` | `pip install "parsimony[sec]"` | SEC Edgar connector via edgartools |
+| `mcp` | `pip install "parsimony[mcp]"` | MCP server for AI agents |
+| `all` | `pip install "parsimony[all]"` | Everything |
 
 Two connectors require separately-installed packages:
 
@@ -222,7 +220,7 @@ async def enumerate_release():
 
 ## Querying SDMX Providers
 
-SDMX connectors require the `sdmx` extra: `pip install "parsimony[sdmx]"`.
+SDMX connectors are included in the base install.
 
 No API key is required. SDMX providers include ECB, Eurostat (ESTAT), IMF, World Bank (WB_WDI), BIS, and others.
 
@@ -339,7 +337,7 @@ print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 
 ### Semantic search with embeddings
 
-Semantic search requires the `[embeddings]` extra and a LiteLLM-compatible embedding model.
+Semantic search requires the `[search]` extra and a LiteLLM-compatible embedding model.
 
 ```python
 from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore

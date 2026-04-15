@@ -19,14 +19,14 @@ Typed, composable data connectors with searchable catalogs for Python.
 ## Install
 
 ```bash
-pip install parsimony           # core + FRED
-pip install parsimony[sdmx]     # + ECB, Eurostat, IMF, World Bank (no API key needed)
-pip install parsimony[all]      # everything
+pip install parsimony           # FRED, ECB, Eurostat, IMF, World Bank + all httpx connectors
+pip install parsimony[sec]      # + SEC Edgar
+pip install parsimony[all]      # everything (adds semantic search, MCP server)
 ```
 
 ## 30-Second Example (No API Key)
 
-Fetch daily USD/EUR exchange rates from the ECB (requires `parsimony[sdmx]`):
+Fetch daily USD/EUR exchange rates from the ECB:
 
 ```python
 import asyncio

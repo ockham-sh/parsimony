@@ -1,7 +1,7 @@
 """Quickstart: Fetch ECB EUR/USD exchange rate via SDMX (no API key required).
 
 Setup:
-    pip install parsimony[sdmx]
+    pip install parsimony
 
 Expected output:
     A DataFrame of daily EUR/USD exchange rate observations with columns

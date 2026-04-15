@@ -12,7 +12,7 @@ Thank you for your interest in contributing! This guide covers everything from s
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 uv venv && source .venv/bin/activate
-uv pip install -e ".[sdmx,embeddings,dev]"
+uv pip install -e ".[dev]"
 ```
 
 ### Option 2: pip
@@ -23,7 +23,7 @@ Standard pip works fine if you prefer it:
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[sdmx,embeddings,dev]"
+pip install -e ".[dev]"
 ```
 
 ### Verify your setup
@@ -175,10 +175,6 @@ parsimony/
 - **Lazy loading** in `__init__.py` via `__getattr__` -- keeps `import parsimony` fast.
 - **Provider registry** -- `PROVIDERS` tuple in `connectors/__init__.py` drives `build_connectors_from_env`.
 - **Dependency injection** -- keyword-only args after `*` in connector functions, bound via `bind_deps()`.
-
-## Repository Note
-
-This repository is a read-only mirror of `packages/parsimony/` in our development monorepo. Your PR will be reviewed here and synced upstream.
 
 ## Code of Conduct
 

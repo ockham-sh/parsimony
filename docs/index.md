@@ -25,8 +25,8 @@ pip install parsimony
 With optional extras:
 
 ```bash
-pip install parsimony[sdmx]        # SDMX providers (ECB, Eurostat, IMF, World Bank)
-pip install parsimony[embeddings]  # Vector-searchable catalog
+pip install parsimony[sec]         # + SEC Edgar
+pip install parsimony[search]      # + semantic catalog search
 pip install parsimony[all]         # Everything
 ```
 

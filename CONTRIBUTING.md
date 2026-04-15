@@ -12,7 +12,7 @@ Thank you for your interest in contributing! This guide covers everything from s
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 uv venv && source .venv/bin/activate
-uv pip install -e ".[sdmx,embeddings,dev]"
+uv pip install -e ".[dev]"
 ```
 
 ### Option 2: pip
@@ -23,7 +23,7 @@ Standard pip works fine if you prefer it:
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[sdmx,embeddings,dev]"
+pip install -e ".[dev]"
 ```
 
 ### Verify your setup

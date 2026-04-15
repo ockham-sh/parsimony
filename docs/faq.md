@@ -8,21 +8,20 @@ parsimony requires **Python 3.11+**.
 
 ### What are the optional extras?
 
+SDMX support is included in the base install. The remaining optional extras are:
+
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `sdmx` | `pip install parsimony[sdmx]` | SDMX providers (ECB, Eurostat, IMF, World Bank, BIS) |
-| `embeddings` | `pip install parsimony[embeddings]` | Semantic catalog search via LiteLLM embeddings |
-| `sec` | `pip install edgartools` | SEC Edgar connector (installed separately) |
+| `search` | `pip install parsimony[search]` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
+| `sec` | `pip install parsimony[sec]` | SEC Edgar connector via edgartools |
+| `mcp` | `pip install parsimony[mcp]` | MCP server for AI agents |
+| `all` | `pip install parsimony[all]` | Everything |
 
 Install multiple extras at once:
 
 ```bash
-pip install "parsimony[sdmx,embeddings]"
+pip install "parsimony[sec,search]"
 ```
-
-### I get `ModuleNotFoundError: No module named 'sdmx'`
-
-Install the SDMX extra: `pip install parsimony[sdmx]`. The `sdmx1` library is not included in the base install.
 
 ### I get `ModuleNotFoundError: No module named 'edgartools'`
 

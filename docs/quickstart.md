@@ -5,10 +5,10 @@ Get from zero to fetching macroeconomic data in under five minutes -- no API key
 ## Install
 
 ```bash
-pip install parsimony[sdmx]
+pip install parsimony
 ```
 
-> **Python 3.11+** required. The `[sdmx]` extra enables ECB, Eurostat, IMF, and World Bank connectors.
+> **Python 3.11+** required. SDMX providers (ECB, Eurostat, IMF, World Bank) are included in the base install.
 
 ---
 
@@ -191,10 +191,10 @@ Indexed: 1, Skipped: 0
   [sdmx_ecb_exr:D.USD.EUR.SP00.A] US dollar/Euro (EXR)
 ```
 
-For semantic (vector) search, add the embeddings extra and an embedding provider:
+For semantic (vector) search, add the search extra and an embedding provider:
 
 ```bash
-pip install parsimony[sdmx,embeddings]
+pip install parsimony[search]
 ```
 
 ```python

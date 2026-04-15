@@ -489,7 +489,7 @@ LiteLLMEmbeddingProvider(
 )
 ```
 
-Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony[embeddings]`.
+Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony[search]`.
 
 - Batches embedding requests at 100 texts per call (`_EMBED_BATCH_SIZE = 100`; hardcoded).
 - Applies L2 normalization to all returned vectors.
@@ -663,7 +663,7 @@ Enumerate all series in a FRED release. Returns a `SemanticTableResult` with KEY
 ### SDMX Connectors
 
 **Module**: `parsimony.connectors.sdmx`  
-**Required dependency**: `sdmx1` package (`pip install parsimony[sdmx]`)  
+**Required dependency**: `sdmx1` package (included in base install)  
 **No API key required**
 
 #### `sdmx_fetch`

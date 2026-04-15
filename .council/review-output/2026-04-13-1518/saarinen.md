@@ -1,1 +1,0 @@
-No UI findings. This project has no web UI layer.

@@ -1,1 +1,0 @@
-No Postgres findings. This project has no database layer — all data structures are in-memory immutable dataclasses.

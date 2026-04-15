@@ -1,1 +1,0 @@
-No performance findings. Tier gating operates on tuples of 20-40 elements at startup time — O(n) linear scan is negligible. HTTP latency dominates all runtime costs.

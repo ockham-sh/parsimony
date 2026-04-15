@@ -674,7 +674,7 @@ class Connectors:
     )
 
     _MCP_HEADER = (
-        "\n# Ockham — financial data discovery tools\n"
+        "\n# Parsimony — financial data discovery tools\n"
         "\n"
         "These MCP tools search and discover data. They return compact, "
         "context-friendly results — metadata, listings, search matches — "

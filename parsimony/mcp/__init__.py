@@ -1,4 +1,4 @@
-"""Ockham MCP server — expose search/discovery connectors as MCP tools."""
+"""Parsimony MCP server — expose search/discovery connectors as MCP tools."""
 
 from __future__ import annotations
 

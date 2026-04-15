@@ -176,10 +176,6 @@ parsimony/
 - **Provider registry** -- `PROVIDERS` tuple in `connectors/__init__.py` drives `build_connectors_from_env`.
 - **Dependency injection** -- keyword-only args after `*` in connector functions, bound via `bind_deps()`.
 
-## Repository Note
-
-This repository is a read-only mirror of `packages/parsimony/` in our development monorepo. Your PR will be reviewed here and synced upstream.
-
 ## Code of Conduct
 
 Please read our [Code of Conduct](CODE_OF_CONDUCT.md). We are committed to providing a welcoming and inclusive experience for everyone.

@@ -34,26 +34,13 @@ optional stacks use lazy loading via :func:`__getattr__` to keep core imports li
 
 from __future__ import annotations
 
+from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from parsimony.catalog.models import (
-    EmbeddingProvider,
-    IndexResult,
-    SeriesEntry,
-    SeriesMatch,
-    normalize_code,
-    normalize_series_catalog_row,
-    series_match_from_entry,
-)
-from parsimony.result import (
-    Column,
-    ColumnRole,
-    OutputConfig,
-    Provenance,
-    Result,
-    SemanticTableResult,
-)
-from parsimony.stores.catalog_store import CatalogStore
+try:
+    __version__ = version("parsimony")
+except PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 __all__ = [
     # Core abstractions
@@ -111,14 +98,30 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "enumerator": ("parsimony.connector", "enumerator"),
     "loader": ("parsimony.connector", "loader"),
     "Namespace": ("parsimony.connector", "Namespace"),
+    # Result system
+    "Column": ("parsimony.result", "Column"),
+    "ColumnRole": ("parsimony.result", "ColumnRole"),
+    "OutputConfig": ("parsimony.result", "OutputConfig"),
+    "Provenance": ("parsimony.result", "Provenance"),
+    "Result": ("parsimony.result", "Result"),
+    "SemanticTableResult": ("parsimony.result", "SemanticTableResult"),
+    # Catalog models
+    "EmbeddingProvider": ("parsimony.catalog.models", "EmbeddingProvider"),
+    "IndexResult": ("parsimony.catalog.models", "IndexResult"),
+    "SeriesEntry": ("parsimony.catalog.models", "SeriesEntry"),
+    "SeriesMatch": ("parsimony.catalog.models", "SeriesMatch"),
+    "normalize_code": ("parsimony.catalog.models", "normalize_code"),
+    "normalize_series_catalog_row": ("parsimony.catalog.models", "normalize_series_catalog_row"),
+    "series_match_from_entry": ("parsimony.catalog.models", "series_match_from_entry"),
+    "code_token": ("parsimony.catalog.models", "code_token"),
     # Catalog
     "Catalog": ("parsimony.catalog.catalog", "Catalog"),
+    "CatalogStore": ("parsimony.stores.catalog_store", "CatalogStore"),
     "LiteLLMEmbeddingProvider": ("parsimony.embeddings.litellm", "LiteLLMEmbeddingProvider"),
     "SQLiteCatalogStore": ("parsimony.stores.sqlite_catalog", "SQLiteCatalogStore"),
     "InMemoryDataStore": ("parsimony.stores.memory_data", "InMemoryDataStore"),
     "DataStore": ("parsimony.stores.data_store", "DataStore"),
     "LoadResult": ("parsimony.stores.data_store", "LoadResult"),
-    "code_token": ("parsimony.catalog.models", "code_token"),
     "build_embedding_text": ("parsimony.catalog.catalog", "build_embedding_text"),
     # Errors
     "ConnectorError": ("parsimony.errors", "ConnectorError"),
@@ -130,14 +133,21 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "ParseError": ("parsimony.errors", "ParseError"),
 }
 
+# Cache for the convenience client singleton.
+_client_cache: Any = None
+
 
 def __getattr__(name: str) -> Any:
-    # Convenience: `from parsimony import client` builds a ready-to-use Connectors
-    # collection with API keys from environment variables.
-    if name == "client":
-        from parsimony.connectors import build_connectors_from_env
+    global _client_cache
 
-        return build_connectors_from_env()
+    # Convenience: `from parsimony import client` builds a ready-to-use Connectors
+    # collection with API keys from environment variables (cached after first access).
+    if name == "client":
+        if _client_cache is None:
+            from parsimony.connectors import build_connectors_from_env
+
+            _client_cache = build_connectors_from_env(lenient=True)
+        return _client_cache
 
     spec = _LAZY_IMPORTS.get(name)
     if spec is not None:

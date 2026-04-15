@@ -861,8 +861,9 @@ class TestEodhdBodyError:
         from parsimony.connectors.eodhd import eodhd_eod
         from parsimony.errors import ProviderError
 
-        with _patch_http(_make_response({"error": "Invalid ticker symbol"})), pytest.raises(
-            ProviderError, match="Invalid ticker symbol"
+        with (
+            _patch_http(_make_response({"error": "Invalid ticker symbol"})),
+            pytest.raises(ProviderError, match="Invalid ticker symbol"),
         ):
             await _call(eodhd_eod, ticker="BADTICKER")
 

@@ -147,9 +147,7 @@ async def _section_catalog_and_callbacks() -> None:
 
     print("\n--- 5) dry_run=True (dedupe preview; no store writes) ---\n")
     dry = await catalog.index_result(table, embed=False, dry_run=True)
-    print(
-        f"  IndexResult: total={dry.total}, indexed={dry.indexed}, skipped={dry.skipped} (dry_run)"
-    )
+    print(f"  IndexResult: total={dry.total}, indexed={dry.indexed}, skipped={dry.skipped} (dry_run)")
 
     print("\n--- 6) extra_tags on ingest (fresh store so rows are not skipped) ---\n")
     store_tagged = SQLiteCatalogStore(":memory:")

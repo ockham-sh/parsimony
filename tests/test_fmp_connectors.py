@@ -680,8 +680,9 @@ class TestFmpErrorHandling:
         from parsimony.connectors.fmp import fmp_company_profile
         from parsimony.errors import UnauthorizedError
 
-        with _patch_http(_make_response({}, status_code=401)), pytest.raises(
-            UnauthorizedError, match="Invalid or missing FMP API key"
+        with (
+            _patch_http(_make_response({}, status_code=401)),
+            pytest.raises(UnauthorizedError, match="Invalid or missing FMP API key"),
         ):
             await _call(fmp_company_profile, symbol="AAPL")
 
@@ -701,9 +702,7 @@ class TestFmpErrorHandling:
         from parsimony.connectors.fmp import fmp_company_profile
         from parsimony.errors import ProviderError
 
-        with _patch_http(_make_response({}, status_code=500)), pytest.raises(
-            ProviderError, match="FMP API error 500"
-        ):
+        with _patch_http(_make_response({}, status_code=500)), pytest.raises(ProviderError, match="FMP API error 500"):
             await _call(fmp_company_profile, symbol="AAPL")
 
     @pytest.mark.asyncio

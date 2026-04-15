@@ -46,7 +46,8 @@ def test_tool_tag_filter_matches_mcp_pattern() -> None:
     assert "fred_search" in tool_names
     assert "fmp_search" in tool_names
     assert "fmp_screener" in tool_names
-    assert "sdmx_list_datasets" in tool_names
+    # sdmx_list_datasets was replaced by catalog_search (no longer tagged "tool")
+    assert "sdmx_list_datasets" not in tool_names
 
     # Non-tool connectors are excluded
     assert "fred_fetch" not in tool_names

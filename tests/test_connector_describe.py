@@ -326,47 +326,91 @@ class TestConnectorsDescribe:
 
 
 class TestConnectorsToLlm:
-    def test_code_context_header(self) -> None:
+    """Unified to_llm() contract: tool-tagged connectors are excluded,
+    all others are listed with full Connector.to_llm() output."""
+
+    def test_header_explains_client_usage(self) -> None:
         coll = Connectors([fred_search])
-        text = coll.to_llm(context="code")
-        assert "Data connectors (code execution)" in text
+        text = coll.to_llm()
+        assert "# Data connectors" in text
         assert 'client["name"]' in text
-
-    def test_mcp_context_header(self) -> None:
-        coll = Connectors([fred_search])
-        text = coll.to_llm(context="mcp")
-        assert "financial data discovery tools" in text
-
-    def test_code_context_connectors_label(self) -> None:
-        coll = Connectors([fred_search])
-        text = coll.to_llm(context="code")
-        assert "## Connectors (1)" in text
-
-    def test_mcp_context_tools_label(self) -> None:
-        coll = Connectors([fred_search])
-        text = coll.to_llm(context="mcp")
-        assert "## Tools (1)" in text
+        assert "from parsimony import client" in text
 
     def test_empty_collection_message(self) -> None:
         coll = Connectors([])
         text = coll.to_llm()
         assert "No connectors available." in text
 
-    def test_empty_mcp_collection(self) -> None:
-        coll = Connectors([])
-        text = coll.to_llm(context="mcp")
-        assert "No connectors available." in text
-
-    def test_connector_details_included(self) -> None:
+    def test_non_tool_connectors_included(self) -> None:
         coll = Connectors([fred_search, bare_connector])
         text = coll.to_llm()
         assert "### fred_search" in text
         assert "### bare_connector" in text
 
-    def test_multiple_connectors_count(self) -> None:
+    def test_count_matches_non_tool_connectors(self) -> None:
         coll = Connectors([fred_search, bare_connector])
         text = coll.to_llm()
         assert "## Connectors (2)" in text
+
+    def test_tool_tagged_connectors_excluded(self) -> None:
+        """Connectors tagged 'tool' do not appear in to_llm() output."""
+
+        @connector(tags=["tool", "macro"])
+        async def tool_search(params: SimpleParams) -> pd.DataFrame:
+            """A tool connector."""
+            return pd.DataFrame()
+
+        coll = Connectors([fred_search, tool_search, bare_connector])
+        text = coll.to_llm()
+        assert "### fred_search" in text
+        assert "### bare_connector" in text
+        assert "### tool_search" not in text
+        assert "## Connectors (2)" in text
+
+    def test_mixed_collection_snapshot(self) -> None:
+        """Full inclusion/exclusion test with a mixed collection."""
+
+        @connector(tags=["tool"])
+        async def discovery_tool(params: SimpleParams) -> pd.DataFrame:
+            """A discovery tool."""
+            return pd.DataFrame()
+
+        coll = Connectors([fred_search, fred_fetch, discovery_tool, bare_connector, ecb_search])
+        text = coll.to_llm()
+        # Non-tool connectors present
+        for name in ("fred_search", "fred_fetch", "bare_connector", "ecb_search"):
+            assert f"### {name}" in text
+        # Tool connector absent
+        assert "### discovery_tool" not in text
+        # Count excludes tool
+        assert "## Connectors (4)" in text
+
+    def test_no_routing_table(self) -> None:
+        """Output must not contain a hardcoded routing table."""
+        coll = Connectors([fred_search])
+        text = coll.to_llm()
+        assert "Fetch connectors by namespace:" not in text
+
+    def test_no_framework_specific_language(self) -> None:
+        """Header must not mention MCP, code executor, or framework specifics."""
+        coll = Connectors([fred_search])
+        text = coll.to_llm()
+        assert "MCP" not in text
+        assert "code execution" not in text.lower()
+        assert "code executor" not in text.lower()
+
+    def test_all_tools_collection_shows_empty_message(self) -> None:
+        """When every connector is tool-tagged, output should say no connectors available."""
+
+        @connector(tags=["tool"])
+        async def only_tool(params: SimpleParams) -> pd.DataFrame:
+            """A tool."""
+            return pd.DataFrame()
+
+        coll = Connectors([only_tool])
+        text = coll.to_llm()
+        assert "No connectors available." in text
+        assert "## Connectors (0)" not in text
 
     def test_returns_string(self) -> None:
         coll = Connectors([fred_search])

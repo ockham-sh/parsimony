@@ -8,12 +8,13 @@ pytest.importorskip("mcp", reason="mcp is an optional dependency")
 
 from mcp.server.lowlevel.server import Server
 
-from parsimony.mcp.server import create_server
+from parsimony.connector import Connectors
+from parsimony.mcp.server import _MCP_PREAMBLE, create_server
 
 
 @pytest.fixture()
-def mcp_server(tool_connectors) -> Server:
-    return create_server(tool_connectors)
+def mcp_server(all_connectors) -> Server:
+    return create_server(all_connectors)
 
 
 class TestServerListTools:
@@ -22,28 +23,29 @@ class TestServerListTools:
         assert mcp_server.instructions is not None
         assert len(mcp_server.instructions) > 0
 
-    async def test_tool_count_matches_connectors(self, tool_connectors):
-        create_server(tool_connectors)
-        # The tool_connectors fixture filters to "tool" tag only
-        # mock_search and mock_profile are tagged, mock_fetch is not
-        assert len(list(tool_connectors)) == 2
+    async def test_tool_count_matches_connectors(self, all_connectors):
+        """Tool registration should match the number of tool-tagged connectors."""
+        server = create_server(all_connectors)
+        tool_count = len([c for c in all_connectors if Connectors.TOOL_TAG in c.tags])
+        assert tool_count == 2  # mock_search and mock_profile
+        assert server.instructions is not None
 
 
 class TestServerInstructions:
-    def test_instructions_contain_parsimony(self, mcp_server):
-        assert "parsimony" in mcp_server.instructions.lower()
+    def test_instructions_contain_header(self, mcp_server):
+        assert "# Data connectors" in mcp_server.instructions
 
-    def test_instructions_contain_workflow(self, mcp_server):
-        assert "search" in mcp_server.instructions.lower()
-        assert "fetch" in mcp_server.instructions.lower()
+    def test_instructions_contain_preamble(self, mcp_server):
+        assert _MCP_PREAMBLE in mcp_server.instructions
 
-    def test_instructions_contain_tool_descriptions(self, mcp_server):
-        assert "mock_search" in mcp_server.instructions
-        assert "mock_profile" in mcp_server.instructions
+    def test_instructions_contain_client_connectors(self, mcp_server):
+        # Non-tool connectors appear in instructions (via to_llm())
+        assert "mock_fetch" in mcp_server.instructions
 
-    def test_instructions_exclude_non_tool(self, mcp_server):
-        # mock_fetch is not tagged "tool" so should not appear
-        assert "mock_fetch" not in mcp_server.instructions
+    def test_instructions_exclude_tool_connectors(self, mcp_server):
+        # Tool-tagged connectors are NOT in instructions (they're in list_tools)
+        assert "### mock_search" not in mcp_server.instructions
+        assert "### mock_profile" not in mcp_server.instructions
 
 
 class TestServerCallTool:

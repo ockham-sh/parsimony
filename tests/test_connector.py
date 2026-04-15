@@ -48,8 +48,14 @@ async def demo_fetch(params: FetchParams) -> pd.DataFrame:
     return _make_fetch_df()
 
 
+@connector(tags=["tool"])
+async def demo_tool(params: SearchParams) -> pd.DataFrame:
+    """A tool-tagged connector for testing."""
+    return _make_search_df(params.query)
+
+
 def _fake_connectors() -> Connectors:
-    return Connectors([demo_search, demo_fetch])
+    return Connectors([demo_search, demo_fetch, demo_tool])
 
 
 # ---------------------------------------------------------------------------
@@ -356,11 +362,11 @@ class TestConnectorsCollection:
 
     def test_names(self) -> None:
         c = self._build()
-        assert c.names() == ["demo_fetch", "demo_search"]
+        assert c.names() == ["demo_fetch", "demo_search", "demo_tool"]
 
     def test_iter_and_len(self) -> None:
         c = self._build()
-        assert len(c) == 2
+        assert len(c) == 3
         assert all(isinstance(op, Connector) for op in c)
 
     def test_getitem_str(self) -> None:
@@ -589,14 +595,23 @@ class TestConnectorsToLlm:
         c = _fake_connectors()
         text = c.to_llm()
         assert "# Data connectors" in text
-        assert "await client" in text
+        assert 'client["name"]' in text
         assert "Result" in text
 
-    def test_includes_all_connector_names(self) -> None:
+    def test_includes_non_tool_connector_names(self) -> None:
         c = _fake_connectors()
         text = c.to_llm()
-        for conn in c:
-            assert conn.name in text
+        # Non-tool connectors appear
+        assert "demo_search" in text
+        assert "demo_fetch" in text
+
+    def test_excludes_tool_tagged_connectors(self) -> None:
+        c = _fake_connectors()
+        text = c.to_llm()
+        # demo_tool is tagged "tool" and must be excluded
+        assert "### demo_tool" not in text
+        # Count excludes tool
+        assert "## Connectors (2)" in text
 
     def test_includes_parameter_info(self) -> None:
         c = _fake_connectors()
@@ -612,9 +627,10 @@ class TestConnectorsToLlm:
     def test_single_connector_to_llm_in_output(self) -> None:
         c = _fake_connectors()
         text = c.to_llm()
-        # Each connector's to_llm() output should appear
+        # Each non-tool connector's to_llm() output should appear
         for conn in c:
-            assert conn.to_llm() in text
+            if "tool" not in conn.tags:
+                assert conn.to_llm() in text
 
     def test_no_decorative_separators(self) -> None:
         c = _fake_connectors()

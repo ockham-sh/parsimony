@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from parsimony.catalog.catalog import Catalog, _find_enumerator
@@ -180,122 +179,21 @@ class TestEnsureNamespace:
         assert "fred" in catalog._populated
 
     @pytest.mark.asyncio
-    async def test_falls_through_to_github_then_enumerate(self, catalog: Catalog) -> None:
-        """When namespace not in store, tries GitHub then enumerator."""
-        with (
-            patch.object(catalog, "_try_github_download", new_callable=AsyncMock, return_value=False),
-            patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=False),
-        ):
+    async def test_falls_through_to_enumerator(self, catalog: Catalog) -> None:
+        """When namespace not in store, tries enumerator as fallback."""
+        with patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=False):
             await catalog._ensure_namespace("unknown_ns")
-            catalog._try_github_download.assert_awaited_once_with("unknown_ns")
             catalog._try_enumerate.assert_awaited_once_with("unknown_ns")
             # Marks populated to avoid retry
             assert "unknown_ns" in catalog._populated
 
     @pytest.mark.asyncio
-    async def test_github_success_stops_early(self, catalog: Catalog) -> None:
-        """If GitHub download succeeds, don't try enumerator."""
-        with (
-            patch.object(catalog, "_try_github_download", new_callable=AsyncMock, return_value=True),
-            patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=False),
-        ):
+    async def test_enumerator_success_marks_populated(self, catalog: Catalog) -> None:
+        """If enumerator succeeds, marks namespace as populated."""
+        with patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=True):
             await catalog._ensure_namespace("new_ns")
-            catalog._try_github_download.assert_awaited_once()
-            catalog._try_enumerate.assert_not_awaited()
+            catalog._try_enumerate.assert_awaited_once()
             assert "new_ns" in catalog._populated
-
-
-# ---------------------------------------------------------------------------
-# _try_github_download()
-# ---------------------------------------------------------------------------
-
-
-class TestTryGithubDownload:
-    @pytest.mark.asyncio
-    async def test_404_returns_false(self, catalog: Catalog) -> None:
-        """A 404 from GitHub returns False."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("nonexistent_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_http_error_returns_false(self, catalog: Catalog) -> None:
-        """An HTTP error returns False."""
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.HTTPError("connection failed"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("some_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_http_status_error_returns_false(self, catalog: Catalog) -> None:
-        """An HTTPStatusError (e.g. 500) returns False."""
-        request = httpx.Request("GET", "https://example.com")
-        response = httpx.Response(500, request=request)
-        exc = httpx.HTTPStatusError("server error", request=request, response=response)
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=exc)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("some_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_successful_download(self, catalog: Catalog, tmp_path: Any) -> None:
-        """Successful download merges into local store."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.content = b"fake-db-content"
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        cache_dir = tmp_path / "catalogs"
-
-        with (
-            patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client),
-            patch("parsimony.catalog.catalog._CACHE_DIR", cache_dir),
-            patch.object(catalog, "_merge_remote_db", new_callable=AsyncMock) as mock_merge,
-        ):
-            result = await catalog._try_github_download("test_ns")
-
-        assert result is True
-        mock_merge.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_cached_file_skips_download(self, catalog: Catalog, tmp_path: Any) -> None:
-        """If a cached file exists, use it directly without downloading."""
-        cache_dir = tmp_path / "catalogs"
-        cached_file = cache_dir / "test_ns" / "catalog.db"
-        cached_file.parent.mkdir(parents=True, exist_ok=True)
-        cached_file.write_bytes(b"cached-db")
-
-        with (
-            patch("parsimony.catalog.catalog._CACHE_DIR", cache_dir),
-            patch.object(catalog, "_merge_remote_db", new_callable=AsyncMock) as mock_merge,
-        ):
-            result = await catalog._try_github_download("test_ns")
-
-        assert result is True
-        mock_merge.assert_awaited_once_with(str(cached_file))
 
 
 # ---------------------------------------------------------------------------

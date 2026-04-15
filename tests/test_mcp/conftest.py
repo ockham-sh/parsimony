@@ -76,7 +76,7 @@ async def mock_fetch(params: SearchParams) -> pd.DataFrame:
 
 @pytest.fixture()
 def tool_connectors() -> Connectors:
-    """Only connectors tagged 'tool' — what the MCP server would expose."""
+    """Only connectors tagged 'tool' — for direct connector tests."""
     all_conns = Connectors([mock_search, mock_profile, mock_fetch])
     return all_conns.filter(tags=["tool"])
 

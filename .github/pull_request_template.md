@@ -17,8 +17,8 @@
 - [ ] `@connector`, `@enumerator`, or `@loader` decorators applied
 - [ ] `OutputConfig` with explicit `Column` roles
 - [ ] Docstrings include workflow chaining hints
-- [ ] `CONNECTORS` / `FETCH_CONNECTORS` exported
-- [ ] Wired into `build_connectors_from_env()` (if API key needed)
+- [ ] `CONNECTORS` and `ENV_VARS` exported
+- [ ] `ProviderSpec` added to `PROVIDERS` in `connectors/__init__.py`
 - [ ] Tests added in `tests/`
 - [ ] `CHANGELOG.md` updated
 

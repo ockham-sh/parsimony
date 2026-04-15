@@ -35,19 +35,26 @@ ruff check .
 
 If the tests pass and ruff reports no errors, you are ready to contribute.
 
-## Running Checks
+### Quick commands
+
+A `Makefile` is provided for common tasks:
 
 ```bash
-# Tests
+make check      # lint + typecheck + test (all three)
+make test       # pytest
+make test-cov   # pytest with 80% coverage threshold
+make lint       # ruff check
+make typecheck  # mypy
+make format     # ruff format + auto-fix
+make docs       # mkdocs serve (localhost:8000)
+```
+
+Or run them directly:
+
+```bash
 pytest tests/ -v
-
-# Linting
 ruff check .
-
-# Formatting
 ruff format --check .
-
-# Type checking
 mypy parsimony/
 ```
 
@@ -144,7 +151,32 @@ Look for issues labeled `good first issue` in the issue tracker.
 - Reference any related issues
 - Use conventional commit messages: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
 
-## Repository Structure
+## Project Structure
+
+```
+parsimony/
+├── connector.py          # @connector, @enumerator, @loader decorators + Connectors collection
+├── result.py             # Result, SemanticTableResult, OutputConfig, Provenance, Column
+├── errors.py             # ConnectorError hierarchy (Unauthorized, RateLimit, Provider, Empty, Parse)
+├── catalog/              # Catalog service, SeriesEntry/SeriesMatch models, indexing
+├── connectors/           # Built-in data source modules (fred, sdmx, fmp, etc.)
+│   └── __init__.py       # ProviderSpec registry + build_connectors_from_env factory
+├── stores/               # CatalogStore (abstract), SQLiteCatalogStore, DataStore
+├── embeddings/           # LiteLLMEmbeddingProvider for catalog vector search
+├── transport/            # HttpClient with credential redaction, JSON helpers
+└── mcp/                  # Model Context Protocol server (connector-to-tool bridge)
+```
+
+### Key architectural decisions
+
+- **Three decorator primitives**: `@connector` (fetch/search), `@enumerator` (catalog population), `@loader` (data persistence). All produce the same `Connector` type.
+- **Frozen dataclasses + immutable collections** -- `Connector` is `@dataclass(frozen=True)`, `Connectors` is immutable.
+- **Pydantic models at boundaries** -- every connector validates params via a Pydantic `BaseModel`.
+- **Lazy loading** in `__init__.py` via `__getattr__` -- keeps `import parsimony` fast.
+- **Provider registry** -- `PROVIDERS` tuple in `connectors/__init__.py` drives `build_connectors_from_env`.
+- **Dependency injection** -- keyword-only args after `*` in connector functions, bound via `bind_deps()`.
+
+## Repository Note
 
 This repository is a read-only mirror of `packages/parsimony/` in our development monorepo. Your PR will be reviewed here and synced upstream.
 

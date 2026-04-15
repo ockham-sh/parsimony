@@ -4,6 +4,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 [![Python](https://img.shields.io/pypi/pyversions/parsimony)](https://pypi.org/project/parsimony/)
 [![CI](https://github.com/ockham-sh/parsimony/actions/workflows/test.yml/badge.svg)](https://github.com/ockham-sh/parsimony/actions)
+[![Docs](https://img.shields.io/badge/docs-parsimony.dev-blue)](https://docs.parsimony.dev)
 
 Typed, composable data connectors with searchable catalogs for Python.
 
@@ -13,17 +14,19 @@ Typed, composable data connectors with searchable catalogs for Python.
 - **Typed parameters** -- every connector validates input through a Pydantic model with a JSON Schema for agent integration.
 - **Provenance on every result** -- every `Result` carries its source, params, and fetch timestamp alongside the DataFrame.
 - **Searchable catalog** -- index entities from any source into a `Catalog` with optional vector embeddings for semantic search.
+- **MCP integration** -- expose connectors as [Model Context Protocol](https://modelcontextprotocol.io/) tools for AI agents.
 
 ## Install
 
 ```bash
 pip install parsimony           # core + FRED
 pip install parsimony[sdmx]     # + ECB, Eurostat, IMF, World Bank (no API key needed)
+pip install parsimony[all]      # everything
 ```
 
 ## 30-Second Example (No API Key)
 
-Fetch daily USD/EUR exchange rates from the ECB:
+Fetch daily USD/EUR exchange rates from the ECB (requires `parsimony[sdmx]`):
 
 ```python
 import asyncio
@@ -99,13 +102,21 @@ print(result.provenance)
 
 **Composable routing** -- combine connectors from multiple sources with `+`, bind dependencies once with `bind_deps()`, attach callbacks with `with_callback()`.
 
+**MCP server** -- run `python -m parsimony.mcp` to expose all configured connectors as MCP tools for Claude, GPT, and other AI agents.
+
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) -- zero to fetching data in five minutes
-- [User Guide](docs/user-guide.md) -- custom connectors, catalog, data stores
-- [Architecture](docs/architecture.md) -- design principles and internals
-- [API Reference](docs/api-reference.md) -- full class and function reference
-- [Connector Implementation Guide](docs/connector-implementation-guide.md) -- building new connectors
+Full docs at [docs.parsimony.dev](https://docs.parsimony.dev):
+
+- [Quickstart](https://docs.parsimony.dev/quickstart/) -- zero to fetching data in five minutes
+- [User Guide](https://docs.parsimony.dev/user-guide/) -- custom connectors, catalog, data stores
+- [Architecture](https://docs.parsimony.dev/architecture/) -- design principles and internals
+- [API Reference](https://docs.parsimony.dev/api-reference/) -- full class and function reference
+- [Connector Guide](https://docs.parsimony.dev/connector-implementation-guide/) -- building new connectors
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions, and the connector checklist.
 
 ## License
 

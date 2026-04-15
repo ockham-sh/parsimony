@@ -47,5 +47,8 @@ Thumbs.db
 # Council reviews
 .council/
 
+# Internal planning documents
+PLAN-*.md
+
 # mkdocs build output
 site/

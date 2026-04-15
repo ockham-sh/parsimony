@@ -25,20 +25,29 @@ def _error_content(message: str) -> list[TextContent]:
     return [TextContent(type="text", text=message)]
 
 
+_MCP_PREAMBLE = (
+    "Use tools for search and discovery. "
+    "For bulk data fetching, write and execute Python code using "
+    "the connectors listed below — do not just suggest code.\n"
+)
+
+
 def create_server(connectors: Connectors) -> Server:
     """Build an MCP Server wired to the given connectors.
 
-    The server's ``instructions`` are dynamically generated from the connectors'
-    ``to_llm()`` descriptions, giving the connected agent full context on what
-    tools are available and how to use them.
+    Receives the **full** connector collection.  Tool-tagged connectors are
+    registered as native MCP tools (via ``list_tools``); all other connectors
+    are described in the server's ``instructions`` (via ``to_llm()``) so the
+    agent knows what is available through ``client["name"](...)``.
     """
-    instructions = connectors.to_llm(context="mcp")
+    instructions = _MCP_PREAMBLE + connectors.to_llm()
+    tool_connectors = connectors.filter(tags=[Connectors.TOOL_TAG])
     server = Server("parsimony-data", instructions=instructions)
-    tool_map: dict[str, Connector] = {c.name: c for c in connectors}
+    tool_map: dict[str, Connector] = {c.name: c for c in tool_connectors}
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:
-        return [connector_to_tool(c) for c in connectors]
+        return [connector_to_tool(c) for c in tool_connectors]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:

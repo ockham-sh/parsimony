@@ -68,15 +68,22 @@ print(result.provenance)
 
 ## Built-in Data Sources
 
-| Source | Connectors | API Key |
-|--------|-----------|---------|
-| **FRED** (Federal Reserve Economic Data) | `fred_search`, `fred_fetch` | Free ([register](https://fred.stlouisfed.org/docs/api/api_key.html)) |
-| **SDMX** (ECB, Eurostat, IMF, World Bank, BIS) | `sdmx_fetch`, `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys` | None |
-| **FMP** (Financial Modeling Prep) | `fmp_stock_quote`, `fmp_income_statements`, `fmp_balance_sheet_statements`, `fmp_historical_prices`, `fmp_company_profile` | Paid |
-| **SEC Edgar** | `sec_edgar_fetch` | None |
-| **Polymarket** | `polymarket_clob_fetch`, `polymarket_gamma_fetch` | None |
-| **EODHD** | `eodhd_fetch` | Paid |
-| **Financial Reports** | `financial_reports_fetch` | Paid |
+| Source | API Key | Category |
+|--------|---------|----------|
+| **FRED** (Federal Reserve Economic Data) | Free | Macro |
+| **SDMX** (ECB, Eurostat, IMF, World Bank, BIS) | None | Macro |
+| **FMP** (Financial Modeling Prep) | Paid | Equities |
+| **SEC Edgar** | None | Filings |
+| **EODHD** (End of Day Historical Data) | Paid | Multi-asset |
+| **Polymarket** | None | Prediction markets |
+| **CoinGecko** | Free | Crypto |
+| **Finnhub** | Free | News & events |
+| **Tiingo** | Free | Equities |
+| **Alpha Vantage** | Free | Equities |
+| **EIA** (Energy Information Administration) | Free | Energy |
+| **BLS** (Bureau of Labor Statistics) | Free | Employment |
+| **US Treasury** | None | Bonds |
+| **Central Banks** (SNB, RBA, Riksbank, BDE, BOJ, BOC, BDP, BDF, Destatis) | None | Macro |
 
 ## Features
 

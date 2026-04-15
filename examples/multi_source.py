@@ -20,16 +20,15 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony import Connectors
-from parsimony.connectors.fred import FETCH_CONNECTORS as FRED_FETCH
-from parsimony.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX_FETCH
+from parsimony.connectors.fred import CONNECTORS as FRED
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 
 async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Compose: FRED (needs API key) + SDMX (no key required).
-    bundle = FRED_FETCH.bind_deps(api_key=api_key) + SDMX_FETCH
+    bundle = FRED.bind_deps(api_key=api_key) + SDMX
     print(f"Bundle connectors: {bundle.names()}")
     print()
 

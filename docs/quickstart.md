@@ -8,7 +8,7 @@ Get from zero to fetching macroeconomic data in under five minutes -- no API key
 pip install parsimony[sdmx]
 ```
 
-> **Python 3.11 or 3.12** required. The `[sdmx]` extra enables ECB, Eurostat, IMF, and World Bank connectors.
+> **Python 3.11+** required. The `[sdmx]` extra enables ECB, Eurostat, IMF, and World Bank connectors.
 
 ---
 
@@ -70,9 +70,10 @@ result.provenance    # Provenance(source="sdmx", params={...}, fetched_at=...)
 For schema-aware connectors like `sdmx_fetch`, the result is a `SemanticTableResult` with typed column roles:
 
 ```python
-result.key_columns      # [Column(name="series_key", role=KEY, ...)]
+result.columns          # all Column objects with role, dtype, namespace
+result.entity_keys      # DataFrame subset: columns with role == KEY
 result.data_columns     # [Column(name="TIME_PERIOD", ...), Column(name="value", ...)]
-result.title_columns    # [Column(name="title", role=TITLE)]
+result.metadata_columns # [Column(name="...", role=METADATA)]
 ```
 
 ---
@@ -216,16 +217,13 @@ All connectors are async. In scripts, wrap with `asyncio.run()`. In Jupyter, use
 
 ### Dict vs keyword params
 
-Both forms work -- connectors accept keyword arguments or a dict:
+Connectors accept keyword arguments or a typed Pydantic model:
 
 ```python
 # Keyword arguments (recommended)
 await SDMX["sdmx_fetch"](dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A")
 
-# Dict form
-await SDMX["sdmx_fetch"]({"dataset_key": "ECB-EXR", "series_key": "D.USD.EUR.SP00.A"})
-
-# Pydantic model
+# Pydantic model (for programmatic use)
 from parsimony.connectors.sdmx import SdmxFetchParams
 await SDMX["sdmx_fetch"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A"))
 ```

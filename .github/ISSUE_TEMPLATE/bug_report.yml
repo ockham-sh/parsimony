@@ -1,5 +1,5 @@
 name: Bug Report
-description: Report a bug in ockham
+description: Report a bug in parsimony
 labels: ["bug"]
 body:
   - type: textarea
@@ -17,6 +17,8 @@ body:
       description: Which connector is affected?
       options:
         - Core framework
+        - Catalog
+        - MCP server
         - FRED
         - SDMX
         - FMP
@@ -24,7 +26,14 @@ body:
         - SEC Edgar
         - Polymarket
         - EODHD
-        - IBKR
+        - CoinGecko
+        - Finnhub
+        - Tiingo
+        - Alpha Vantage
+        - EIA
+        - BLS
+        - Treasury
+        - Central Banks (SNB, RBA, Riksbank, etc.)
         - Financial Reports
         - Custom connector
     validations:
@@ -48,12 +57,12 @@ body:
     id: python-version
     attributes:
       label: Python version
-      placeholder: "3.11"
+      placeholder: "3.12"
 
   - type: input
-    id: ockham-version
+    id: parsimony-version
     attributes:
-      label: ockham version
+      label: parsimony version
       placeholder: "0.1.0"
 
   - type: input

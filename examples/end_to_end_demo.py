@@ -2,7 +2,7 @@
 
 Run from the repo root::
 
-    poetry run python -m parsimony.examples.end_to_end_demo
+    python examples/end_to_end_demo.py
 
 This script is self-contained (in-memory catalog store, no API keys). It shows:
 

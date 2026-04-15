@@ -40,8 +40,8 @@ pip install parsimony[all]         # Everything
 | **SEC Edgar** | `sec_edgar_fetch` | None |
 | **Polymarket** | `polymarket_clob_fetch`, `polymarket_gamma_fetch` | None |
 | **EODHD** | `eodhd_fetch` | Paid |
-| **IBKR** (Interactive Brokers) | `ibkr_fetch` | Gateway required |
 | **Financial Reports** | `financial_reports_fetch` | Paid |
+| **+ 15 more** | CoinGecko, Finnhub, Tiingo, Alpha Vantage, EIA, BLS, Treasury, central banks | Varies |
 
 ## Core Concepts
 

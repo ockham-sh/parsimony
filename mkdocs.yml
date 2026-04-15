@@ -43,7 +43,7 @@ nav:
       - Quick Start: quickstart.md
       - User Guide: user-guide.md
   - Guides:
-      - Building Connectors: connector-guide.md
+      - Building Connectors: connector-implementation-guide.md
       - Internal Connectors: internal-connectors.md
       - MCP Setup: mcp-setup.md
       - Cookbook: cookbook.md

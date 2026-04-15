@@ -12,8 +12,7 @@ Thank you for your interest in contributing! This guide covers everything from s
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 uv venv && source .venv/bin/activate
-uv pip install -e ".[sdmx,embeddings]"
-uv pip install pytest pytest-asyncio ruff mypy
+uv pip install -e ".[sdmx,embeddings,dev]"
 ```
 
 ### Option 2: pip
@@ -24,8 +23,7 @@ Standard pip works fine if you prefer it:
 git clone https://github.com/<your-username>/parsimony.git
 cd parsimony
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[sdmx,embeddings]"
-pip install pytest pytest-asyncio ruff mypy
+pip install -e ".[sdmx,embeddings,dev]"
 ```
 
 ### Verify your setup
@@ -88,7 +86,7 @@ For detailed patterns, see [docs/connector-implementation-guide.md](docs/connect
 
 ### 2. Wire up the factory (if applicable)
 
-If your connector requires an API key, add it to `build_connectors_from_env()` and `build_fetch_connectors_from_env()` in `parsimony/connectors/__init__.py`. Follow the existing pattern:
+If your connector requires an API key, add it to `build_connectors_from_env()` in `parsimony/connectors/__init__.py`. Add a `ProviderSpec` entry to the `PROVIDERS` registry and export an `ENV_VARS` dict from your module. Follow the existing pattern:
 
 ```python
 my_key = _env.get("MY_API_KEY")
@@ -152,4 +150,4 @@ This repository is a read-only mirror of `packages/parsimony/` in our developmen
 
 ## Code of Conduct
 
-Please read our [Code of Conduct](../../CODE_OF_CONDUCT.md). We are committed to providing a welcoming and inclusive experience for everyone.
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md). We are committed to providing a welcoming and inclusive experience for everyone.

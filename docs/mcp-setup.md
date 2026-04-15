@@ -14,6 +14,8 @@ This adds the `mcp` and `tabulate` dependencies.
 
 Add parsimony to your agent's MCP server configuration.
 
+> **Important:** The `command` must point to the Python interpreter where parsimony is installed. Using bare `python3` will resolve to your system Python, which almost certainly does not have parsimony. Use the full path to your virtualenv's Python (e.g. `/path/to/your/venv/bin/python3`).
+
 ### Claude Code
 
 Add to `~/.claude.json` under `mcpServers`:
@@ -23,7 +25,7 @@ Add to `~/.claude.json` under `mcpServers`:
   "mcpServers": {
     "parsimony": {
       "type": "stdio",
-      "command": "python3",
+      "command": "/path/to/your/venv/bin/python3",
       "args": ["-m", "parsimony.mcp"],
       "env": {
         "FRED_API_KEY": "your-key",
@@ -42,7 +44,7 @@ Add to your MCP configuration file (typically `.cursor/mcp.json` or equivalent):
 {
   "mcpServers": {
     "parsimony": {
-      "command": "python3",
+      "command": "/path/to/your/venv/bin/python3",
       "args": ["-m", "parsimony.mcp"],
       "env": {
         "FRED_API_KEY": "your-key",
@@ -52,6 +54,8 @@ Add to your MCP configuration file (typically `.cursor/mcp.json` or equivalent):
   }
 }
 ```
+
+> **Tip:** To find the correct path, run `which python3` with your virtualenv activated, or use `<project-root>/.venv/bin/python3` if you installed with `uv`.
 
 ### Environment Variables
 

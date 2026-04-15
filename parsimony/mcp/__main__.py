@@ -14,7 +14,7 @@ from parsimony.mcp.server import create_server
 
 
 async def main() -> None:
-    all_connectors = build_connectors_from_env()
+    all_connectors = build_connectors_from_env(lenient=True)
     tool_connectors = all_connectors.filter(tags=["tool"])
     server = create_server(tool_connectors)
     async with mcp.server.stdio.stdio_server() as (read, write):

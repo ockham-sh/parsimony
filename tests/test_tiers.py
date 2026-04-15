@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from parsimony.connector import (
+from parsimony.errors import (
     ConnectorError,
     PaymentRequiredError,
     RateLimitError,
 )
-
 
 # ---------------------------------------------------------------------------
 # Exception hierarchy
@@ -119,8 +118,8 @@ class TestTypedErrorsThroughCallPath:
 
         import httpx
 
-        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.fmp import fmp_company_profile
+        from parsimony.errors import UnauthorizedError
 
         mock_response = httpx.Response(401, request=httpx.Request("GET", "https://example.com"))
         with patch("parsimony.connectors.fmp.HttpClient.request", new_callable=AsyncMock, return_value=mock_response):
@@ -135,8 +134,8 @@ class TestTypedErrorsThroughCallPath:
 
         import httpx
 
-        from parsimony.connector import ProviderError
         from parsimony.connectors.fmp import fmp_company_profile
+        from parsimony.errors import ProviderError
 
         mock_response = httpx.Response(500, request=httpx.Request("GET", "https://example.com"))
         with patch("parsimony.connectors.fmp.HttpClient.request", new_callable=AsyncMock, return_value=mock_response):
@@ -152,8 +151,8 @@ class TestTypedErrorsThroughCallPath:
 
         import httpx
 
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.fmp import fmp_company_profile
+        from parsimony.errors import EmptyDataError
 
         mock_response = httpx.Response(200, json=[], request=httpx.Request("GET", "https://example.com"))
         with patch("parsimony.connectors.fmp.HttpClient.request", new_callable=AsyncMock, return_value=mock_response):
@@ -168,8 +167,8 @@ class TestTypedErrorsThroughCallPath:
 
         import httpx
 
-        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import UnauthorizedError
 
         mock_response = httpx.Response(401, request=httpx.Request("GET", "https://example.com"))
         with patch("parsimony.connectors.eodhd.HttpClient.request", new_callable=AsyncMock, return_value=mock_response):
@@ -180,7 +179,7 @@ class TestTypedErrorsThroughCallPath:
 
     def test_all_errors_catchable_via_connector_error(self) -> None:
         """All typed exceptions are catchable via the base ConnectorError."""
-        from parsimony.connector import (
+        from parsimony.errors import (
             ConnectorError,
             EmptyDataError,
             ParseError,

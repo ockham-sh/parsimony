@@ -295,36 +295,36 @@ class TestEodhdEod:
         assert params.get("to") == "2024-12-31"
 
     async def test_empty_list_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_eod, ticker="INVALID.XX")
 
     async def test_401_raises_unauthorized(self) -> None:
-        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import UnauthorizedError
 
         with _patch_http(_make_response({}, status_code=401)), pytest.raises(UnauthorizedError):
             await _call(eodhd_eod, ticker="AAPL.US")
 
     async def test_402_raises_payment_required(self) -> None:
-        from parsimony.connector import PaymentRequiredError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import PaymentRequiredError
 
         with _patch_http(_make_response({}, status_code=402)), pytest.raises(PaymentRequiredError):
             await _call(eodhd_eod, ticker="AAPL.US")
 
     async def test_500_raises_provider_error(self) -> None:
-        from parsimony.connector import ProviderError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import ProviderError
 
         with _patch_http(_make_response({}, status_code=500)), pytest.raises(ProviderError, match="500"):
             await _call(eodhd_eod, ticker="AAPL.US")
 
     async def test_api_key_not_in_error_message(self) -> None:
-        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import UnauthorizedError
 
         with _patch_http(_make_response({}, status_code=401)), pytest.raises(UnauthorizedError) as exc:
             await _call(eodhd_eod, ticker="AAPL.US")
@@ -347,8 +347,8 @@ class TestEodhdLive:
         assert "change" in result.df.columns
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_live
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_live, ticker="INVALID.XX")
@@ -408,8 +408,8 @@ class TestEodhdDividends:
         assert "value" in result.df.columns
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_dividends
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_dividends, ticker="INVALID.XX")
@@ -459,8 +459,8 @@ class TestEodhdSearch:
         assert "Name" in result.df.columns
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_search
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_search, query="zzz-no-match")
@@ -468,7 +468,7 @@ class TestEodhdSearch:
 
 class TestEodhdExchanges:
     async def test_path_contains_exchanges_list(self) -> None:
-        from parsimony.connectors.eodhd import eodhd_exchanges, EodhdExchangesParams
+        from parsimony.connectors.eodhd import EodhdExchangesParams, eodhd_exchanges
 
         with _patch_http(_make_response([_EXCHANGE_ROW])) as m:
             bound = eodhd_exchanges.bind_deps(api_key=API_KEY)
@@ -476,7 +476,7 @@ class TestEodhdExchanges:
         assert "exchanges-list" in m.call_args.args[1]
 
     async def test_result_has_code_column(self) -> None:
-        from parsimony.connectors.eodhd import eodhd_exchanges, EodhdExchangesParams
+        from parsimony.connectors.eodhd import EodhdExchangesParams, eodhd_exchanges
 
         with _patch_http(_make_response([_EXCHANGE_ROW])):
             bound = eodhd_exchanges.bind_deps(api_key=API_KEY)
@@ -522,8 +522,8 @@ class TestEodhdFundamentals:
         assert result.data == payload
 
     async def test_401_raises_unauthorized(self) -> None:
-        from parsimony.connector import UnauthorizedError
         from parsimony.connectors.eodhd import eodhd_fundamentals
+        from parsimony.errors import UnauthorizedError
 
         with _patch_http(_make_response({}, status_code=401)), pytest.raises(UnauthorizedError):
             await _call(eodhd_fundamentals, ticker="AAPL.US")
@@ -655,8 +655,8 @@ class TestEodhdMacro:
         assert "Value" in result.df.columns
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_macro
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_macro, country="ZZZ", indicator="gdp_current_usd")
@@ -701,8 +701,8 @@ class TestEodhdTechnical:
         assert params.get("period") == 14
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import eodhd_technical
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response([])), pytest.raises(EmptyDataError):
             await _call(eodhd_technical, ticker="INVALID.XX", function="sma")
@@ -753,8 +753,9 @@ class TestEodhdScreener:
         assert "/screener" in m.call_args.args[1]
 
     async def test_filters_serialised_as_json(self) -> None:
-        from parsimony.connectors.eodhd import eodhd_screener
         import json
+
+        from parsimony.connectors.eodhd import eodhd_screener
 
         with _patch_http(_make_response({"data": [_SCREENER_ROW]})) as m:
             await _call(eodhd_screener, filters=[("market_capitalization", ">", "1000000000")])
@@ -772,8 +773,8 @@ class TestEodhdScreener:
         assert "code" in result.df.columns
 
     async def test_empty_raises_empty_data_error(self) -> None:
-        from parsimony.connector import EmptyDataError
         from parsimony.connectors.eodhd import EodhdScreenerParams, eodhd_screener
+        from parsimony.errors import EmptyDataError
 
         with _patch_http(_make_response({"data": []})), pytest.raises(EmptyDataError):
             bound = eodhd_screener.bind_deps(api_key=API_KEY)
@@ -787,8 +788,8 @@ class TestEodhdScreener:
 
 class TestEodhdRateLimit:
     async def test_429_raises_rate_limit_error(self) -> None:
-        from parsimony.connector import RateLimitError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import RateLimitError
 
         resp = _make_response({}, status_code=429)
         resp.headers = {"Retry-After": "30"}
@@ -797,8 +798,8 @@ class TestEodhdRateLimit:
         assert exc.value.retry_after == 30.0
 
     async def test_429_fallback_retry_after(self) -> None:
-        from parsimony.connector import RateLimitError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import RateLimitError
 
         resp = _make_response({}, status_code=429)
         resp.headers = {}
@@ -814,8 +815,8 @@ class TestEodhdRateLimit:
 
 class TestEodhdBodyError:
     async def test_body_error_field_raises_provider_error(self) -> None:
-        from parsimony.connector import ProviderError
         from parsimony.connectors.eodhd import eodhd_eod
+        from parsimony.errors import ProviderError
 
         with _patch_http(_make_response({"error": "Invalid ticker symbol"})):
             with pytest.raises(ProviderError, match="Invalid ticker symbol"):
@@ -828,45 +829,23 @@ class TestEodhdBodyError:
 
 
 class TestExportCollections:
-    def test_fetch_connectors_does_not_include_discovery(self) -> None:
-        from parsimony.connectors.eodhd import (
-            EODHD_DISCOVERY_CONNECTORS,
-            EODHD_FETCH_CONNECTORS,
-            eodhd_news,
-            eodhd_screener,
-            eodhd_search,
-            eodhd_exchanges,
-        )
+    def test_connectors_includes_all(self) -> None:
+        from parsimony.connectors.eodhd import CONNECTORS
 
-        fetch_names = {c.name for c in EODHD_FETCH_CONNECTORS}
-        discovery_names = {c.name for c in EODHD_DISCOVERY_CONNECTORS}
+        names = {c.name for c in CONNECTORS}
 
-        # Discovery connectors must NOT be in fetch
-        assert "eodhd_news" not in fetch_names
-        assert "eodhd_screener" not in fetch_names
-        assert "eodhd_search" not in fetch_names
-        assert "eodhd_exchanges" not in fetch_names
+        # Discovery connectors present
+        assert "eodhd_search" in names
+        assert "eodhd_exchanges" in names
+        assert "eodhd_news" in names
+        assert "eodhd_screener" in names
 
-        # Discovery connectors must be in their collection
-        assert "eodhd_news" in discovery_names
-        assert "eodhd_screener" in discovery_names
-
-    def test_connectors_is_union(self) -> None:
-        from parsimony.connectors.eodhd import (
-            CONNECTORS,
-            EODHD_DISCOVERY_CONNECTORS,
-            EODHD_FETCH_CONNECTORS,
-        )
-
-        all_names = {c.name for c in CONNECTORS}
-        fetch_names = {c.name for c in EODHD_FETCH_CONNECTORS}
-        discovery_names = {c.name for c in EODHD_DISCOVERY_CONNECTORS}
-
-        assert fetch_names.issubset(all_names)
-        assert discovery_names.issubset(all_names)
+        # Fetch connectors present
+        assert "eodhd_eod" in names
+        assert "eodhd_live" in names
+        assert "eodhd_intraday" in names
 
     def test_expected_connector_count(self) -> None:
-        from parsimony.connectors.eodhd import EODHD_FETCH_CONNECTORS, EODHD_DISCOVERY_CONNECTORS
+        from parsimony.connectors.eodhd import CONNECTORS
 
-        assert len(EODHD_FETCH_CONNECTORS) == 13
-        assert len(EODHD_DISCOVERY_CONNECTORS) == 4
+        assert len(CONNECTORS) == 17

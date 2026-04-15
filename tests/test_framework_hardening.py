@@ -6,13 +6,13 @@ to ensure the full pipeline is exercised.
 
 from __future__ import annotations
 
-import pytest
 import httpx
 import pandas as pd
-
+import pytest
 from pydantic import BaseModel
 
-from parsimony.connector import ParseError, RateLimitError, connector
+from parsimony.connector import connector
+from parsimony.errors import ParseError, RateLimitError
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 

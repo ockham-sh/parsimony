@@ -331,9 +331,10 @@ def test_build_table_result_warns_then_raises_on_total_mismatch(caplog) -> None:
             Column(name="absent_b", role=ColumnRole.DATA),
         ]
     )
-    with caplog.at_level("WARNING", logger="parsimony.result"):
-        with pytest.raises(ValueError, match="matched no input columns"):
-            cfg.build_table_result(raw, provenance=Provenance())
+    with caplog.at_level("WARNING", logger="parsimony.result"), pytest.raises(
+        ValueError, match="matched no input columns"
+    ):
+        cfg.build_table_result(raw, provenance=Provenance())
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert warnings
     msg = warnings[0].message

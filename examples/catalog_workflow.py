@@ -23,7 +23,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony import SQLiteCatalogStore, Catalog
+from parsimony import Catalog, SQLiteCatalogStore
 from parsimony.connectors.fred import enumerate_fred_release
 
 

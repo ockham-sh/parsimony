@@ -269,7 +269,11 @@ async def test_file_persistence(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_vec_available(store: SQLiteCatalogStore) -> None:
     """sqlite-vec extension should be loaded when installed."""
-    assert store.has_vec, "sqlite-vec not loaded — install with: pip install sqlite-vec"
+    try:
+        import sqlite_vec  # noqa: F401
+    except ImportError:
+        pytest.skip("sqlite-vec not installed")
+    assert store.has_vec, "sqlite-vec installed but not loaded"
 
 
 @pytest.mark.asyncio

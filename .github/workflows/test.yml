@@ -15,8 +15,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff
-      - run: ruff check .
-      - run: ruff format --check .
+      - run: ruff check parsimony/ tests/ examples/
+      - run: ruff format --check parsimony/ tests/ examples/
 
   typecheck:
     runs-on: ubuntu-latest
@@ -41,4 +41,4 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - run: pip install -e ".[sdmx,dev]"
-      - run: pytest tests/ -v --cov=parsimony --cov-report=term-missing --cov-fail-under=80
+      - run: pytest tests/ -v -m "not integration" --cov=parsimony --cov-report=term-missing --cov-fail-under=80

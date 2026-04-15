@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony import Connectors
 from parsimony.connectors.fmp import CONNECTORS as FMP
 from parsimony.connectors.fmp_screener import CONNECTORS as FMP_SCREENER
 

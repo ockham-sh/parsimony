@@ -14,6 +14,7 @@ import asyncio
 import builtins
 import json
 import logging
+import re
 import sqlite3
 import struct
 from pathlib import Path
@@ -28,6 +29,21 @@ from parsimony.catalog.models import (
 from parsimony.stores.catalog_store import CatalogStore
 
 logger = logging.getLogger(__name__)
+
+# FTS5 special syntax characters that must be stripped for plain-text search.
+_FTS5_SPECIAL = re.compile(r'["\*\(\)\-\+\^:]')
+
+
+def sanitize_fts5_query(query: str) -> str:
+    """Strip FTS5 special characters from a raw query string.
+
+    Removes characters that FTS5 would interpret as syntax (quotes,
+    wildcards, parentheses, operators).  The cleaned tokens are then
+    quoted and OR-joined for safe matching.
+    """
+    cleaned = _FTS5_SPECIAL.sub(" ", query)
+    return " ".join(cleaned.split()) or ""
+
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS series_catalog (
@@ -304,8 +320,12 @@ class SQLiteCatalogStore(CatalogStore):
         if namespaces is not None and len(namespaces) == 0:
             return []
 
-        tokens = query.strip().split()
-        fts_query = " AND ".join(f'"{tok}"*' for tok in tokens if tok)
+        safe_query = sanitize_fts5_query(query)
+        if not safe_query:
+            return []
+
+        tokens = safe_query.split()
+        fts_query = " OR ".join(f'"{tok}"*' for tok in tokens if tok)
         if not fts_query:
             return []
 

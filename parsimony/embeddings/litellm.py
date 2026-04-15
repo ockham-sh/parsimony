@@ -37,9 +37,14 @@ def _validate_embedding_response(
         )
     embeddings: list[list[float]] = []
     for i, item in enumerate(items):
-        if "embedding" not in item:
+        # litellm returns Pydantic Embedding objects; support both attribute
+        # and dict-style access so we work with dicts and model instances.
+        if hasattr(item, "embedding"):
+            vec = item.embedding
+        elif isinstance(item, dict) and "embedding" in item:
+            vec = item["embedding"]
+        else:
             raise ValueError(f"Embedding item {i} missing 'embedding' key")
-        vec = item["embedding"]
         if len(vec) != expected_dim:
             raise ValueError(
                 f"Embedding item {i} has dimension {len(vec)}, expected {expected_dim}"

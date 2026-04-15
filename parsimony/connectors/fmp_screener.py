@@ -49,73 +49,148 @@ _SEMAPHORE_LIMIT = 10  # max concurrent FMP requests per screener call
 # Column-source classification (determines which enrichment endpoints to hit)
 # ---------------------------------------------------------------------------
 
-_SCREENER_NATIVE_COLS: frozenset[str] = frozenset({
-    "symbol", "companyName", "sector", "industry", "country",
-    "exchange", "exchangeShortName", "marketCap", "price", "beta",
-    "volume", "lastAnnualDividend", "isEtf", "isFund", "isActivelyTrading",
-})
+_SCREENER_NATIVE_COLS: frozenset[str] = frozenset(
+    {
+        "symbol",
+        "companyName",
+        "sector",
+        "industry",
+        "country",
+        "exchange",
+        "exchangeShortName",
+        "marketCap",
+        "price",
+        "beta",
+        "volume",
+        "lastAnnualDividend",
+        "isEtf",
+        "isFund",
+        "isActivelyTrading",
+    }
+)
 
-_KEY_METRICS_TTM_COLS: frozenset[str] = frozenset({
-    # Enterprise value
-    "enterpriseValueTTM", "evToSalesTTM", "evToEBITDATTM",
-    "evToOperatingCashFlowTTM", "evToFreeCashFlowTTM",
-    # Profitability
-    "returnOnEquityTTM", "returnOnAssetsTTM", "returnOnInvestedCapitalTTM",
-    "returnOnCapitalEmployedTTM", "operatingReturnOnAssetsTTM",
-    "returnOnTangibleAssetsTTM", "earningsYieldTTM", "freeCashFlowYieldTTM",
-    "incomeQualityTTM",
-    # Leverage / liquidity
-    "netDebtToEBITDATTM", "currentRatioTTM", "taxBurdenTTM",
-    "interestBurdenTTM", "workingCapitalTTM", "investedCapitalTTM",
-    # Capital efficiency
-    "capexToOperatingCashFlowTTM", "capexToDepreciationTTM", "capexToRevenueTTM",
-    "stockBasedCompensationToRevenueTTM", "salesGeneralAndAdministrativeToRevenueTTM",
-    "researchAndDevelopementToRevenueTTM", "intangiblesToTotalAssetsTTM",
-    # Working capital days
-    "daysOfSalesOutstandingTTM", "daysOfPayablesOutstandingTTM",
-    "daysOfInventoryOutstandingTTM", "operatingCycleTTM", "cashConversionCycleTTM",
-    # Balance sheet ($)
-    "averageReceivablesTTM", "averagePayablesTTM", "averageInventoryTTM",
-    "freeCashFlowToEquityTTM", "freeCashFlowToFirmTTM",
-    "tangibleAssetValueTTM", "netCurrentAssetValueTTM",
-    # Graham
-    "grahamNumberTTM", "grahamNetNetTTM",
-})
+_KEY_METRICS_TTM_COLS: frozenset[str] = frozenset(
+    {
+        # Enterprise value
+        "enterpriseValueTTM",
+        "evToSalesTTM",
+        "evToEBITDATTM",
+        "evToOperatingCashFlowTTM",
+        "evToFreeCashFlowTTM",
+        # Profitability
+        "returnOnEquityTTM",
+        "returnOnAssetsTTM",
+        "returnOnInvestedCapitalTTM",
+        "returnOnCapitalEmployedTTM",
+        "operatingReturnOnAssetsTTM",
+        "returnOnTangibleAssetsTTM",
+        "earningsYieldTTM",
+        "freeCashFlowYieldTTM",
+        "incomeQualityTTM",
+        # Leverage / liquidity
+        "netDebtToEBITDATTM",
+        "currentRatioTTM",
+        "taxBurdenTTM",
+        "interestBurdenTTM",
+        "workingCapitalTTM",
+        "investedCapitalTTM",
+        # Capital efficiency
+        "capexToOperatingCashFlowTTM",
+        "capexToDepreciationTTM",
+        "capexToRevenueTTM",
+        "stockBasedCompensationToRevenueTTM",
+        "salesGeneralAndAdministrativeToRevenueTTM",
+        "researchAndDevelopementToRevenueTTM",
+        "intangiblesToTotalAssetsTTM",
+        # Working capital days
+        "daysOfSalesOutstandingTTM",
+        "daysOfPayablesOutstandingTTM",
+        "daysOfInventoryOutstandingTTM",
+        "operatingCycleTTM",
+        "cashConversionCycleTTM",
+        # Balance sheet ($)
+        "averageReceivablesTTM",
+        "averagePayablesTTM",
+        "averageInventoryTTM",
+        "freeCashFlowToEquityTTM",
+        "freeCashFlowToFirmTTM",
+        "tangibleAssetValueTTM",
+        "netCurrentAssetValueTTM",
+        # Graham
+        "grahamNumberTTM",
+        "grahamNetNetTTM",
+    }
+)
 
-_FINANCIAL_RATIOS_TTM_COLS: frozenset[str] = frozenset({
-    # Margins
-    "grossProfitMarginTTM", "ebitdaMarginTTM", "ebitMarginTTM",
-    "operatingProfitMarginTTM", "netProfitMarginTTM", "pretaxProfitMarginTTM",
-    "bottomLineProfitMarginTTM", "continuousOperationsProfitMarginTTM",
-    # Valuation multiples
-    "priceToEarningsRatioTTM", "priceToBookRatioTTM", "priceToSalesRatioTTM",
-    "priceToFreeCashFlowRatioTTM", "priceToOperatingCashFlowRatioTTM",
-    "priceToEarningsGrowthRatioTTM", "forwardPriceToEarningsGrowthRatioTTM",
-    "priceToFairValueTTM", "enterpriseValueMultipleTTM",
-    # Efficiency
-    "receivablesTurnoverTTM", "payablesTurnoverTTM", "inventoryTurnoverTTM",
-    "assetTurnoverTTM", "fixedAssetTurnoverTTM", "workingCapitalTurnoverRatioTTM",
-    # Liquidity
-    "quickRatioTTM", "cashRatioTTM", "solvencyRatioTTM",
-    # Debt
-    "debtToEquityRatioTTM", "debtToAssetsRatioTTM", "debtToCapitalRatioTTM",
-    "longTermDebtToCapitalRatioTTM", "financialLeverageRatioTTM", "debtToMarketCapTTM",
-    # Coverage
-    "interestCoverageRatioTTM", "debtServiceCoverageRatioTTM",
-    "operatingCashFlowRatioTTM", "operatingCashFlowSalesRatioTTM",
-    "operatingCashFlowCoverageRatioTTM", "freeCashFlowOperatingCashFlowRatioTTM",
-    "capitalExpenditureCoverageRatioTTM", "shortTermOperatingCashFlowCoverageRatioTTM",
-    "dividendPaidAndCapexCoverageRatioTTM",
-    # Dividends
-    "dividendPayoutRatioTTM", "dividendYieldTTM",
-    # Per-share ($)
-    "revenuePerShareTTM", "netIncomePerShareTTM", "bookValuePerShareTTM",
-    "tangibleBookValuePerShareTTM", "freeCashFlowPerShareTTM",
-    "operatingCashFlowPerShareTTM", "cashPerShareTTM", "shareholdersEquityPerShareTTM",
-    "capexPerShareTTM", "interestDebtPerShareTTM",
-    # Other
-    "effectiveTaxRateTTM", "netIncomePerEBTTTM", "ebtPerEbitTTM",
-})
+_FINANCIAL_RATIOS_TTM_COLS: frozenset[str] = frozenset(
+    {
+        # Margins
+        "grossProfitMarginTTM",
+        "ebitdaMarginTTM",
+        "ebitMarginTTM",
+        "operatingProfitMarginTTM",
+        "netProfitMarginTTM",
+        "pretaxProfitMarginTTM",
+        "bottomLineProfitMarginTTM",
+        "continuousOperationsProfitMarginTTM",
+        # Valuation multiples
+        "priceToEarningsRatioTTM",
+        "priceToBookRatioTTM",
+        "priceToSalesRatioTTM",
+        "priceToFreeCashFlowRatioTTM",
+        "priceToOperatingCashFlowRatioTTM",
+        "priceToEarningsGrowthRatioTTM",
+        "forwardPriceToEarningsGrowthRatioTTM",
+        "priceToFairValueTTM",
+        "enterpriseValueMultipleTTM",
+        # Efficiency
+        "receivablesTurnoverTTM",
+        "payablesTurnoverTTM",
+        "inventoryTurnoverTTM",
+        "assetTurnoverTTM",
+        "fixedAssetTurnoverTTM",
+        "workingCapitalTurnoverRatioTTM",
+        # Liquidity
+        "quickRatioTTM",
+        "cashRatioTTM",
+        "solvencyRatioTTM",
+        # Debt
+        "debtToEquityRatioTTM",
+        "debtToAssetsRatioTTM",
+        "debtToCapitalRatioTTM",
+        "longTermDebtToCapitalRatioTTM",
+        "financialLeverageRatioTTM",
+        "debtToMarketCapTTM",
+        # Coverage
+        "interestCoverageRatioTTM",
+        "debtServiceCoverageRatioTTM",
+        "operatingCashFlowRatioTTM",
+        "operatingCashFlowSalesRatioTTM",
+        "operatingCashFlowCoverageRatioTTM",
+        "freeCashFlowOperatingCashFlowRatioTTM",
+        "capitalExpenditureCoverageRatioTTM",
+        "shortTermOperatingCashFlowCoverageRatioTTM",
+        "dividendPaidAndCapexCoverageRatioTTM",
+        # Dividends
+        "dividendPayoutRatioTTM",
+        "dividendYieldTTM",
+        # Per-share ($)
+        "revenuePerShareTTM",
+        "netIncomePerShareTTM",
+        "bookValuePerShareTTM",
+        "tangibleBookValuePerShareTTM",
+        "freeCashFlowPerShareTTM",
+        "operatingCashFlowPerShareTTM",
+        "cashPerShareTTM",
+        "shareholdersEquityPerShareTTM",
+        "capexPerShareTTM",
+        "interestDebtPerShareTTM",
+        # Other
+        "effectiveTaxRateTTM",
+        "netIncomePerEBTTTM",
+        "ebtPerEbitTTM",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +202,9 @@ class FmpScreenerParams(BaseModel):
     # Pushdown filters (applied at FMP screener API level)
     sector: str | None = Field(default=None, description="Filter by sector (e.g. 'Technology')")
     industry: str | None = Field(default=None, description="Filter by industry (e.g. 'Consumer Electronics')")
-    country: str | None = Field(default=None, description="Country code (e.g. 'US', 'DE'). Single value; for multiple use where_clause.")
+    country: str | None = Field(
+        default=None, description="Country code (e.g. 'US', 'DE'). Single value; for multiple use where_clause."
+    )
     exchange: str | None = Field(default=None, description="Exchange code (e.g. 'NASDAQ', 'NYSE'). Single value.")
     market_cap_min: float | None = Field(default=None, description="Minimum market cap")
     market_cap_max: float | None = Field(default=None, description="Maximum market cap")
@@ -146,18 +223,29 @@ class FmpScreenerParams(BaseModel):
     # Enrichment / residual filtering
     where_clause: str | None = Field(
         default=None,
-        description="pandas df.query() filter applied after enrichment. Can reference screener, key-metrics-ttm, or ratios-ttm columns.",
+        description=(
+            "pandas df.query() filter applied after enrichment."
+            " Can reference screener, key-metrics-ttm, or ratios-ttm columns."
+        ),
     )
-    sort_by: str | None = Field(default=None, description="Column to sort by (e.g. 'marketCap', 'freeCashFlowYieldTTM')")
+    sort_by: str | None = Field(
+        default=None, description="Column to sort by (e.g. 'marketCap', 'freeCashFlowYieldTTM')"
+    )
     sort_order: str = Field(default="desc", description="Sort direction: 'asc' or 'desc'")
     limit: int = Field(default=100, description="Max rows to return (default 100)")
     prefilter_limit: int | None = Field(
         default=None,
-        description="Max symbols from screener before enrichment. Default max(limit, 500). Increase to 1000-2000 for broad global searches sorted by TTM columns.",
+        description=(
+            "Max symbols from screener before enrichment. Default max(limit, 500)."
+            " Increase to 1000-2000 for broad global searches sorted by TTM columns."
+        ),
     )
     fields: list[str] | None = Field(
         default=None,
-        description="Output columns to include. symbol always returned. Omit for all columns. When specified, skips unnecessary enrichment calls.",
+        description=(
+            "Output columns to include. symbol always returned."
+            " Omit for all columns. When specified, skips unnecessary enrichment calls."
+        ),
     )
 
 
@@ -223,7 +311,7 @@ async def _fetch_json(
                     status_code=exc.response.status_code,
                     message=f"FMP API error {exc.response.status_code} on endpoint '{path}'",
                 ) from exc
-    return response.json()
+    return response.json()  # type: ignore[no-any-return]
 
 
 def _col_refs_source(
@@ -237,9 +325,7 @@ def _col_refs_source(
         return True
     if where_clause and any(col in where_clause for col in col_set):
         return True
-    if fields and any(f in col_set for f in fields):
-        return True
-    return False
+    return bool(fields and any(f in col_set for f in fields))
 
 
 def _extract_unknown_cols(error_msg: str, allowed: list[str]) -> list[str]:
@@ -281,7 +367,15 @@ async def fmp_screener(
     api_key: str,
     base_url: str = "https://financialmodelingprep.com/stable",
 ) -> Result:
-    """Screen the global equity universe by financial metrics. Use pushdown params (sector, country, market_cap_min, etc.) to narrow the universe, then where_clause for residual conditions on enriched TTM metrics (ratios, yields, multiples, margins). Enriches with key-metrics-ttm and financial-ratios-ttm. Use fields to restrict output and skip unnecessary enrichment. Use sort_by + limit for top-N. Increase prefilter_limit (1000-2000) for broad global searches sorted by TTM columns."""
+    """Screen the global equity universe by financial metrics.
+
+    Use pushdown params (sector, country, market_cap_min, etc.) to narrow the
+    universe, then where_clause for residual conditions on enriched TTM metrics
+    (ratios, yields, multiples, margins). Enriches with key-metrics-ttm and
+    financial-ratios-ttm. Use fields to restrict output and skip unnecessary
+    enrichment. Use sort_by + limit for top-N. Increase prefilter_limit
+    (1000-2000) for broad global searches sorted by TTM columns.
+    """
     http = _make_http(api_key, base_url)
 
     where_clause = params.where_clause
@@ -293,7 +387,9 @@ async def fmp_screener(
 
     # Build pushdown params for FMP screener API
     screener_params: dict[str, Any] = {"limit": screener_limit}
-    params_dict = params.model_dump(exclude={"where_clause", "sort_by", "sort_order", "limit", "prefilter_limit", "fields"})
+    params_dict = params.model_dump(
+        exclude={"where_clause", "sort_by", "sort_order", "limit", "prefilter_limit", "fields"}
+    )
     for internal_key, upstream_key in _PUSHDOWN_MAP.items():
         value = params_dict.get(internal_key)
         if value is not None:
@@ -303,7 +399,9 @@ async def fmp_screener(
     screener_raw = await _fetch_json(http, "company-screener", screener_params)
     screener_df = pd.json_normalize(screener_raw) if screener_raw else pd.DataFrame()
     if screener_df.empty:
-        raise EmptyDataError(provider="fmp", message="FMP company-screener returned no rows for the selected filter set.")
+        raise EmptyDataError(
+            provider="fmp", message="FMP company-screener returned no rows for the selected filter set."
+        )
     if "symbol" not in screener_df.columns:
         raise ParseError(provider="fmp", message="Unexpected company-screener payload: missing 'symbol' column.")
 
@@ -312,18 +410,14 @@ async def fmp_screener(
         raise EmptyDataError(provider="fmp", message="FMP company-screener did not return any valid symbols.")
 
     # Step 2: Determine which enrichment endpoints are needed
-    need_metrics = (
-        fields is None
-        or _col_refs_source(sort_by, where_clause, fields, _KEY_METRICS_TTM_COLS)
-    )
-    need_ratios = (
-        fields is None
-        or _col_refs_source(sort_by, where_clause, fields, _FINANCIAL_RATIOS_TTM_COLS)
-    )
+    need_metrics = fields is None or _col_refs_source(sort_by, where_clause, fields, _KEY_METRICS_TTM_COLS)
+    need_ratios = fields is None or _col_refs_source(sort_by, where_clause, fields, _FINANCIAL_RATIOS_TTM_COLS)
 
     logger.info(
         "fmp_screener: enrichment plan — %d symbols, metrics=%s, ratios=%s",
-        len(symbols), need_metrics, need_ratios,
+        len(symbols),
+        need_metrics,
+        need_ratios,
     )
 
     # Step 3: Concurrent enrichment with semaphore-limited fan-out and shared connection pool
@@ -352,9 +446,7 @@ async def fmp_screener(
             ]
             gather_coros.append(asyncio.gather(*metrics_tasks, return_exceptions=True))
         if need_ratios:
-            ratios_tasks = [
-                asyncio.create_task(_fetch_enrich(ratios_semaphore, "ratios-ttm", s)) for s in symbols
-            ]
+            ratios_tasks = [asyncio.create_task(_fetch_enrich(ratios_semaphore, "ratios-ttm", s)) for s in symbols]
             gather_coros.append(asyncio.gather(*ratios_tasks, return_exceptions=True))
 
         return await asyncio.gather(*gather_coros) if gather_coros else []
@@ -379,7 +471,9 @@ async def fmp_screener(
                     raise err
             logger.warning(
                 "fmp_screener: %d/%d enrichment requests failed (first: %s)",
-                len(errors), len(results), errors[0],
+                len(errors),
+                len(results),
+                errors[0],
             )
         return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame(columns=["symbol"])
 
@@ -413,14 +507,8 @@ async def fmp_screener(
             df = df.query(where_clause)
         except Exception as exc:
             unknown = _extract_unknown_cols(str(exc), allowed_cols)
-            suggestions = {
-                c: difflib.get_close_matches(c, allowed_cols, n=3, cutoff=0.6)
-                for c in unknown
-            }
-            sug_str = "; ".join(
-                f"'{c}' → {v}" if v else f"'{c}' → no close match"
-                for c, v in suggestions.items()
-            )
+            suggestions = {c: difflib.get_close_matches(c, allowed_cols, n=3, cutoff=0.6) for c in unknown}
+            sug_str = "; ".join(f"'{c}' → {v}" if v else f"'{c}' → no close match" for c, v in suggestions.items())
             raise ValueError(
                 f"Invalid where_clause: {exc}\n"
                 + (f"Unknown column(s): {unknown}. Suggestions: {sug_str}\n" if unknown else "")
@@ -447,8 +535,7 @@ async def fmp_screener(
         missing = [f for f in keep if f not in df.columns]
         if missing:
             raise ValueError(
-                f"Unknown field(s) in 'fields': {missing}. "
-                f"Available columns ({len(allowed_cols)}): {allowed_cols}"
+                f"Unknown field(s) in 'fields': {missing}. Available columns ({len(allowed_cols)}): {allowed_cols}"
             )
         df = df[keep]
 

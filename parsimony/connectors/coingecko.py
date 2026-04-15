@@ -24,8 +24,6 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-_PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
-
 from parsimony.connector import (
     Connectors,
     Namespace,
@@ -48,6 +46,8 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+_PATH_SAFE_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 ENV_VARS: dict[str, str] = {"api_key": "COINGECKO_API_KEY"}
 
@@ -223,7 +223,11 @@ async def coingecko_search(params: CoinGeckoSearchParams, *, api_key: str) -> Re
         if c.get("id")
     ]
     df = pd.DataFrame(rows)
-    return _SEARCH_OUTPUT.build_table_result(df, provenance=Provenance(source="coingecko_search", params={"query": params.query}), params={"query": params.query})
+    return _SEARCH_OUTPUT.build_table_result(
+        df,
+        provenance=Provenance(source="coingecko_search", params={"query": params.query}),
+        params={"query": params.query},
+    )
 
 
 class CoinGeckoTrendingParams(BaseModel):
@@ -258,7 +262,9 @@ async def coingecko_trending(params: CoinGeckoTrendingParams, *, api_key: str) -
         if c.get("item", {}).get("id")
     ]
     df = pd.DataFrame(rows)
-    return _TRENDING_OUTPUT.build_table_result(df, provenance=Provenance(source="coingecko_trending", params={}), params={})
+    return _TRENDING_OUTPUT.build_table_result(
+        df, provenance=Provenance(source="coingecko_trending", params={}), params={}
+    )
 
 
 class CoinGeckoTopMoversParams(BaseModel):
@@ -295,21 +301,25 @@ async def coingecko_top_gainers_losers(params: CoinGeckoTopMoversParams, *, api_
 
     rows: list[dict] = []
     for coin in data.get("top_gainers", []):
-        rows.append({
-            "id": coin.get("id", ""),
-            "name": coin.get("name", ""),
-            "symbol": coin.get("symbol", ""),
-            "direction": "gainer",
-            "usd_price_percent_change": coin.get("usd_price_percent_change"),
-        })
+        rows.append(
+            {
+                "id": coin.get("id", ""),
+                "name": coin.get("name", ""),
+                "symbol": coin.get("symbol", ""),
+                "direction": "gainer",
+                "usd_price_percent_change": coin.get("usd_price_percent_change"),
+            }
+        )
     for coin in data.get("top_losers", []):
-        rows.append({
-            "id": coin.get("id", ""),
-            "name": coin.get("name", ""),
-            "symbol": coin.get("symbol", ""),
-            "direction": "loser",
-            "usd_price_percent_change": coin.get("usd_price_percent_change"),
-        })
+        rows.append(
+            {
+                "id": coin.get("id", ""),
+                "name": coin.get("name", ""),
+                "symbol": coin.get("symbol", ""),
+                "direction": "loser",
+                "usd_price_percent_change": coin.get("usd_price_percent_change"),
+            }
+        )
 
     if not rows:
         raise EmptyDataError(provider="coingecko", message="No top gainers/losers returned")
@@ -317,7 +327,10 @@ async def coingecko_top_gainers_losers(params: CoinGeckoTopMoversParams, *, api_
     df = pd.DataFrame(rows)
     return _GAINERS_LOSERS_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="coingecko_top_gainers_losers", params={"vs_currency": params.vs_currency, "duration": params.duration}),
+        provenance=Provenance(
+            source="coingecko_top_gainers_losers",
+            params={"vs_currency": params.vs_currency, "duration": params.duration},
+        ),
         params={"vs_currency": params.vs_currency, "duration": params.duration},
     )
 
@@ -423,7 +436,9 @@ async def coingecko_price(params: CoinGeckoPriceParams, *, api_key: str) -> Resu
     df = pd.DataFrame(rows)
     return _PRICE_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="coingecko_price", params={"ids": params.ids, "vs_currencies": params.vs_currencies}),
+        provenance=Provenance(
+            source="coingecko_price", params={"ids": params.ids, "vs_currencies": params.vs_currencies}
+        ),
         params={"ids": params.ids},
     )
 
@@ -437,8 +452,12 @@ class CoinGeckoMarketsParams(BaseModel):
         description="Comma-separated coin IDs to filter, e.g. 'bitcoin,ethereum'. Omit for top N by market cap.",
     )
     order: Literal[
-        "market_cap_desc", "market_cap_asc", "volume_desc", "volume_asc",
-        "id_desc", "id_asc",
+        "market_cap_desc",
+        "market_cap_asc",
+        "volume_desc",
+        "volume_asc",
+        "id_desc",
+        "id_asc",
     ] = Field(default="market_cap_desc", description="Sort order")
     per_page: int = Field(default=100, ge=1, le=250, description="Results per page (max 250)")
     page: int = Field(default=1, ge=1, description="Page number")
@@ -471,7 +490,9 @@ async def coingecko_markets(params: CoinGeckoMarketsParams, *, api_key: str) -> 
     df = pd.DataFrame(data)
     return _MARKETS_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="coingecko_markets", params={"vs_currency": params.vs_currency, "page": params.page}),
+        provenance=Provenance(
+            source="coingecko_markets", params={"vs_currency": params.vs_currency, "page": params.page}
+        ),
         params={"vs_currency": params.vs_currency},
     )
 
@@ -511,9 +532,7 @@ async def coingecko_coin_detail(params: CoinGeckoCoinDetailParams, *, api_key: s
         "community_data": str(params.community_data).lower(),
         "developer_data": str(params.developer_data).lower(),
     }
-    data = await _cg_fetch(
-        http, path=f"/coins/{params.coin_id}", params=req, op_name="coingecko_coin_detail"
-    )
+    data = await _cg_fetch(http, path=f"/coins/{params.coin_id}", params=req, op_name="coingecko_coin_detail")
 
     if not isinstance(data, dict) or "id" not in data:
         raise ParseError(
@@ -582,7 +601,10 @@ async def coingecko_market_chart(params: CoinGeckoMarketChartParams, *, api_key:
     df = _build_market_chart_df(data, op_name="coingecko_market_chart")
     return _MARKET_CHART_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="coingecko_market_chart", params={"coin_id": params.coin_id, "vs_currency": params.vs_currency, "days": params.days}),
+        provenance=Provenance(
+            source="coingecko_market_chart",
+            params={"coin_id": params.coin_id, "vs_currency": params.vs_currency, "days": params.days},
+        ),
         params={"coin_id": params.coin_id},
     )
 
@@ -644,7 +666,12 @@ async def coingecko_market_chart_range(params: CoinGeckoMarketChartRangeParams, 
         df,
         provenance=Provenance(
             source="coingecko_market_chart_range",
-            params={"coin_id": params.coin_id, "vs_currency": params.vs_currency, "from": params.from_date, "to": params.to_date},
+            params={
+                "coin_id": params.coin_id,
+                "vs_currency": params.vs_currency,
+                "from": params.from_date,
+                "to": params.to_date,
+            },
         ),
         params={"coin_id": params.coin_id},
     )
@@ -711,7 +738,10 @@ async def coingecko_ohlc(params: CoinGeckoOhlcParams, *, api_key: str) -> Result
     df["timestamp"] = df["timestamp"] / 1000
     return _OHLC_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="coingecko_ohlc", params={"coin_id": params.coin_id, "vs_currency": params.vs_currency, "days": params.days}),
+        provenance=Provenance(
+            source="coingecko_ohlc",
+            params={"coin_id": params.coin_id, "vs_currency": params.vs_currency, "days": params.days},
+        ),
         params={"coin_id": params.coin_id},
     )
 
@@ -744,7 +774,10 @@ class CoinGeckoTokenPriceOnchainParams(BaseModel):
     )
     contract_addresses: str = Field(
         ...,
-        description="Comma-separated token contract addresses (checksum or lowercase), e.g. '0xdac17f958d2ee523a2206206994597c13d831ec7'",
+        description=(
+            "Comma-separated token contract addresses (checksum or lowercase),"
+            " e.g. '0xdac17f958d2ee523a2206206994597c13d831ec7'"
+        ),
     )
     vs_currencies: str = Field(
         default="usd",
@@ -775,13 +808,15 @@ async def coingecko_token_price_onchain(params: CoinGeckoTokenPriceOnchainParams
     """
     http = _make_http(api_key)
     path = f"/onchain/simple/networks/{params.network}/token_price/{params.contract_addresses}"
-    data = await _cg_fetch(http, path=path, params={"vs_currencies": params.vs_currencies}, op_name="coingecko_token_price_onchain")
+    data = await _cg_fetch(
+        http, path=path, params={"vs_currencies": params.vs_currencies}, op_name="coingecko_token_price_onchain"
+    )
 
     token_prices: dict = {}
     try:
         token_prices = data.get("data", {}).get("attributes", {}).get("token_prices", {})
-    except AttributeError:
-        raise ParseError(provider="coingecko", message="Unexpected on-chain price response structure")
+    except AttributeError as exc:
+        raise ParseError(provider="coingecko", message="Unexpected on-chain price response structure") from exc
 
     if not token_prices:
         raise EmptyDataError(

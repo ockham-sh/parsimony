@@ -30,9 +30,7 @@ def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, 
     only DATA columns; KEY is consumed for identity.
     """
     if not isinstance(table.data, (pd.DataFrame, pd.Series)):
-        raise TypeError(
-            f"load expected tabular data, got {type(table.data).__name__}"
-        )
+        raise TypeError(f"load expected tabular data, got {type(table.data).__name__}")
     df = table.df
     if df.empty:
         return []
@@ -46,26 +44,17 @@ def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, 
         )
     key_col = key_cols[0]
     if not key_col.namespace:
-        raise ValueError(
-            "KEY column must declare namespace=... on the schema for DataStore.load_result"
-        )
+        raise ValueError("KEY column must declare namespace=... on the schema for DataStore.load_result")
     key_name = key_col.name
     if key_name not in df.columns:
-        raise ValueError(
-            f"SemanticTableResult missing KEY column {key_name!r}. Available: {list(df.columns)}"
-        )
+        raise ValueError(f"SemanticTableResult missing KEY column {key_name!r}. Available: {list(df.columns)}")
 
     data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
     if not data_names:
-        raise ValueError(
-            "SemanticTableResult must declare at least one DATA column in output_schema "
-            "for data loading"
-        )
+        raise ValueError("SemanticTableResult must declare at least one DATA column in output_schema for data loading")
     for dn in data_names:
         if dn not in df.columns:
-            raise ValueError(
-                f"SemanticTableResult missing DATA column {dn!r}. Available: {list(df.columns)}"
-            )
+            raise ValueError(f"SemanticTableResult missing DATA column {dn!r}. Available: {list(df.columns)}")
 
     ns = normalize_code(key_col.namespace)
     raw_codes = df[key_name].dropna().unique()

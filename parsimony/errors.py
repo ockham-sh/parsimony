@@ -16,6 +16,16 @@ Hierarchy::
 
 from __future__ import annotations
 
+__all__ = [
+    "ConnectorError",
+    "EmptyDataError",
+    "ParseError",
+    "PaymentRequiredError",
+    "ProviderError",
+    "RateLimitError",
+    "UnauthorizedError",
+]
+
 from typing import Any
 
 

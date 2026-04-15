@@ -46,8 +46,7 @@ class BdfFetchParams(BaseModel):
     key: Annotated[str, Namespace("bdf")] = Field(
         ...,
         description=(
-            "SDMX series key, optionally prefixed with dataset "
-            "(e.g. EXR.M.USD.EUR.SP00.E or ICP.M.FR.N.000000.4.ANR)"
+            "SDMX series key, optionally prefixed with dataset (e.g. EXR.M.USD.EUR.SP00.E or ICP.M.FR.N.000000.4.ANR)"
         ),
     )
     start_period: str | None = Field(default=None, description="Start period (e.g. 2020-01)")
@@ -145,12 +144,14 @@ async def bdf_fetch(params: BdfFetchParams, *, api_key: str) -> Result:
                 value = None
             series_key = str(row[key_col]) if key_col else params.key
             title = str(row.get(title_col, series_key)) if title_col else series_key
-            result_rows.append({
-                "key": series_key,
-                "title": title,
-                "date": str(row[date_col]),
-                "value": value,
-            })
+            result_rows.append(
+                {
+                    "key": series_key,
+                    "title": title,
+                    "date": str(row[date_col]),
+                    "value": value,
+                }
+            )
 
     if not result_rows:
         raise ParseError(provider="bdf", message=f"Could not parse observations for key: {params.key}")
@@ -200,10 +201,12 @@ async def enumerate_bdf(params: BdfEnumerateParams, *, api_key: str) -> pd.DataF
         for _, row in df.iterrows():
             did = str(row.get(id_col, "")).strip()
             if did:
-                rows.append({
-                    "dataset_id": did,
-                    "title": str(row.get(title_col, did)).strip() if title_col else did,
-                })
+                rows.append(
+                    {
+                        "dataset_id": did,
+                        "title": str(row.get(title_col, did)).strip() if title_col else did,
+                    }
+                )
 
     return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["dataset_id", "title"])
 

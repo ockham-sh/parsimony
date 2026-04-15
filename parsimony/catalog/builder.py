@@ -83,8 +83,8 @@ async def build_catalog(db_path: Path, *, env: dict[str, str] | None = None) -> 
     for name, conn, params in enumerators:
         try:
             print(f"  {name}...", end="", flush=True)  # noqa: T201
-            result = await conn(params)
-            entries = _entries_from_table_result(result)
+            result = await conn(params)  # type: ignore[arg-type]
+            entries = _entries_from_table_result(result)  # type: ignore[arg-type]
             if entries:
                 idx_result = await catalog.ingest(entries, embed=False, force=True)
                 print(f" {idx_result.indexed:,} entries")  # noqa: T201

@@ -35,9 +35,7 @@ ENV_VARS: dict[str, str] = {"api_key": "BLS_API_KEY"}
 class BlsFetchParams(BaseModel):
     """Parameters for fetching a BLS time series."""
 
-    series_id: Annotated[str, Namespace("bls")] = Field(
-        ..., description="BLS series ID (e.g. LNS14000000)"
-    )
+    series_id: Annotated[str, Namespace("bls")] = Field(..., description="BLS series ID (e.g. LNS14000000)")
     start_year: str = Field(..., description="Start year (YYYY)")
     end_year: str = Field(..., description="End year (YYYY)")
 
@@ -169,22 +167,20 @@ async def bls_fetch(params: BlsFetchParams, *, api_key: str = "") -> Result:
                 value = None
 
         period = obs["period"]
-        rows.append({
-            "series_id": params.series_id,
-            "title": title,
-            "frequency": _infer_frequency(period),
-            "date": _period_to_date(obs["year"], period),
-            "value": value,
-        })
+        rows.append(
+            {
+                "series_id": params.series_id,
+                "title": title,
+                "frequency": _infer_frequency(period),
+                "date": _period_to_date(obs["year"], period),
+                "value": value,
+            }
+        )
 
     if not rows:
         raise EmptyDataError(provider="bls", message=f"No observations for series: {params.series_id}")
 
-    metadata_list = [
-        {"name": k, "value": str(v)}
-        for k, v in catalog.items()
-        if v and k != "series_title"
-    ]
+    metadata_list = [{"name": k, "value": str(v)} for k, v in catalog.items() if v and k != "series_title"]
 
     return Result.from_dataframe(
         pd.DataFrame(rows),
@@ -221,10 +217,12 @@ async def enumerate_bls(params: BlsEnumerateParams, *, api_key: str = "") -> pd.
         surveys: list[dict[str, str]] = []
         if isinstance(surveys_data, dict) and "Results" in surveys_data:
             for s in surveys_data["Results"].get("survey", []):
-                surveys.append({
-                    "code": s.get("survey_abbreviation", ""),
-                    "name": s.get("survey_name", ""),
-                })
+                surveys.append(
+                    {
+                        "code": s.get("survey_abbreviation", ""),
+                        "name": s.get("survey_name", ""),
+                    }
+                )
 
         rows: list[dict[str, str]] = []
         for survey in surveys:
@@ -242,18 +240,18 @@ async def enumerate_bls(params: BlsEnumerateParams, *, api_key: str = "") -> pd.
                     sid = s.get("seriesID", "")
                     if not sid:
                         continue
-                    rows.append({
-                        "series_id": sid,
-                        "title": s.get("seriesTitle") or s.get("title") or sid,
-                        "survey": survey["name"],
-                        "frequency": "Monthly",
-                    })
+                    rows.append(
+                        {
+                            "series_id": sid,
+                            "title": s.get("seriesTitle") or s.get("title") or sid,
+                            "survey": survey["name"],
+                            "frequency": "Monthly",
+                        }
+                    )
             except (httpx.HTTPError, KeyError):
                 continue
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["series_id", "title", "survey", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["series_id", "title", "survey", "frequency"])
 
 
 # ---------------------------------------------------------------------------

@@ -26,7 +26,6 @@ _BASE_URL = "https://api.fiscaldata.treasury.gov/services/api/fiscal_service"
 _METADATA_URL = "https://api.fiscaldata.treasury.gov/services/dtg/metadata/"
 
 
-
 # ---------------------------------------------------------------------------
 # Parameter models
 # ---------------------------------------------------------------------------
@@ -175,32 +174,34 @@ async def enumerate_treasury(params: TreasuryEnumerateParams) -> pd.DataFrame:
         if not apis:
             endpoint = ds.get("endpoint_txt", "")
             if endpoint.startswith(prefix):
-                endpoint = endpoint[len(prefix):]
-            rows.append({
-                "endpoint": endpoint or ds.get("dataset_id", ""),
-                "title": ds.get("table_name", ds.get("dataset_name", "")),
-                "category": ds.get("publisher", ""),
-                "frequency": ds.get("update_frequency", ""),
-            })
+                endpoint = endpoint[len(prefix) :]
+            rows.append(
+                {
+                    "endpoint": endpoint or ds.get("dataset_id", ""),
+                    "title": ds.get("table_name", ds.get("dataset_name", "")),
+                    "category": ds.get("publisher", ""),
+                    "frequency": ds.get("update_frequency", ""),
+                }
+            )
         else:
             for api in apis:
                 endpoint = api.get("endpoint_txt") or ""
                 if endpoint.startswith(prefix):
-                    endpoint = endpoint[len(prefix):]
+                    endpoint = endpoint[len(prefix) :]
                 if not endpoint:
                     endpoint = api.get("api_id", "")
                 if not endpoint:
                     continue
-                rows.append({
-                    "endpoint": endpoint,
-                    "title": api.get("table_name") or ds.get("dataset_name", ""),
-                    "category": ds.get("publisher", ""),
-                    "frequency": api.get("update_frequency") or ds.get("update_frequency", ""),
-                })
+                rows.append(
+                    {
+                        "endpoint": endpoint,
+                        "title": api.get("table_name") or ds.get("dataset_name", ""),
+                        "category": ds.get("publisher", ""),
+                        "frequency": api.get("update_frequency") or ds.get("update_frequency", ""),
+                    }
+                )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["endpoint", "title", "category", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["endpoint", "title", "category", "frequency"])
 
 
 # ---------------------------------------------------------------------------

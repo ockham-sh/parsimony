@@ -110,8 +110,13 @@ async def _with_retry(coro_factory: Any, api_key: str) -> Any:
                         quota_exhausted=True,
                     ) from exc
                 if attempt < _MAX_BURST_RETRIES:
-                    wait = max(retry_after, 1.0) * (2 ** attempt)
-                    logger.info("FR API burst limit hit, retrying in %.1fs (attempt %d/%d)", wait, attempt + 1, _MAX_BURST_RETRIES)
+                    wait = max(retry_after, 1.0) * (2**attempt)
+                    logger.info(
+                        "FR API burst limit hit, retrying in %.1fs (attempt %d/%d)",
+                        wait,
+                        attempt + 1,
+                        _MAX_BURST_RETRIES,
+                    )
                     await asyncio.sleep(wait)
                 else:
                     raise RateLimitError(
@@ -148,11 +153,7 @@ def _to_dataframe(resp: Any) -> pd.DataFrame:
             continue
         first = sample.iloc[0]
         if isinstance(first, (list, tuple, dict)):
-            df[col] = df[col].apply(
-                lambda x: json.dumps(x, default=str)
-                if isinstance(x, (list, tuple, dict))
-                else x
-            )
+            df[col] = df[col].apply(lambda x: json.dumps(x, default=str) if isinstance(x, (list, tuple, dict)) else x)
     return df
 
 
@@ -296,9 +297,7 @@ class FrCompaniesSearchParams(BaseModel):
     )
     page: int | None = Field(default=None, ge=1, description="Page number")
     page_size: int | None = Field(default=None, ge=1, le=100, description="Results per page")
-    view: Literal["full"] | None = Field(
-        default=None, description="Set to 'full' for detailed company info"
-    )
+    view: Literal["full"] | None = Field(default=None, description="Set to 'full' for detailed company info")
 
 
 class FrCompanyRetrieveParams(BaseModel):
@@ -317,39 +316,23 @@ class FrFilingsSearchParams(BaseModel):
         default=None, description="Comma-separated ISO Alpha-2 country codes (e.g. 'US,GB,DE')"
     )
     type: str | None = Field(default=None, description="Single filing type code (e.g. '10-K')")
-    types: str | None = Field(
-        default=None, description="Comma-separated filing type codes (e.g. '10-K,10-Q')"
-    )
+    types: str | None = Field(default=None, description="Comma-separated filing type codes (e.g. '10-K,10-Q')")
     category: int | None = Field(default=None, description="Single filing category ID")
-    categories: str | None = Field(
-        default=None, description="Comma-separated filing category IDs"
-    )
+    categories: str | None = Field(default=None, description="Comma-separated filing category IDs")
     language: str | None = Field(default=None, description="Single ISO 639-1 language code")
-    languages: str | None = Field(
-        default=None, description="Comma-separated ISO 639-1 language codes"
-    )
+    languages: str | None = Field(default=None, description="Comma-separated ISO 639-1 language codes")
     fiscal_year: int | None = Field(default=None, description="Fiscal year (e.g. 2024)")
     fiscal_period: Literal["FY", "Q1", "Q2", "Q3", "Q4", "H1", "H2"] | None = Field(
         default=None, description="Fiscal period (only for 10-K, 10-K-ESEF, IR, ER types)"
     )
-    period_ending_date: str | None = Field(
-        default=None, description="Exact period ending date (YYYY-MM-DD)"
-    )
-    period_ending_date_from: str | None = Field(
-        default=None, description="Period ending date range start (YYYY-MM-DD)"
-    )
-    period_ending_date_to: str | None = Field(
-        default=None, description="Period ending date range end (YYYY-MM-DD)"
-    )
+    period_ending_date: str | None = Field(default=None, description="Exact period ending date (YYYY-MM-DD)")
+    period_ending_date_from: str | None = Field(default=None, description="Period ending date range start (YYYY-MM-DD)")
+    period_ending_date_to: str | None = Field(default=None, description="Period ending date range end (YYYY-MM-DD)")
     release_datetime_from: str | None = Field(
         default=None, description="Release date range start (YYYY-MM-DDTHH:MM:SSZ)"
     )
-    release_datetime_to: str | None = Field(
-        default=None, description="Release date range end (YYYY-MM-DDTHH:MM:SSZ)"
-    )
-    extensions: str | None = Field(
-        default=None, description="Comma-separated file extensions (e.g. 'PDF,XBRL')"
-    )
+    release_datetime_to: str | None = Field(default=None, description="Release date range end (YYYY-MM-DDTHH:MM:SSZ)")
+    extensions: str | None = Field(default=None, description="Comma-separated file extensions (e.g. 'PDF,XBRL')")
     source: int | None = Field(default=None, description="Single source ID")
     sources: str | None = Field(default=None, description="Comma-separated source IDs")
     ordering: str | None = Field(
@@ -358,9 +341,7 @@ class FrFilingsSearchParams(BaseModel):
     )
     page: int | None = Field(default=None, ge=1, description="Page number")
     page_size: int | None = Field(default=None, ge=1, le=100, description="Results per page")
-    view: Literal["full"] | None = Field(
-        default=None, description="Set to 'full' for detailed filing info"
-    )
+    view: Literal["full"] | None = Field(default=None, description="Set to 'full' for detailed filing info")
 
 
 class FrFilingRetrieveParams(BaseModel):
@@ -427,12 +408,8 @@ class FrReferenceDataParams(BaseModel):
             "Use filing_types/filing_categories to discover valid filter values for fr_filings_search."
         ),
     )
-    search: str | None = Field(
-        default=None, description="Search query (filing_types only)"
-    )
-    category: int | None = Field(
-        default=None, description="Filter by category ID (filing_types only)"
-    )
+    search: str | None = Field(default=None, description="Search query (filing_types only)")
+    category: int | None = Field(default=None, description="Filter by category ID (filing_types only)")
     page: int | None = Field(default=None, ge=1, description="Page number")
     page_size: int | None = Field(default=None, ge=1, le=100, description="Results per page")
 
@@ -530,13 +507,11 @@ async def fr_filing_markdown(params: FrFilingMarkdownParams, *, api_key: str) ->
     Use fr_filing_retrieve(id=id) first to check if markdown_url is available.
     """
     text = await _with_retry(lambda c: c.filings.markdown_retrieve(id=params.id), api_key)
-    content = (
-        text
-        if isinstance(text, str)
-        else (text.decode() if isinstance(text, bytes) else str(text or ""))
-    )
+    content = text if isinstance(text, str) else (text.decode() if isinstance(text, bytes) else str(text or ""))
     if not content.strip():
-        raise EmptyDataError(provider="financial_reports", message=f"No markdown content available for filing {params.id}")
+        raise EmptyDataError(
+            provider="financial_reports", message=f"No markdown content available for filing {params.id}"
+        )
     return Result(
         data=content,
         provenance=Provenance(source="financial_reports", params=params.model_dump()),
@@ -569,12 +544,12 @@ async def fr_next_annual_report(params: FrNextAnnualReportParams, *, api_key: st
     and is_overdue flag. Higher confidence means the company has a consistent
     historical release pattern. Use fr_companies_search to find company IDs.
     """
-    resp = await _with_retry(
-        lambda c: c.companies.next_annual_report_retrieve(id=params.id), api_key
-    )
+    resp = await _with_retry(lambda c: c.companies.next_annual_report_retrieve(id=params.id), api_key)
     df = _to_dataframe(resp)
     if df.empty:
-        raise EmptyDataError(provider="financial_reports", message=f"No annual report prediction available for company {params.id}")
+        raise EmptyDataError(
+            provider="financial_reports", message=f"No annual report prediction available for company {params.id}"
+        )
     return Result.from_dataframe(
         df,
         Provenance(source="financial_reports", params=params.model_dump()),
@@ -713,15 +688,17 @@ async def fr_reference_data(params: FrReferenceDataParams, *, api_key: str) -> R
 # Exports
 # ---------------------------------------------------------------------------
 
-CONNECTORS = Connectors([
-    fr_companies_search,
-    fr_company_retrieve,
-    fr_filings_search,
-    fr_filing_retrieve,
-    fr_filing_markdown,
-    fr_filing_history,
-    fr_next_annual_report,
-    fr_isic_browse,
-    fr_isin_lookup,
-    fr_reference_data,
-])
+CONNECTORS = Connectors(
+    [
+        fr_companies_search,
+        fr_company_retrieve,
+        fr_filings_search,
+        fr_filing_retrieve,
+        fr_filing_markdown,
+        fr_filing_history,
+        fr_next_annual_report,
+        fr_isic_browse,
+        fr_isin_lookup,
+        fr_reference_data,
+    ]
+)

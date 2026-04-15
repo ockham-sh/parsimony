@@ -6,6 +6,7 @@ Requires EIA_API_KEY.
 
 from __future__ import annotations
 
+import contextlib
 from typing import Annotated, Any
 
 import pandas as pd
@@ -35,12 +36,8 @@ ENV_VARS: dict[str, str] = {"api_key": "EIA_API_KEY"}
 class EiaFetchParams(BaseModel):
     """Parameters for fetching EIA energy data."""
 
-    route: Annotated[str, Namespace("eia")] = Field(
-        ..., description="API route (e.g. petroleum/pri/spt)"
-    )
-    frequency: str | None = Field(
-        default=None, description="Data frequency: monthly, weekly, daily, annual"
-    )
+    route: Annotated[str, Namespace("eia")] = Field(..., description="API route (e.g. petroleum/pri/spt)")
+    frequency: str | None = Field(default=None, description="Data frequency: monthly, weekly, daily, annual")
     start: str | None = Field(default=None, description="Start date (YYYY-MM or YYYY)")
     end: str | None = Field(default=None, description="End date (YYYY-MM or YYYY)")
 
@@ -124,10 +121,8 @@ async def eia_fetch(params: EiaFetchParams, *, api_key: str) -> Result:
     for col in df.columns:
         if col in ("period", "series-description", "seriesDescription"):
             continue
-        try:
+        with contextlib.suppress(ValueError, TypeError):
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        except (ValueError, TypeError):
-            pass
 
     df["route"] = params.route
     df["title"] = description
@@ -154,16 +149,16 @@ async def enumerate_eia(params: EiaEnumerateParams, *, api_key: str) -> pd.DataF
     routes = body.get("response", {}).get("routes", [])
     rows: list[dict[str, str]] = []
     for route in routes:
-        rows.append({
-            "route": route.get("id", ""),
-            "title": route.get("name", route.get("id", "")),
-            "category": "EIA",
-            "frequency": route.get("frequency", ""),
-        })
+        rows.append(
+            {
+                "route": route.get("id", ""),
+                "title": route.get("name", route.get("id", "")),
+                "category": "EIA",
+                "frequency": route.get("frequency", ""),
+            }
+        )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["route", "title", "category", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["route", "title", "category", "frequency"])
 
 
 # ---------------------------------------------------------------------------

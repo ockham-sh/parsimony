@@ -120,7 +120,7 @@ def _bind_required_deps(
     deps = _resolve_env_deps(connectors, env_vars, env)
     if deps is None:
         # Find which env var is missing for the error message
-        for dep_name, env_var in env_vars.items():
+        for _dep_name, env_var in env_vars.items():
             if not env.get(env_var, ""):
                 raise ValueError(f"{env_var} is not configured")
         raise ValueError("Required provider dependency missing")  # unreachable

@@ -126,7 +126,7 @@ async def _http_get(url: str) -> str:
         async with AsyncSession() as s:
             resp = await s.get(url, impersonate="chrome")
             resp.raise_for_status()
-            return resp.text
+            return str(resp.text)
     except ImportError:
         pass
 
@@ -168,10 +168,7 @@ async def _resolve_csv_url(table_id: str) -> str:
             return f"{_BASE_URL}{path}"
 
     available = sorted(stem_to_path.keys())[:20]
-    raise ValueError(
-        f"RBA table '{table_id}' not found. "
-        f"Available tables include: {', '.join(available)}..."
-    )
+    raise ValueError(f"RBA table '{table_id}' not found. Available tables include: {', '.join(available)}...")
 
 
 # ---------------------------------------------------------------------------
@@ -230,16 +227,20 @@ def _parse_rba_csv(text: str, table_id: str) -> pd.DataFrame:
                 value = float(val_str) if val_str else None
             except (ValueError, TypeError):
                 value = None
-            all_rows.append({
-                "table_id": table_id,
-                "title": col_name,
-                "date": date,
-                "value": value,
-                "series_key": series_id_row.get(str(col_idx), col_name),
-            })
+            all_rows.append(
+                {
+                    "table_id": table_id,
+                    "title": col_name,
+                    "date": date,
+                    "value": value,
+                    "series_key": series_id_row.get(str(col_idx), col_name),
+                }
+            )
 
-    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(
-        columns=["table_id", "title", "date", "value", "series_key"]
+    return (
+        pd.DataFrame(all_rows)
+        if all_rows
+        else pd.DataFrame(columns=["table_id", "title", "date", "value", "series_key"])
     )
 
 
@@ -258,17 +259,17 @@ def _parse_csv_metadata(text: str, csv_url: str) -> list[dict[str, str]]:
     if reader.empty or len(reader) < 8:
         return []
 
-    title_row = description_row = frequency_row = units_row = series_id_row_idx = None
+    title_row = frequency_row = series_id_row_idx = None
     for i in range(min(10, len(reader))):
         first_val = str(reader.iloc[i, 0]).strip() if pd.notna(reader.iloc[i, 0]) else ""
         if first_val == "Title":
             title_row = i
         elif first_val == "Description":
-            description_row = i
+            pass
         elif first_val == "Frequency":
             frequency_row = i
         elif first_val == "Units":
-            units_row = i
+            pass
         elif first_val == "Series ID":
             series_id_row_idx = i
 
@@ -284,14 +285,20 @@ def _parse_csv_metadata(text: str, csv_url: str) -> list[dict[str, str]]:
         if not sid or sid == "nan":
             continue
         title = str(reader.iloc[title_row, col]).strip() if pd.notna(reader.iloc[title_row, col]) else sid
-        frequency = str(reader.iloc[frequency_row, col]).strip() if frequency_row is not None and pd.notna(reader.iloc[frequency_row, col]) else ""
+        frequency = (
+            str(reader.iloc[frequency_row, col]).strip()
+            if frequency_row is not None and pd.notna(reader.iloc[frequency_row, col])
+            else ""
+        )
 
-        rows.append({
-            "series_id": sid,
-            "title": title,
-            "category": category,
-            "frequency": frequency,
-        })
+        rows.append(
+            {
+                "series_id": sid,
+                "title": title,
+                "category": category,
+                "frequency": frequency,
+            }
+        )
 
     return rows
 
@@ -318,7 +325,8 @@ async def rba_fetch(params: RbaFetchParams) -> Result:
     return Result.from_dataframe(
         df,
         Provenance(
-            source="rba", params={"table_id": params.table_id},
+            source="rba",
+            params={"table_id": params.table_id},
             properties={"source_url": _TABLES_URL},
         ),
     )
@@ -352,9 +360,7 @@ async def enumerate_rba(params: RbaEnumerateParams) -> pd.DataFrame:
             pass
         await asyncio.sleep(_REQUEST_DELAY)
 
-    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(
-        columns=["series_id", "title", "category", "frequency"]
-    )
+    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(columns=["series_id", "title", "category", "frequency"])
 
 
 # ---------------------------------------------------------------------------

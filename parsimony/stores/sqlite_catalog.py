@@ -163,9 +163,7 @@ class SQLiteCatalogStore(CatalogStore):
             # Try loading sqlite-vec for vector search
             self._has_vec = _try_load_sqlite_vec(conn)
             if self._has_vec:
-                conn.executescript(
-                    _VEC_SCHEMA.format(dim=self._embedding_dim)
-                )
+                conn.executescript(_VEC_SCHEMA.format(dim=self._embedding_dim))
 
             self._conn = conn
             self._db_lock = asyncio.Lock()
@@ -251,7 +249,7 @@ class SQLiteCatalogStore(CatalogStore):
             ).fetchone()
             return _row_to_entry(row) if row else None
 
-        return await self._run(_get)
+        return await self._run(_get)  # type: ignore[no-any-return]
 
     async def exists(self, keys: builtins.list[tuple[str, str]]) -> set[tuple[str, str]]:
         if not keys:
@@ -267,7 +265,7 @@ class SQLiteCatalogStore(CatalogStore):
             ).fetchall()
             return {(r["namespace"], r["code"]) for r in rows}
 
-        return await self._run(_exists)
+        return await self._run(_exists)  # type: ignore[no-any-return]
 
     async def delete(self, namespace: str, code: str) -> None:
         ns, c = catalog_key(namespace, code)
@@ -315,15 +313,11 @@ class SQLiteCatalogStore(CatalogStore):
         if namespaces is not None:
             ns_filter = {normalize_code(n) for n in namespaces}
 
-        use_hybrid = (
-            query_embedding is not None
-            and self._has_vec
-        )
+        use_hybrid = query_embedding is not None and self._has_vec
 
         if use_hybrid:
-            return await self._search_hybrid(
-                fts_query, query_embedding, limit, ns_filter
-            )
+            assert query_embedding is not None
+            return await self._search_hybrid(fts_query, query_embedding, limit, ns_filter)
         return await self._search_fts(fts_query, limit, ns_filter)
 
     async def _search_fts(
@@ -367,7 +361,7 @@ class SQLiteCatalogStore(CatalogStore):
                 results.append(series_match_from_entry(entry, similarity=similarity))
             return results
 
-        return await self._run(_search)
+        return await self._run(_search)  # type: ignore[no-any-return]
 
     async def _search_hybrid(
         self,
@@ -471,16 +465,14 @@ class SQLiteCatalogStore(CatalogStore):
 
             return results
 
-        return await self._run(_search)
+        return await self._run(_search)  # type: ignore[no-any-return]
 
     async def list_namespaces(self) -> builtins.list[str]:
         def _list_ns(conn: sqlite3.Connection) -> builtins.list[str]:
-            rows = conn.execute(
-                "SELECT DISTINCT namespace FROM series_catalog ORDER BY namespace"
-            ).fetchall()
+            rows = conn.execute("SELECT DISTINCT namespace FROM series_catalog ORDER BY namespace").fetchall()
             return [r["namespace"] for r in rows]
 
-        return await self._run(_list_ns)
+        return await self._run(_list_ns)  # type: ignore[no-any-return]
 
     async def list(
         self,
@@ -519,7 +511,7 @@ class SQLiteCatalogStore(CatalogStore):
             ).fetchall()
             return ([_row_to_entry(r) for r in rows], total)
 
-        return await self._run(_list)
+        return await self._run(_list)  # type: ignore[no-any-return]
 
     async def merge_from_file(self, remote_path: str) -> None:
         """ATTACH a remote SQLite catalog and merge its rows via the upsert path.
@@ -527,6 +519,7 @@ class SQLiteCatalogStore(CatalogStore):
         Reads entries from the remote database and upserts them through the
         normal code path so FTS triggers and vec0 sync are handled correctly.
         """
+
         def _merge(conn: sqlite3.Connection) -> builtins.list[SeriesEntry]:
             conn.execute(f'ATTACH DATABASE "{remote_path}" AS remote')
             try:

@@ -38,12 +38,8 @@ _BASE_URL = "https://bpstat.bportugal.pt/data/v1"
 class BdpFetchParams(BaseModel):
     """Parameters for fetching Banco de Portugal time series."""
 
-    domain_id: int = Field(
-        ..., description="Domain ID (use enumerate to discover)"
-    )
-    dataset_id: Annotated[str, Namespace("bdp")] = Field(
-        ..., description="Dataset ID within the domain"
-    )
+    domain_id: int = Field(..., description="Domain ID (use enumerate to discover)")
+    dataset_id: Annotated[str, Namespace("bdp")] = Field(..., description="Dataset ID within the domain")
     series_ids: str | None = Field(
         default=None,
         description="Comma-separated series IDs to filter (optional)",
@@ -161,7 +157,9 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
     raw_values = json_data.get("value", [])
     # JSON-stat value can be a dict with string keys or a list
     if isinstance(raw_values, dict):
-        values_list: list[Any] = [raw_values.get(str(i)) for i in range(max(int(k) for k in raw_values) + 1)] if raw_values else []
+        values_list: list[Any] = (
+            [raw_values.get(str(i)) for i in range(max(int(k) for k in raw_values) + 1)] if raw_values else []
+        )
     else:
         values_list = list(raw_values)
 
@@ -190,12 +188,14 @@ async def bdp_fetch(params: BdpFetchParams) -> Result:
                 value = float(raw) if raw is not None else None
             except (ValueError, TypeError):
                 value = None
-            rows.append({
-                "series_id": sid,
-                "title": label,
-                "date": date_str,
-                "value": value,
-            })
+            rows.append(
+                {
+                    "series_id": sid,
+                    "title": label,
+                    "date": date_str,
+                    "value": value,
+                }
+            )
 
     if not rows:
         raise EmptyDataError(
@@ -240,7 +240,7 @@ async def enumerate_bdp(params: BdpEnumerateParams) -> pd.DataFrame:
         for domain in leaf_domains:
             domain_id = domain.get("id", "")
             domain_name = domain.get("label", domain.get("description", str(domain_id)))
-            num_series = domain.get("num_series", 0)
+            domain.get("num_series", 0)
 
             # Get datasets for this domain
             try:
@@ -265,17 +265,17 @@ async def enumerate_bdp(params: BdpEnumerateParams) -> pd.DataFrame:
                     # Label is at item level, not in extension
                     label = item.get("label", ext.get("label", did))
                     if did:
-                        rows.append({
-                            "dataset_id": did,
-                            "title": str(label).strip(),
-                            "domain": domain_name,
-                        })
+                        rows.append(
+                            {
+                                "dataset_id": did,
+                                "title": str(label).strip(),
+                                "domain": domain_name,
+                            }
+                        )
             except (httpx.HTTPError, Exception) as exc:
                 logger.debug("BdP enumerate failed for domain %s: %s", domain_id, exc)
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["dataset_id", "title", "domain"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["dataset_id", "title", "domain"])
 
 
 # ---------------------------------------------------------------------------

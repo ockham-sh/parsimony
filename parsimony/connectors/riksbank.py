@@ -10,8 +10,6 @@ import logging
 from typing import Annotated, Any
 
 import pandas as pd
-
-logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
 from parsimony.connector import Connectors, Namespace, connector, enumerator
@@ -24,6 +22,8 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://api.riksbank.se/swea/v1"
 
@@ -38,9 +38,7 @@ ENV_VARS: dict[str, str] = {"api_key": "RIKSBANK_API_KEY"}
 class RiksbankFetchParams(BaseModel):
     """Parameters for fetching a Riksbank time series."""
 
-    series_id: Annotated[str, Namespace("riksbank")] = Field(
-        ..., description="Riksbank series ID (e.g. SEKEURPMI)"
-    )
+    series_id: Annotated[str, Namespace("riksbank")] = Field(..., description="Riksbank series ID (e.g. SEKEURPMI)")
     from_date: str | None = Field(default=None, description="Start date (YYYY-MM-DD)")
     to_date: str | None = Field(default=None, description="End date (YYYY-MM-DD)")
 
@@ -164,12 +162,14 @@ async def riksbank_fetch(params: RiksbankFetchParams, *, api_key: str = "") -> R
             value = float(raw_value) if raw_value not in (None, "", "NaN") else None
         except (ValueError, TypeError):
             value = None
-        rows.append({
-            "series_id": params.series_id,
-            "title": title,
-            "date": date,
-            "value": value,
-        })
+        rows.append(
+            {
+                "series_id": params.series_id,
+                "title": title,
+                "date": date,
+                "value": value,
+            }
+        )
 
     if not rows:
         raise EmptyDataError(provider="riksbank", message=f"No observations returned for: {params.series_id}")
@@ -220,16 +220,16 @@ async def enumerate_riksbank(params: RiksbankEnumerateParams, *, api_key: str = 
         sid = s.get("seriesId", s.get("id", ""))
         if not sid:
             continue
-        rows.append({
-            "series_id": sid,
-            "title": s.get("seriesName", s.get("name", sid)),
-            "frequency": _infer_frequency(sid),
-            "group": group_lookup.get(str(s.get("groupId", s.get("group", ""))), ""),
-        })
+        rows.append(
+            {
+                "series_id": sid,
+                "title": s.get("seriesName", s.get("name", sid)),
+                "frequency": _infer_frequency(sid),
+                "group": group_lookup.get(str(s.get("groupId", s.get("group", ""))), ""),
+            }
+        )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["series_id", "title", "frequency", "group"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["series_id", "title", "frequency", "group"])
 
 
 # ---------------------------------------------------------------------------

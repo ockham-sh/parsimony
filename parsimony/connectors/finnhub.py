@@ -203,9 +203,7 @@ async def finnhub_quote(params: FinnhubQuoteParams, *, api_key: str) -> Result:
     finnhub_search to resolve ticker symbols first.
     """
     http = _make_http(api_key)
-    data = await _fh_fetch(
-        http, path="/quote", params={"symbol": params.symbol}, op_name="finnhub_quote"
-    )
+    data = await _fh_fetch(http, path="/quote", params={"symbol": params.symbol}, op_name="finnhub_quote")
 
     if not isinstance(data, dict) or data.get("c") is None:
         raise EmptyDataError(
@@ -282,9 +280,7 @@ async def finnhub_profile(params: FinnhubProfileParams, *, api_key: str) -> Resu
     For time-series fundamentals use finnhub_basic_financials.
     """
     http = _make_http(api_key)
-    data = await _fh_fetch(
-        http, path="/stock/profile2", params={"symbol": params.symbol}, op_name="finnhub_profile"
-    )
+    data = await _fh_fetch(http, path="/stock/profile2", params={"symbol": params.symbol}, op_name="finnhub_profile")
 
     if not isinstance(data, dict) or not data.get("name"):
         raise EmptyDataError(
@@ -313,9 +309,7 @@ async def finnhub_peers(params: FinnhubPeersParams, *, api_key: str) -> Result:
     finnhub_profile on returned symbols for further analysis.
     """
     http = _make_http(api_key)
-    data = await _fh_fetch(
-        http, path="/stock/peers", params={"symbol": params.symbol}, op_name="finnhub_peers"
-    )
+    data = await _fh_fetch(http, path="/stock/peers", params={"symbol": params.symbol}, op_name="finnhub_peers")
 
     if not isinstance(data, list) or not data:
         raise EmptyDataError(
@@ -397,9 +391,7 @@ async def finnhub_earnings(params: FinnhubEarningsParams, *, api_key: str) -> Re
     For forward-looking earnings dates use finnhub_earnings_calendar.
     """
     http = _make_http(api_key)
-    data = await _fh_fetch(
-        http, path="/stock/earnings", params={"symbol": params.symbol}, op_name="finnhub_earnings"
-    )
+    data = await _fh_fetch(http, path="/stock/earnings", params={"symbol": params.symbol}, op_name="finnhub_earnings")
 
     if not isinstance(data, list) or not data:
         raise EmptyDataError(
@@ -567,9 +559,7 @@ async def finnhub_market_news(params: FinnhubMarketNewsParams, *, api_key: str) 
     news). For company-specific articles use finnhub_company_news.
     """
     http = _make_http(api_key)
-    data = await _fh_fetch(
-        http, path="/news", params={"category": params.category}, op_name="finnhub_market_news"
-    )
+    data = await _fh_fetch(http, path="/news", params={"category": params.category}, op_name="finnhub_market_news")
 
     if not isinstance(data, list) or not data:
         raise EmptyDataError(
@@ -812,7 +802,9 @@ async def enumerate_finnhub(params: FinnhubEnumerateParams, *, api_key: str) -> 
     data: list[dict] = resp.json()
 
     if not data:
-        return pd.DataFrame(columns=["symbol", "description", "display_symbol", "type", "currency", "mic", "exchange", "isin"])
+        return pd.DataFrame(
+            columns=["symbol", "description", "display_symbol", "type", "currency", "mic", "exchange", "isin"]
+        )
 
     rows = [
         {

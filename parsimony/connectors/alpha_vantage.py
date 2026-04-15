@@ -183,15 +183,11 @@ _SEARCH_OUTPUT = OutputConfig(
 class AlphaVantageSearchParams(BaseModel):
     """Search Alpha Vantage for stocks, ETFs, and mutual funds by name or ticker."""
 
-    keywords: str = Field(
-        ..., min_length=1, description="Search term, e.g. 'apple' or 'AAPL'"
-    )
+    keywords: str = Field(..., min_length=1, description="Search term, e.g. 'apple' or 'AAPL'")
 
 
 @connector(output=_SEARCH_OUTPUT, tags=["equities", "tool"])
-async def alpha_vantage_search(
-    params: AlphaVantageSearchParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_search(params: AlphaVantageSearchParams, *, api_key: str) -> Result:
     """Search Alpha Vantage for stocks, ETFs, and mutual funds by name or ticker.
 
     Returns symbol (the ticker), name, type (Equity/ETF), region, and currency.
@@ -232,9 +228,7 @@ async def alpha_vantage_search(
     df = pd.DataFrame(rows)
     return _SEARCH_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_search", params={"keywords": params.keywords}
-        ),
+        provenance=Provenance(source="alpha_vantage_search", params={"keywords": params.keywords}),
         params={"keywords": params.keywords},
     )
 
@@ -269,9 +263,7 @@ class AlphaVantageQuoteParams(BaseModel):
 
 
 @connector(output=_QUOTE_OUTPUT, tags=["equities"])
-async def alpha_vantage_quote(
-    params: AlphaVantageQuoteParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_quote(params: AlphaVantageQuoteParams, *, api_key: str) -> Result:
     """Fetch real-time quote for a stock: current price, day high/low/open,
     volume, previous close, and change/change percent.
     Use alpha_vantage_search to resolve ticker symbols first.
@@ -311,9 +303,7 @@ async def alpha_vantage_quote(
     df = pd.DataFrame([row])
     return _QUOTE_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_quote", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_quote", params={"symbol": params.symbol}),
         params={"symbol": params.symbol},
     )
 
@@ -354,9 +344,7 @@ class AlphaVantageDailyParams(BaseModel):
 
 
 @connector(output=_DAILY_OUTPUT, tags=["equities"])
-async def alpha_vantage_daily(
-    params: AlphaVantageDailyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_daily(params: AlphaVantageDailyParams, *, api_key: str) -> Result:
     """Fetch daily OHLCV (open, high, low, close, volume) time series for a stock.
 
     outputsize='compact' returns the last 100 trading days (default).
@@ -427,9 +415,7 @@ class AlphaVantageOverviewParams(BaseModel):
 
 
 @connector(tags=["equities"], result_type="dict")
-async def alpha_vantage_overview(
-    params: AlphaVantageOverviewParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_overview(params: AlphaVantageOverviewParams, *, api_key: str) -> Result:
     """Fetch company fundamentals for a stock: name, exchange, sector, industry,
     market cap, PE ratio, EPS, dividend yield, 52-week high/low, beta, and ~50
     more financial metrics. Returns a flat dict of string values.
@@ -452,9 +438,7 @@ async def alpha_vantage_overview(
 
     return Result(
         data=data,
-        provenance=Provenance(
-            source="alpha_vantage_overview", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_overview", params={"symbol": params.symbol}),
     )
 
 
@@ -483,9 +467,7 @@ class AlphaVantageStatementParams(BaseModel):
 
 
 @connector(tags=["equities"], result_type="dict")
-async def alpha_vantage_income_statement(
-    params: AlphaVantageStatementParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_income_statement(params: AlphaVantageStatementParams, *, api_key: str) -> Result:
     """Fetch income statement for a stock: revenue, gross profit, operating income,
     EBITDA, net income, R&D, SGA, and ~20 more line items. Returns annual or
     quarterly reports (up to 20 annual, 81 quarterly). All values are strings.
@@ -518,9 +500,7 @@ async def alpha_vantage_income_statement(
 
 
 @connector(tags=["equities"], result_type="dict")
-async def alpha_vantage_balance_sheet(
-    params: AlphaVantageStatementParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_balance_sheet(params: AlphaVantageStatementParams, *, api_key: str) -> Result:
     """Fetch balance sheet for a stock: total assets, liabilities, equity,
     cash, receivables, goodwill, long-term debt, and ~35 more line items.
     Returns annual or quarterly reports. All values are strings.
@@ -553,9 +533,7 @@ async def alpha_vantage_balance_sheet(
 
 
 @connector(tags=["equities"], result_type="dict")
-async def alpha_vantage_cash_flow(
-    params: AlphaVantageStatementParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_cash_flow(params: AlphaVantageStatementParams, *, api_key: str) -> Result:
     """Fetch cash flow statement for a stock: operating cash flow, capex,
     dividends, buybacks, financing, investing activities, and ~25 more items.
     Returns annual or quarterly reports. All values are strings.
@@ -620,9 +598,7 @@ class AlphaVantageEarningsParams(BaseModel):
 
 
 @connector(output=_EARNINGS_OUTPUT, tags=["equities"])
-async def alpha_vantage_earnings(
-    params: AlphaVantageEarningsParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_earnings(params: AlphaVantageEarningsParams, *, api_key: str) -> Result:
     """Fetch quarterly earnings for a stock: reported EPS, estimated EPS,
     surprise, surprise percentage, and report timing (pre/post market).
     Returns up to 120 quarters of history.
@@ -649,9 +625,7 @@ async def alpha_vantage_earnings(
     df = pd.DataFrame(rows)
     return _EARNINGS_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_earnings", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_earnings", params={"symbol": params.symbol}),
         params={"symbol": params.symbol},
     )
 
@@ -677,18 +651,12 @@ _FX_RATE_OUTPUT = OutputConfig(
 class AlphaVantageFxRateParams(BaseModel):
     """Real-time exchange rate between two currencies (forex or crypto)."""
 
-    from_currency: str = Field(
-        ..., description="Source currency code, e.g. 'EUR', 'BTC'"
-    )
-    to_currency: str = Field(
-        ..., description="Target currency code, e.g. 'USD', 'JPY'"
-    )
+    from_currency: str = Field(..., description="Source currency code, e.g. 'EUR', 'BTC'")
+    to_currency: str = Field(..., description="Target currency code, e.g. 'USD', 'JPY'")
 
 
 @connector(output=_FX_RATE_OUTPUT, tags=["forex", "crypto", "tool"])
-async def alpha_vantage_fx_rate(
-    params: AlphaVantageFxRateParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_fx_rate(params: AlphaVantageFxRateParams, *, api_key: str) -> Result:
     """Fetch real-time exchange rate between two currencies. Works for both
     forex (EUR/USD) and crypto (BTC/USD). Returns bid/ask prices.
     Free tier: 25 requests/day total across all endpoints.
@@ -769,9 +737,7 @@ class AlphaVantageFxDailyParams(BaseModel):
 
 
 @connector(output=_FX_DAILY_OUTPUT, tags=["forex"])
-async def alpha_vantage_fx_daily(
-    params: AlphaVantageFxDailyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_fx_daily(params: AlphaVantageFxDailyParams, *, api_key: str) -> Result:
     """Fetch daily forex OHLC time series for a currency pair.
 
     outputsize='compact' returns last 100 days (default); 'full' for full history.
@@ -852,15 +818,11 @@ class AlphaVantageCryptoDailyParams(BaseModel):
     """Daily crypto time series."""
 
     symbol: str = Field(..., description="Crypto symbol, e.g. 'BTC', 'ETH'")
-    market: str = Field(
-        default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'"
-    )
+    market: str = Field(default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'")
 
 
 @connector(output=_CRYPTO_DAILY_OUTPUT, tags=["crypto"])
-async def alpha_vantage_crypto_daily(
-    params: AlphaVantageCryptoDailyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_crypto_daily(params: AlphaVantageCryptoDailyParams, *, api_key: str) -> Result:
     """Fetch daily OHLCV time series for a cryptocurrency priced in a market
     currency (default USD). Returns full history.
     Free tier: 25 requests/day total across all endpoints.
@@ -911,8 +873,15 @@ async def alpha_vantage_crypto_daily(
 # ---------------------------------------------------------------------------
 
 _ECON_FUNCTIONS = (
-    "REAL_GDP", "REAL_GDP_PER_CAPITA", "TREASURY_YIELD", "FEDERAL_FUNDS_RATE",
-    "CPI", "INFLATION", "RETAIL_SALES", "DURABLES", "UNEMPLOYMENT",
+    "REAL_GDP",
+    "REAL_GDP_PER_CAPITA",
+    "TREASURY_YIELD",
+    "FEDERAL_FUNDS_RATE",
+    "CPI",
+    "INFLATION",
+    "RETAIL_SALES",
+    "DURABLES",
+    "UNEMPLOYMENT",
     "NONFARM_PAYROLL",
 )
 
@@ -953,9 +922,7 @@ class AlphaVantageEconParams(BaseModel):
 
 
 @connector(output=_ECON_OUTPUT, tags=["macro"])
-async def alpha_vantage_econ(
-    params: AlphaVantageEconParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_econ(params: AlphaVantageEconParams, *, api_key: str) -> Result:
     """Fetch US economic indicator time series. Covers real GDP, CPI, inflation,
     unemployment, federal funds rate, treasury yield (with maturity selection),
     retail sales, durables, and nonfarm payroll. Commodity data is available
@@ -1052,18 +1019,12 @@ class AlphaVantageNewsParams(BaseModel):
             "retail_wholesale, blockchain."
         ),
     )
-    sort: Literal["LATEST", "EARLIEST", "RELEVANCE"] = Field(
-        default="LATEST", description="Sort order for results."
-    )
-    limit: int = Field(
-        default=50, ge=1, le=1000, description="Number of results (max 1000)."
-    )
+    sort: Literal["LATEST", "EARLIEST", "RELEVANCE"] = Field(default="LATEST", description="Sort order for results.")
+    limit: int = Field(default=50, ge=1, le=1000, description="Number of results (max 1000).")
 
 
 @connector(output=_NEWS_OUTPUT, tags=["news", "tool"])
-async def alpha_vantage_news(
-    params: AlphaVantageNewsParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_news(params: AlphaVantageNewsParams, *, api_key: str) -> Result:
     """Fetch news articles with sentiment scores. Filter by ticker(s) and/or
     topics. Each article includes title, summary, source, sentiment score
     (-1 to 1), and sentiment label. For ticker-specific sentiment, check the
@@ -1141,9 +1102,7 @@ class AlphaVantageTopMoversParams(BaseModel):
 
 
 @connector(output=_MOVERS_OUTPUT, tags=["equities", "tool"])
-async def alpha_vantage_top_movers(
-    params: AlphaVantageTopMoversParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_top_movers(params: AlphaVantageTopMoversParams, *, api_key: str) -> Result:
     """Fetch today's top 20 gainers, top 20 losers, and top 20 most actively
     traded US equities. Each entry includes ticker, price, change amount,
     change percentage, and volume. No parameters required.
@@ -1174,9 +1133,7 @@ async def alpha_vantage_top_movers(
             )
 
     if not rows:
-        raise EmptyDataError(
-            provider=_PROVIDER, message="No market movers data returned"
-        )
+        raise EmptyDataError(provider=_PROVIDER, message="No market movers data returned")
 
     df = pd.DataFrame(rows)
     return _MOVERS_OUTPUT.build_table_result(
@@ -1225,9 +1182,7 @@ class AlphaVantageOptionsParams(BaseModel):
 
 
 @connector(output=_OPTIONS_OUTPUT, tags=["equities", "options"])
-async def alpha_vantage_options(
-    params: AlphaVantageOptionsParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_options(params: AlphaVantageOptionsParams, *, api_key: str) -> Result:
     """[Premium] Fetch historical options chain for a stock: contract ID,
     expiration, strike, type (call/put), last price, bid/ask, volume,
     open interest, implied volatility, and Greeks (delta, gamma, theta, vega).
@@ -1260,9 +1215,7 @@ async def alpha_vantage_options(
 
     return _OPTIONS_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_options", params=prov_params
-        ),
+        provenance=Provenance(source="alpha_vantage_options", params=prov_params),
         params={"symbol": params.symbol},
     )
 
@@ -1282,9 +1235,7 @@ class AlphaVantageWeeklyParams(BaseModel):
 
 
 @connector(output=_DAILY_OUTPUT, tags=["equities"])
-async def alpha_vantage_weekly(
-    params: AlphaVantageWeeklyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_weekly(params: AlphaVantageWeeklyParams, *, api_key: str) -> Result:
     """Fetch weekly OHLCV (open, high, low, close, volume) time series for a stock.
 
     Returns 20+ years of weekly data. Last trading day of each week is the timestamp.
@@ -1324,9 +1275,7 @@ async def alpha_vantage_weekly(
     df = pd.DataFrame(rows)
     return _DAILY_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_weekly", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_weekly", params={"symbol": params.symbol}),
         params={"symbol": params.symbol},
     )
 
@@ -1341,9 +1290,7 @@ class AlphaVantageMonthlyParams(BaseModel):
 
 
 @connector(output=_DAILY_OUTPUT, tags=["equities"])
-async def alpha_vantage_monthly(
-    params: AlphaVantageMonthlyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_monthly(params: AlphaVantageMonthlyParams, *, api_key: str) -> Result:
     """Fetch monthly OHLCV (open, high, low, close, volume) time series for a stock.
 
     Returns 20+ years of monthly data. Last trading day of each month is the timestamp.
@@ -1383,9 +1330,7 @@ async def alpha_vantage_monthly(
     df = pd.DataFrame(rows)
     return _DAILY_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_monthly", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_monthly", params={"symbol": params.symbol}),
         params={"symbol": params.symbol},
     )
 
@@ -1430,9 +1375,7 @@ class AlphaVantageIntradayParams(BaseModel):
 
 
 @connector(output=_INTRADAY_OUTPUT, tags=["equities"])
-async def alpha_vantage_intraday(
-    params: AlphaVantageIntradayParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_intraday(params: AlphaVantageIntradayParams, *, api_key: str) -> Result:
     """Fetch intraday OHLCV time series for a stock at 1/5/15/30/60 min intervals.
 
     outputsize='compact' returns the last 100 data points (default).
@@ -1502,9 +1445,7 @@ class AlphaVantageFxWeeklyParams(BaseModel):
 
 
 @connector(output=_FX_DAILY_OUTPUT, tags=["forex"])
-async def alpha_vantage_fx_weekly(
-    params: AlphaVantageFxWeeklyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_fx_weekly(params: AlphaVantageFxWeeklyParams, *, api_key: str) -> Result:
     """Fetch weekly forex OHLC time series for a currency pair.
 
     Returns full history of weekly data. No volume data for forex.
@@ -1565,9 +1506,7 @@ class AlphaVantageFxMonthlyParams(BaseModel):
 
 
 @connector(output=_FX_DAILY_OUTPUT, tags=["forex"])
-async def alpha_vantage_fx_monthly(
-    params: AlphaVantageFxMonthlyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_fx_monthly(params: AlphaVantageFxMonthlyParams, *, api_key: str) -> Result:
     """Fetch monthly forex OHLC time series for a currency pair.
 
     Returns full history of monthly data. No volume data for forex.
@@ -1629,15 +1568,11 @@ class AlphaVantageCryptoWeeklyParams(BaseModel):
     """Weekly crypto time series."""
 
     symbol: str = Field(..., description="Crypto symbol, e.g. 'BTC', 'ETH'")
-    market: str = Field(
-        default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'"
-    )
+    market: str = Field(default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'")
 
 
 @connector(output=_CRYPTO_DAILY_OUTPUT, tags=["crypto"])
-async def alpha_vantage_crypto_weekly(
-    params: AlphaVantageCryptoWeeklyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_crypto_weekly(params: AlphaVantageCryptoWeeklyParams, *, api_key: str) -> Result:
     """Fetch weekly OHLCV time series for a cryptocurrency. Returns full history.
     Free tier: 25 requests/day total across all endpoints.
     """
@@ -1686,15 +1621,11 @@ class AlphaVantageCryptoMonthlyParams(BaseModel):
     """Monthly crypto time series."""
 
     symbol: str = Field(..., description="Crypto symbol, e.g. 'BTC', 'ETH'")
-    market: str = Field(
-        default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'"
-    )
+    market: str = Field(default="USD", description="Exchange market currency, e.g. 'USD', 'EUR'")
 
 
 @connector(output=_CRYPTO_DAILY_OUTPUT, tags=["crypto"])
-async def alpha_vantage_crypto_monthly(
-    params: AlphaVantageCryptoMonthlyParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_crypto_monthly(params: AlphaVantageCryptoMonthlyParams, *, api_key: str) -> Result:
     """Fetch monthly OHLCV time series for a cryptocurrency. Returns full history.
     Free tier: 25 requests/day total across all endpoints.
     """
@@ -1754,9 +1685,7 @@ class AlphaVantageEtfProfileParams(BaseModel):
 
 
 @connector(tags=["equities", "etf"], result_type="dict")
-async def alpha_vantage_etf_profile(
-    params: AlphaVantageEtfProfileParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_etf_profile(params: AlphaVantageEtfProfileParams, *, api_key: str) -> Result:
     """Fetch ETF profile: net assets, expense ratio, portfolio turnover,
     dividend yield, inception date, top holdings (symbol, description, weight),
     and sector allocation. Note: aggressive rate limiting on free tier.
@@ -1779,9 +1708,7 @@ async def alpha_vantage_etf_profile(
 
     return Result(
         data=data,
-        provenance=Provenance(
-            source="alpha_vantage_etf_profile", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_etf_profile", params={"symbol": params.symbol}),
     )
 
 
@@ -1871,9 +1798,7 @@ class AlphaVantageEarningsCalendarParams(BaseModel):
 
 
 @connector(output=_EARNINGS_CAL_OUTPUT, tags=["equities", "calendars"])
-async def alpha_vantage_earnings_calendar(
-    params: AlphaVantageEarningsCalendarParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_earnings_calendar(params: AlphaVantageEarningsCalendarParams, *, api_key: str) -> Result:
     """Fetch upcoming earnings release dates. Returns company name, report date,
     fiscal date ending, EPS estimate, and currency. Filter by symbol or get
     all upcoming earnings within the horizon window.
@@ -1903,9 +1828,7 @@ async def alpha_vantage_earnings_calendar(
 
     return _EARNINGS_CAL_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_earnings_calendar", params=prov_params
-        ),
+        provenance=Provenance(source="alpha_vantage_earnings_calendar", params=prov_params),
         params=prov_params,
     )
 
@@ -1930,9 +1853,7 @@ class AlphaVantageIpoCalendarParams(BaseModel):
 
 
 @connector(output=_IPO_CAL_OUTPUT, tags=["equities", "calendars"])
-async def alpha_vantage_ipo_calendar(
-    params: AlphaVantageIpoCalendarParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_ipo_calendar(params: AlphaVantageIpoCalendarParams, *, api_key: str) -> Result:
     """Fetch upcoming and recent IPOs: company name, expected IPO date,
     price range (low/high), currency, and exchange.
     Free tier: 25 requests/day total across all endpoints.
@@ -1962,14 +1883,59 @@ async def alpha_vantage_ipo_calendar(
 # ---------------------------------------------------------------------------
 
 _TECHNICAL_INDICATORS = (
-    "SMA", "EMA", "WMA", "DEMA", "TEMA", "TRIMA", "KAMA", "MAMA", "VWAP",
-    "T3", "RSI", "WILLR", "ADX", "ADXR", "APO", "PPO", "MOM", "BOP",
-    "CCI", "CMO", "ROC", "ROCR", "AROON", "AROONOSC", "MFI", "TRIX",
-    "ULTOSC", "DX", "MINUS_DI", "PLUS_DI", "MINUS_DM", "PLUS_DM",
-    "BBANDS", "MIDPOINT", "MIDPRICE", "SAR", "TRANGE", "ATR", "NATR",
-    "AD", "ADOSC", "OBV", "HT_TRENDLINE", "HT_SINE", "HT_TRENDMODE",
-    "HT_DCPERIOD", "HT_DCPHASE", "HT_PHASOR", "STOCH", "STOCHF",
-    "STOCHRSI", "MACD", "MACDEXT",
+    "SMA",
+    "EMA",
+    "WMA",
+    "DEMA",
+    "TEMA",
+    "TRIMA",
+    "KAMA",
+    "MAMA",
+    "VWAP",
+    "T3",
+    "RSI",
+    "WILLR",
+    "ADX",
+    "ADXR",
+    "APO",
+    "PPO",
+    "MOM",
+    "BOP",
+    "CCI",
+    "CMO",
+    "ROC",
+    "ROCR",
+    "AROON",
+    "AROONOSC",
+    "MFI",
+    "TRIX",
+    "ULTOSC",
+    "DX",
+    "MINUS_DI",
+    "PLUS_DI",
+    "MINUS_DM",
+    "PLUS_DM",
+    "BBANDS",
+    "MIDPOINT",
+    "MIDPRICE",
+    "SAR",
+    "TRANGE",
+    "ATR",
+    "NATR",
+    "AD",
+    "ADOSC",
+    "OBV",
+    "HT_TRENDLINE",
+    "HT_SINE",
+    "HT_TRENDMODE",
+    "HT_DCPERIOD",
+    "HT_DCPHASE",
+    "HT_PHASOR",
+    "STOCH",
+    "STOCHF",
+    "STOCHRSI",
+    "MACD",
+    "MACDEXT",
 )
 
 _TECHNICAL_OUTPUT = OutputConfig(
@@ -2015,9 +1981,7 @@ class AlphaVantageTechnicalParams(BaseModel):
 
 
 @connector(output=_TECHNICAL_OUTPUT, tags=["equities", "technical"])
-async def alpha_vantage_technical(
-    params: AlphaVantageTechnicalParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_technical(params: AlphaVantageTechnicalParams, *, api_key: str) -> Result:
     """Fetch a technical indicator for a stock. Supports 50+ indicators including
     SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ADX, CCI, OBV, ATR, and more.
     The response columns vary by indicator (e.g. SMA returns 'SMA', BBANDS returns
@@ -2111,9 +2075,7 @@ class AlphaVantageMetalSpotParams(BaseModel):
 
 
 @connector(output=_METAL_SPOT_OUTPUT, tags=["commodities"])
-async def alpha_vantage_metal_spot(
-    params: AlphaVantageMetalSpotParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_metal_spot(params: AlphaVantageMetalSpotParams, *, api_key: str) -> Result:
     """Fetch real-time spot price for gold or silver. Returns current price and
     timestamp. Use GOLD/XAU for gold, SILVER/XAG for silver.
     Free tier: 25 requests/day total across all endpoints.
@@ -2141,9 +2103,7 @@ async def alpha_vantage_metal_spot(
     df = pd.DataFrame([row])
     return _METAL_SPOT_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(
-            source="alpha_vantage_metal_spot", params={"symbol": params.symbol}
-        ),
+        provenance=Provenance(source="alpha_vantage_metal_spot", params={"symbol": params.symbol}),
         params={"symbol": params.symbol},
     )
 
@@ -2162,9 +2122,7 @@ class AlphaVantageMetalHistoryParams(BaseModel):
 
 
 @connector(output=_METAL_HISTORY_OUTPUT, tags=["commodities"])
-async def alpha_vantage_metal_history(
-    params: AlphaVantageMetalHistoryParams, *, api_key: str
-) -> Result:
+async def alpha_vantage_metal_history(params: AlphaVantageMetalHistoryParams, *, api_key: str) -> Result:
     """Fetch historical prices for gold or silver. Returns date and price.
     Note: uses 'price' field (not 'value') unlike other commodity endpoints.
     Free tier: 25 requests/day total across all endpoints.
@@ -2228,9 +2186,7 @@ class AlphaVantageListingParams(BaseModel):
 
 
 @enumerator(output=_LISTING_OUTPUT, tags=["equities"])
-async def enumerate_alpha_vantage(
-    params: AlphaVantageListingParams, *, api_key: str
-) -> pd.DataFrame:
+async def enumerate_alpha_vantage(params: AlphaVantageListingParams, *, api_key: str) -> pd.DataFrame:
     """Enumerate all US-listed securities from Alpha Vantage for catalog indexing.
 
     Returns symbol, name, exchange, asset type (Stock/ETF), IPO date, and status.
@@ -2245,9 +2201,7 @@ async def enumerate_alpha_vantage(
     )
 
     if df.empty:
-        return pd.DataFrame(
-            columns=["symbol", "name", "exchange", "assetType", "ipoDate", "status"]
-        )
+        return pd.DataFrame(columns=["symbol", "name", "exchange", "assetType", "ipoDate", "status"])
 
     # Keep only the columns we care about
     keep = ["symbol", "name", "exchange", "assetType", "ipoDate", "status"]

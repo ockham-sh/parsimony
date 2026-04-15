@@ -45,22 +45,18 @@ def create_server(connectors: Connectors) -> Server:
         conn = tool_map.get(name)
         if conn is None:
             available = sorted(tool_map.keys())
-            return _error_content(
-                f"Unknown tool: {name!r}. Available tools: {available}"
-            )
+            return _error_content(f"Unknown tool: {name!r}. Available tools: {available}")
         try:
             result = await conn(**arguments)
         except ValidationError as exc:
             return _error_content(f"Invalid parameters for {name}: {exc}")
         except UnauthorizedError as exc:
             return _error_content(
-                f"Authentication error for {exc.provider}: {exc}. "
-                "Check that the API key is correctly configured."
+                f"Authentication error for {exc.provider}: {exc}. Check that the API key is correctly configured."
             )
         except PaymentRequiredError as exc:
             return _error_content(
-                f"Plan restriction for {exc.provider}: {exc}. "
-                "This endpoint requires a higher-tier API plan."
+                f"Plan restriction for {exc.provider}: {exc}. This endpoint requires a higher-tier API plan."
             )
         except RateLimitError as exc:
             msg = f"Rate limit hit for {exc.provider}."

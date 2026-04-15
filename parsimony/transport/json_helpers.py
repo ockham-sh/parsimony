@@ -30,11 +30,7 @@ def json_to_df(data: Any, prefix: str = "") -> pd.DataFrame:
     """Convert JSON to DataFrame; nested dict/list become TableRefs."""
 
     def _to_scalar(v: Any) -> Any:
-        return (
-            json.dumps(v, sort_keys=True, ensure_ascii=True)
-            if isinstance(v, (dict, list))
-            else v
-        )
+        return json.dumps(v, sort_keys=True, ensure_ascii=True) if isinstance(v, (dict, list)) else v
 
     def _sanitize(rows: list[dict]) -> list[dict]:
         return [{k: _to_scalar(v) for k, v in row.items()} for row in rows]

@@ -116,7 +116,7 @@ def _parse_observations(
                 continue
             raw_value = raw.get("v") if isinstance(raw, dict) else raw
             try:
-                value = float(raw_value) if raw_value not in (None, "", "NaN") else None
+                value = float(raw_value) if raw_value is not None and raw_value not in ("", "NaN") else None
             except (ValueError, TypeError):
                 value = None
 
@@ -126,16 +126,16 @@ def _parse_observations(
                 detail = series_details[col]
                 title = detail.get("label", detail.get("description", col))
 
-            rows.append({
-                "series_name": col,
-                "title": title,
-                "date": date,
-                "value": value,
-            })
+            rows.append(
+                {
+                    "series_name": col,
+                    "title": title,
+                    "date": date,
+                    "value": value,
+                }
+            )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["series_name", "title", "date", "value"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["series_name", "title", "date", "value"])
 
 
 # ---------------------------------------------------------------------------
@@ -201,15 +201,15 @@ async def enumerate_boc(params: BocEnumerateParams) -> pd.DataFrame:
         label = info.get("label", series_name) if isinstance(info, dict) else str(info)
         desc = info.get("description", "") if isinstance(info, dict) else ""
         # Use description as group hint (no group info in this endpoint)
-        rows.append({
-            "series_name": series_name,
-            "title": label,
-            "group": desc,
-        })
+        rows.append(
+            {
+                "series_name": series_name,
+                "title": label,
+                "group": desc,
+            }
+        )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["series_name", "title", "group"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["series_name", "title", "group"])
 
 
 # ---------------------------------------------------------------------------

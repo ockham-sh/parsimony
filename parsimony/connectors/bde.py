@@ -8,6 +8,7 @@ No authentication required.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import datetime
 from typing import Annotated, Any
@@ -69,10 +70,7 @@ class BdeFetchParams(BaseModel):
     )
     time_range: str | None = Field(
         default=None,
-        description=(
-            "Time range: 30M, 60M, MAX, or a year (e.g. 2024). "
-            "Default uses the full available range."
-        ),
+        description=("Time range: 30M, 60M, MAX, or a year (e.g. 2024). Default uses the full available range."),
     )
     lang: str = Field(default="en", description="Language: en or es")
 
@@ -94,9 +92,7 @@ class BdeFetchParams(BaseModel):
         _VALID_RANGES = {"30M", "60M", "MAX"}
         if v.upper() in _VALID_RANGES or v.isdigit():
             return v
-        raise ValueError(
-            f"Invalid time_range '{v}'. Use 30M, 60M, MAX, or a year (e.g. 2024)."
-        )
+        raise ValueError(f"Invalid time_range '{v}'. Use 30M, 60M, MAX, or a year (e.g. 2024).")
 
     @field_validator("lang")
     @classmethod
@@ -150,14 +146,14 @@ def _parse_bde_response(json_data: list[dict[str, Any]]) -> pd.DataFrame:
     for series in json_data:
         key = series.get("serie", "")
         title = series.get("descripcionCorta", series.get("descripcion", key))
-        freq_code = series.get("codFrecuencia", "")
+        series.get("codFrecuencia", "")
         dates = series.get("fechas", [])
         values = series.get("valores", [])
 
         if not dates or not values:
             continue
 
-        for date_str, raw_value in zip(dates, values):
+        for date_str, raw_value in zip(dates, values, strict=False):
             try:
                 value = float(raw_value) if raw_value not in (None, "", "NaN") else None
             except (ValueError, TypeError):
@@ -166,21 +162,19 @@ def _parse_bde_response(json_data: list[dict[str, Any]]) -> pd.DataFrame:
             # Parse ISO datetime: "2024-01-31T00:00:00Z" → date
             date_val = date_str
             if isinstance(date_str, str) and "T" in date_str:
-                try:
+                with contextlib.suppress(ValueError):
                     date_val = datetime.strptime(date_str[:10], "%Y-%m-%d").strftime("%Y-%m-%d")
-                except ValueError:
-                    pass
 
-            all_rows.append({
-                "key": key,
-                "title": title,
-                "date": date_val,
-                "value": value,
-            })
+            all_rows.append(
+                {
+                    "key": key,
+                    "title": title,
+                    "date": date_val,
+                    "value": value,
+                }
+            )
 
-    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(
-        columns=["key", "title", "date", "value"]
-    )
+    return pd.DataFrame(all_rows) if all_rows else pd.DataFrame(columns=["key", "title", "date", "value"])
 
 
 # ---------------------------------------------------------------------------
@@ -260,9 +254,7 @@ async def enumerate_bde(params: BdeEnumerateParams) -> pd.DataFrame:
     async with httpx.AsyncClient(timeout=60.0) as client:
         for code in known_codes:
             try:
-                response = await client.get(
-                    url, params={"idioma": "en", "series": code}
-                )
+                response = await client.get(url, params={"idioma": "en", "series": code})
                 if response.status_code != 200:
                     continue
                 json_data = response.json()
@@ -273,17 +265,17 @@ async def enumerate_bde(params: BdeEnumerateParams) -> pd.DataFrame:
                     title = series.get("descripcionCorta", key)
                     freq_code = series.get("codFrecuencia", "")
                     if key:
-                        rows.append({
-                            "key": key,
-                            "title": title,
-                            "frequency": _FREQ_MAP.get(freq_code, freq_code),
-                        })
+                        rows.append(
+                            {
+                                "key": key,
+                                "title": title,
+                                "frequency": _FREQ_MAP.get(freq_code, freq_code),
+                            }
+                        )
             except (httpx.HTTPError, Exception) as exc:
                 logger.debug("BdE enumerate failed for %s: %s", code, exc)
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["key", "title", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["key", "title", "frequency"])
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 
+__all__ = [
+    "Column",
+    "ColumnRole",
+    "OutputConfig",
+    "Provenance",
+    "Result",
+    "SemanticTableResult",
+]
+
 import json
 import logging
 from datetime import datetime
@@ -148,9 +157,7 @@ class Result(BaseModel):
         Requires ``data`` to be a DataFrame or Series. Unmapped columns become ``DATA`` automatically.
         """
         if not isinstance(self.data, (pd.DataFrame, pd.Series)):
-            raise TypeError(
-                f"Result.to_table requires tabular data, got {type(self.data).__name__}"
-            )
+            raise TypeError(f"Result.to_table requires tabular data, got {type(self.data).__name__}")
         return output.build_table_result(
             self.data,
             provenance=self.provenance,
@@ -177,8 +184,7 @@ class Result(BaseModel):
         if isinstance(self.data, pd.Series):
             return self.data.to_frame()
         raise TypeError(
-            f"Result.data is {type(self.data).__name__}, not a DataFrame. "
-            "Use result.data to access the raw value."
+            f"Result.data is {type(self.data).__name__}, not a DataFrame. Use result.data to access the raw value."
         )
 
     @property
@@ -259,20 +265,11 @@ class OutputConfig(BaseModel):
         keys = [c.name for c in self.columns if c.role == ColumnRole.KEY]
         titles = [c.name for c in self.columns if c.role == ColumnRole.TITLE]
         if len(keys) > 1:
-            raise ValueError(
-                f"Output config must have at most one KEY column, found {len(keys)}: {keys}"
-            )
+            raise ValueError(f"Output config must have at most one KEY column, found {len(keys)}: {keys}")
         if len(titles) > 1:
-            raise ValueError(
-                f"Output config must have at most one TITLE column, found {len(titles)}: {titles}"
-            )
-        if not any(
-            c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE)
-            for c in self.columns
-        ):
-            raise ValueError(
-                "Output config must define at least one data, key, or title column"
-            )
+            raise ValueError(f"Output config must have at most one TITLE column, found {len(titles)}: {titles}")
+        if not any(c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE) for c in self.columns):
+            raise ValueError("Output config must define at least one data, key, or title column")
         return self
 
     def validate_columns(self, df: pd.DataFrame) -> list[str]:
@@ -293,7 +290,10 @@ class OutputConfig(BaseModel):
         df: pd.DataFrame,
         params: dict[str, Any],
     ) -> tuple[pd.DataFrame, list[tuple[Column, str]], set[str]]:
-        """Match config columns, coerce dtypes, rename; returns processed frame, column info, and consumed input column names."""
+        """Match config columns, coerce dtypes, rename.
+
+        Returns processed frame, column info, and consumed input column names.
+        """
         processed_series: list[tuple[Column, pd.Series]] = []
         consumed: set[str] = set()
 
@@ -323,10 +323,7 @@ class OutputConfig(BaseModel):
                             f"column '{column.name}': all values are NaN after 'numeric' coercion — "
                             "expected numeric input"
                         )
-                if column.mapped_name:
-                    new_name = column.mapped_name % params
-                else:
-                    new_name = match_name
+                new_name = column.mapped_name % params if column.mapped_name else match_name
                 series.name = new_name
                 processed_series.append((column, series))
 
@@ -351,9 +348,7 @@ class OutputConfig(BaseModel):
         (e.g. zero search hits with the expected columns).
         """
         if not isinstance(df, (pd.DataFrame, pd.Series)):
-            raise TypeError(
-                f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}"
-            )
+            raise TypeError(f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}")
         frame = pd.DataFrame(df)
         if frame.empty and len(frame.columns) == 0:
             raise ValueError("Returned an empty DataFrame with no columns.")
@@ -372,8 +367,7 @@ class OutputConfig(BaseModel):
         unmatched = sorted(declared - consumed)
         if unmatched:
             logger.warning(
-                "OutputConfig columns not found in DataFrame: %s. "
-                "Available columns: %s",
+                "OutputConfig columns not found in DataFrame: %s. Available columns: %s",
                 unmatched,
                 sorted(frame.columns),
             )
@@ -397,10 +391,7 @@ class OutputConfig(BaseModel):
             raise ValueError("Column config produced no columns.")
 
         new_df = pd.concat([s for _, s in processed_series], axis=1)
-        resolved_schema: list[Column] = [
-            col_cfg.model_copy(update={"name": s.name})
-            for col_cfg, s in processed_series
-        ]
+        resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
         resolved_config = OutputConfig(columns=resolved_schema)
         return SemanticTableResult(data=new_df, provenance=p, output_schema=resolved_config)
 
@@ -408,4 +399,4 @@ class OutputConfig(BaseModel):
 class SemanticTableResult(Result):
     """Tabular connector output with a required :attr:`output_schema`."""
 
-    output_schema: OutputConfig  # type: ignore[assignment]
+    output_schema: OutputConfig

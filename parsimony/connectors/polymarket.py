@@ -22,9 +22,7 @@ class PolymarketFetchParams(BaseModel):
     method: Literal["GET", "POST"] = "GET"
     path: str = Field(..., min_length=1)
     response_path: str | None = Field(default=None, description="Dot-separated path into JSON")
-    expand: Literal["markets", "outcomes"] | None = Field(
-        default=None, description="Expand nested data"
-    )
+    expand: Literal["markets", "outcomes"] | None = Field(default=None, description="Expand nested data")
 
 
 def _expand_markets(df: pd.DataFrame) -> pd.DataFrame:
@@ -134,9 +132,7 @@ def make_polymarket_connector(
                 df = _expand_outcomes(df)
         elif "markets" in df.columns:
             df = df.copy()
-            df["markets_count"] = df["markets"].apply(
-                lambda x: len(x) if isinstance(x, list) else 0
-            )
+            df["markets_count"] = df["markets"].apply(lambda x: len(x) if isinstance(x, list) else 0)
 
         return Result.from_dataframe(
             df,

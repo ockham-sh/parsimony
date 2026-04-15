@@ -17,7 +17,8 @@ optional stacks use lazy loading via :func:`__getattr__` to keep core imports li
   type with a catalog-oriented schema (no DATA columns; KEY with ``namespace=...``; one TITLE).
 * :func:`~parsimony.connector.loader` builds the same :class:`~parsimony.connector.Connector`
   type with a data-oriented schema (KEY with ``namespace=...`` and DATA columns only; no TITLE/METADATA).
-  :class:`~parsimony.data_store.DataStore` persists observations via :meth:`~parsimony.data_store.DataStore.load_result`.
+  :class:`~parsimony.data_store.DataStore` persists observations via
+  :meth:`~parsimony.data_store.DataStore.load_result`.
 * :class:`~parsimony.catalog.catalog.Catalog` orchestrates store and optional
   embeddings for indexing (:meth:`~parsimony.catalog.catalog.Catalog.ingest`).
   :meth:`~parsimony.catalog.store.CatalogStore.search` is implementation-defined on the store.
@@ -43,7 +44,7 @@ except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
 __all__ = [
-    # Core abstractions
+    # --- Connector primitives ---
     "Connector",
     "Connectors",
     "ResultCallback",
@@ -51,39 +52,41 @@ __all__ = [
     "enumerator",
     "loader",
     "Namespace",
-    # Result system
+    # --- Result system ---
     "Column",
     "ColumnRole",
     "OutputConfig",
     "Provenance",
     "Result",
     "SemanticTableResult",
-    # Catalog
+    # --- Catalog ---
     "Catalog",
     "CatalogStore",
+    "SQLiteCatalogStore",
     "EmbeddingProvider",
+    "LiteLLMEmbeddingProvider",
     "IndexResult",
     "SeriesEntry",
     "SeriesMatch",
-    "SQLiteCatalogStore",
-    "InMemoryDataStore",
+    # --- Data persistence ---
     "DataStore",
+    "InMemoryDataStore",
     "LoadResult",
-    "LiteLLMEmbeddingProvider",
+    # --- Errors ---
+    "ConnectorError",
+    "EmptyDataError",
+    "ParseError",
+    "PaymentRequiredError",
+    "ProviderError",
+    "RateLimitError",
+    "UnauthorizedError",
+    # --- Utilities ---
     "build_embedding_text",
     "code_token",
     "normalize_code",
     "normalize_series_catalog_row",
     "series_match_from_entry",
-    # Errors
-    "ConnectorError",
-    "PaymentRequiredError",
-    "RateLimitError",
-    "UnauthorizedError",
-    "ProviderError",
-    "EmptyDataError",
-    "ParseError",
-    # Convenience
+    # --- Convenience ---
     "client",
 ]
 

@@ -18,8 +18,7 @@ class CatalogStore(ABC):
         ...
 
     @abstractmethod
-    async def get(self, namespace: str, code: str) -> SeriesEntry | None:
-        ...
+    async def get(self, namespace: str, code: str) -> SeriesEntry | None: ...
 
     @abstractmethod
     async def exists(self, keys: builtins.list[tuple[str, str]]) -> set[tuple[str, str]]:
@@ -27,8 +26,7 @@ class CatalogStore(ABC):
         ...
 
     @abstractmethod
-    async def delete(self, namespace: str, code: str) -> None:
-        ...
+    async def delete(self, namespace: str, code: str) -> None: ...
 
     @abstractmethod
     async def search(

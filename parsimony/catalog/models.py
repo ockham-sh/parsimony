@@ -1,5 +1,17 @@
 from __future__ import annotations
 
+__all__ = [
+    "EmbeddingProvider",
+    "IndexResult",
+    "SeriesEntry",
+    "SeriesMatch",
+    "catalog_key",
+    "code_token",
+    "normalize_code",
+    "normalize_entity_code",
+    "series_match_from_entry",
+]
+
 import json
 import re
 from abc import ABC, abstractmethod
@@ -29,9 +41,7 @@ def normalize_code(value: str) -> str:
     if not normalized:
         raise ValueError("Value must be non-empty")
     if not CODE_PATTERN.fullmatch(normalized):
-        raise ValueError(
-            "Value must be lowercase snake_case (letters, numbers, underscores)"
-        )
+        raise ValueError("Value must be lowercase snake_case (letters, numbers, underscores)")
     return normalized
 
 
@@ -158,8 +168,7 @@ class EmbeddingProvider(ABC):
 
     @property
     @abstractmethod
-    def dimension(self) -> int:
-        ...
+    def dimension(self) -> int: ...
 
     @abstractmethod
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:

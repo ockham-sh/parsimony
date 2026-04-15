@@ -134,9 +134,8 @@ def _parse_boj_date(date_str: str, freq: str) -> str:
             quarter = int(date_str[4:6])
             month = (quarter - 1) * 3 + 1
             return f"{date_str[:4]}-{month:02d}-01"
-    elif freq_lower in ("am", "annual"):
-        if len(date_str) >= 4:
-            return f"{date_str[:4]}-01-01"
+    elif freq_lower in ("am", "annual") and len(date_str) >= 4:
+        return f"{date_str[:4]}-01-01"
     return date_str
 
 
@@ -184,19 +183,21 @@ async def boj_fetch(params: BojFetchParams) -> Result:
         if isinstance(values, (str, int, float)):
             values = [values]
 
-        for date_str, raw_value in zip(dates, values):
+        for date_str, raw_value in zip(dates, values, strict=False):
             try:
                 value = float(raw_value) if raw_value is not None else None
             except (ValueError, TypeError):
                 value = None
             if value is None:
                 continue
-            rows.append({
-                "code": code,
-                "title": name,
-                "date": _parse_boj_date(str(date_str), freq),
-                "value": value,
-            })
+            rows.append(
+                {
+                    "code": code,
+                    "title": name,
+                    "date": _parse_boj_date(str(date_str), freq),
+                    "value": value,
+                }
+            )
 
     if not rows:
         raise EmptyDataError(provider="boj", message=f"No observations parsed for db={params.db}, code={params.code}")
@@ -216,17 +217,52 @@ async def enumerate_boj(params: BojEnumerateParams) -> pd.DataFrame:
     """Enumerate Bank of Japan series by querying metadata for known databases."""
     # All 45 BoJ database codes (discovered via brute-force scan)
     known_dbs = [
-        "BP01", "BP02",  # Balance of payments
-        "BS01", "BS02",  # Bank accounts / banking statistics
-        "FM01", "FM02", "FM03", "FM04", "FM05", "FM06", "FM07", "FM08", "FM09",  # Financial markets
-        "IR01", "IR02", "IR03", "IR04",  # Interest rates
-        "LA01", "LA02", "LA03", "LA04", "LA05",  # Loans
-        "MD01", "MD02", "MD03", "MD04", "MD05", "MD06", "MD07", "MD08",  # Monetary
-        "MD09", "MD10", "MD11", "MD12", "MD13", "MD14",  # Monetary (continued)
-        "OB01", "OB02",  # BoJ operations
-        "PF01", "PF02",  # Public finance
-        "PR01", "PR02", "PR03", "PR04",  # Prices
-        "PS01", "PS02",  # Payment systems
+        "BP01",
+        "BP02",  # Balance of payments
+        "BS01",
+        "BS02",  # Bank accounts / banking statistics
+        "FM01",
+        "FM02",
+        "FM03",
+        "FM04",
+        "FM05",
+        "FM06",
+        "FM07",
+        "FM08",
+        "FM09",  # Financial markets
+        "IR01",
+        "IR02",
+        "IR03",
+        "IR04",  # Interest rates
+        "LA01",
+        "LA02",
+        "LA03",
+        "LA04",
+        "LA05",  # Loans
+        "MD01",
+        "MD02",
+        "MD03",
+        "MD04",
+        "MD05",
+        "MD06",
+        "MD07",
+        "MD08",  # Monetary
+        "MD09",
+        "MD10",
+        "MD11",
+        "MD12",
+        "MD13",
+        "MD14",  # Monetary (continued)
+        "OB01",
+        "OB02",  # BoJ operations
+        "PF01",
+        "PF02",  # Public finance
+        "PR01",
+        "PR02",
+        "PR03",
+        "PR04",  # Prices
+        "PS01",
+        "PS02",  # Payment systems
     ]
 
     rows: list[dict[str, str]] = []
@@ -245,18 +281,18 @@ async def enumerate_boj(params: BojEnumerateParams) -> pd.DataFrame:
                     name = series.get("NAME_OF_TIME_SERIES", code)
                     freq = series.get("FREQUENCY", "").lower()
                     if code:
-                        rows.append({
-                            "code": code,
-                            "title": name,
-                            "frequency": _FREQ_MAP.get(freq, freq),
-                            "database": db,
-                        })
+                        rows.append(
+                            {
+                                "code": code,
+                                "title": name,
+                                "frequency": _FREQ_MAP.get(freq, freq),
+                                "database": db,
+                            }
+                        )
             except (httpx.HTTPError, Exception) as exc:
                 logger.debug("BoJ enumerate failed for db %s: %s", db, exc)
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["code", "title", "frequency", "database"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["code", "title", "frequency", "database"])
 
 
 # ---------------------------------------------------------------------------

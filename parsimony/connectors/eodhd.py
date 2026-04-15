@@ -333,15 +333,9 @@ class EodhdIntradayParams(BaseModel):
         pattern=r"^[A-Z0-9._\-]+$",
         description="Ticker in EODHD format, e.g. AAPL.US",
     )
-    interval: Literal["1m", "5m", "1h"] = Field(
-        ..., description="Intraday interval: 1m, 5m, or 1h"
-    )
-    from_unix: int | None = Field(
-        default=None, description="Start time as Unix timestamp (seconds since epoch)"
-    )
-    to_unix: int | None = Field(
-        default=None, description="End time as Unix timestamp (seconds since epoch)"
-    )
+    interval: Literal["1m", "5m", "1h"] = Field(..., description="Intraday interval: 1m, 5m, or 1h")
+    from_unix: int | None = Field(default=None, description="Start time as Unix timestamp (seconds since epoch)")
+    to_unix: int | None = Field(default=None, description="End time as Unix timestamp (seconds since epoch)")
 
 
 @connector(output=_INTRADAY_OUTPUT, tags=["eodhd", "equity"])
@@ -423,7 +417,9 @@ class EodhdDividendsParams(BaseModel):
     ticker: Annotated[str, Namespace("eodhd_symbols")] = Field(
         ..., pattern=r"^[A-Z0-9._\-]+$", description="Ticker in EODHD format, e.g. AAPL.US"
     )
-    from_date: str | None = Field(default=None, alias="from", description="Start date ISO 8601. Use as from_date='2024-01-15'")
+    from_date: str | None = Field(
+        default=None, alias="from", description="Start date ISO 8601. Use as from_date='2024-01-15'"
+    )
     to_date: str | None = Field(default=None, alias="to", description="End date ISO 8601. Use as to_date='2024-12-31'")
 
 
@@ -447,7 +443,9 @@ class EodhdSplitsParams(BaseModel):
     ticker: Annotated[str, Namespace("eodhd_symbols")] = Field(
         ..., pattern=r"^[A-Z0-9._\-]+$", description="Ticker in EODHD format, e.g. AAPL.US"
     )
-    from_date: str | None = Field(default=None, alias="from", description="Start date ISO 8601. Use as from_date='2024-01-15'")
+    from_date: str | None = Field(
+        default=None, alias="from", description="Start date ISO 8601. Use as from_date='2024-01-15'"
+    )
     to_date: str | None = Field(default=None, alias="to", description="End date ISO 8601. Use as to_date='2024-12-31'")
 
 
@@ -572,7 +570,10 @@ async def eodhd_exchange_symbols(params: EodhdExchangeSymbolsParams, *, api_key:
     if params.type:
         p["type"] = params.type
     return await _eodhd_fetch(
-        http, path="/exchange-symbol-list/{exchange}", params=p, op_name="eodhd_exchange_symbols",
+        http,
+        path="/exchange-symbol-list/{exchange}",
+        params=p,
+        op_name="eodhd_exchange_symbols",
         output_config=_EXCHANGE_SYMBOLS_OUTPUT,
     )
 
@@ -673,9 +674,7 @@ async def eodhd_calendar(params: EodhdCalendarParams, *, api_key: str) -> Result
         p["to"] = params.to_date
     if params.symbols:
         p["symbols"] = params.symbols
-    return await _eodhd_fetch(
-        http, path=path, params=p, op_name="eodhd_calendar", output_config=_CALENDAR_OUTPUT
-    )
+    return await _eodhd_fetch(http, path=path, params=p, op_name="eodhd_calendar", output_config=_CALENDAR_OUTPUT)
 
 
 # ---------------------------------------------------------------------------
@@ -724,9 +723,7 @@ async def eodhd_news(params: EodhdNewsParams, *, api_key: str) -> Result:
         p["from"] = params.from_date
     if params.to_date:
         p["to"] = params.to_date
-    return await _eodhd_fetch(
-        http, path="/news", params=p, op_name="eodhd_news", output_config=_NEWS_OUTPUT
-    )
+    return await _eodhd_fetch(http, path="/news", params=p, op_name="eodhd_news", output_config=_NEWS_OUTPUT)
 
 
 # ---------------------------------------------------------------------------
@@ -824,9 +821,26 @@ _TECHNICAL_OUTPUT = OutputConfig(
 )
 
 _EodhdTechnicalFunction = Literal[
-    "sma", "ema", "wma", "volatility", "stochastic", "rsi", "stddev",
-    "stochrsi", "slope", "dmi", "adx", "macd", "atr", "cci",
-    "sar", "bbands", "splitadjusted", "avgvol", "avgvolacave", "williams_r",
+    "sma",
+    "ema",
+    "wma",
+    "volatility",
+    "stochastic",
+    "rsi",
+    "stddev",
+    "stochrsi",
+    "slope",
+    "dmi",
+    "adx",
+    "macd",
+    "atr",
+    "cci",
+    "sar",
+    "bbands",
+    "splitadjusted",
+    "avgvol",
+    "avgvolacave",
+    "williams_r",
 ]
 
 
@@ -851,9 +865,7 @@ class EodhdTechnicalParams(BaseModel):
     to_date: str | None = Field(
         default=None, alias="to", description="End date ISO 8601 e.g. 2024-12-31. Use as to_date='2024-12-31'"
     )
-    order: Literal["a", "d"] = Field(
-        default="d", description="Sort order: a (ascending) or d (descending, default)"
-    )
+    order: Literal["a", "d"] = Field(default="d", description="Sort order: a (ascending) or d (descending, default)")
 
 
 @connector(output=_TECHNICAL_OUTPUT, tags=["eodhd", "equity"])
@@ -966,9 +978,7 @@ class EodhdScreenerParams(BaseModel):
         default=None,
         description="Field to sort by, e.g. market_capitalization",
     )
-    order: Literal["asc", "desc"] = Field(
-        default="desc", description="Sort order: asc or desc (default)"
-    )
+    order: Literal["asc", "desc"] = Field(default="desc", description="Sort order: asc or desc (default)")
     limit: int = Field(default=50, description="Max results (default 50)")
     offset: int = Field(default=0, description="Offset for pagination (0-indexed)")
 

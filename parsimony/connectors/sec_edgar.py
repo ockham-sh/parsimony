@@ -40,11 +40,7 @@ def _ensure_edgar_identity() -> None:
 
 
 def _is_company_search_results(value: Any) -> bool:
-    return (
-        type(value).__name__ == "CompanySearchResults"
-        and hasattr(value, "results")
-        and hasattr(value, "__len__")
-    )
+    return type(value).__name__ == "CompanySearchResults" and hasattr(value, "results") and hasattr(value, "__len__")
 
 
 def _resolve_company(identifier: str) -> Any:
@@ -142,28 +138,20 @@ SEARCH_FILINGS_OUTPUT = OutputConfig(
 class SecEdgarFindCompanyParams(BaseModel):
     """Parameters for searching SEC companies by name, ticker, or CIK."""
 
-    identifier: str = Field(
-        ..., description="Company name, ticker symbol, or CIK number to search for"
-    )
+    identifier: str = Field(..., description="Company name, ticker symbol, or CIK number to search for")
 
 
 class SecEdgarCompanyProfileParams(BaseModel):
     """Parameters for retrieving a company profile from SEC EDGAR."""
 
-    identifier: str = Field(
-        ..., description="Company name, ticker symbol, or CIK number"
-    )
+    identifier: str = Field(..., description="Company name, ticker symbol, or CIK number")
 
 
 class SecEdgarFinancialStatementParams(BaseModel):
     """Parameters for retrieving financial statements from SEC 10-K/10-Q XBRL data."""
 
-    identifier: str = Field(
-        ..., description="Company name, ticker symbol, or CIK number"
-    )
-    periods: int = Field(
-        default=4, ge=1, le=20, description="Number of filing periods to include (default 4)"
-    )
+    identifier: str = Field(..., description="Company name, ticker symbol, or CIK number")
+    periods: int = Field(default=4, ge=1, le=20, description="Number of filing periods to include (default 4)")
     annual: bool = Field(
         default=True,
         description="True for annual (10-K only), False to include quarterly (10-K + 10-Q)",
@@ -178,15 +166,9 @@ class SecEdgarSearchFilingsParams(BaseModel):
     """Parameters for full-text search across all SEC filings."""
 
     query: str = Field(..., description="Full-text search query (e.g. 'artificial intelligence risk')")
-    forms: list[str] | None = Field(
-        default=None, description="Filter by form types (e.g. ['10-K', '8-K'])"
-    )
-    start_date: str | None = Field(
-        default=None, description="Start date for filing range (YYYY-MM-DD)"
-    )
-    end_date: str | None = Field(
-        default=None, description="End date for filing range (YYYY-MM-DD)"
-    )
+    forms: list[str] | None = Field(default=None, description="Filter by form types (e.g. ['10-K', '8-K'])")
+    start_date: str | None = Field(default=None, description="Start date for filing range (YYYY-MM-DD)")
+    end_date: str | None = Field(default=None, description="End date for filing range (YYYY-MM-DD)")
     limit: int = Field(default=20, ge=1, le=100, description="Maximum results to return")
 
 
@@ -197,9 +179,7 @@ class SecEdgarFilingsParams(BaseModel):
         default=None,
         description="Company name, ticker, or CIK. If omitted, returns recent filings across all companies.",
     )
-    form: str | None = Field(
-        default=None, description="Filter by form type (e.g. '10-K', '8-K', '10-Q')"
-    )
+    form: str | None = Field(default=None, description="Filter by form type (e.g. '10-K', '8-K', '10-Q')")
     filing_date: str | None = Field(
         default=None, description="Filter by filing date or date range (YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD)"
     )
@@ -209,41 +189,31 @@ class SecEdgarFilingsParams(BaseModel):
 class SecEdgarCompanyFactsParams(BaseModel):
     """Parameters for retrieving XBRL company facts from SEC EDGAR."""
 
-    identifier: str = Field(
-        ..., description="Company name, ticker symbol, or CIK number"
-    )
+    identifier: str = Field(..., description="Company name, ticker symbol, or CIK number")
 
 
 class SecEdgarFilingDocumentParams(BaseModel):
     """Parameters for retrieving a filing's full content as markdown."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
 
 
 class SecEdgarFilingMetadataParams(BaseModel):
     """Parameters for retrieving structured metadata from a parsed SEC filing."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
 
 
 class SecEdgarFilingSectionsParams(BaseModel):
     """Parameters for listing the sections/items (table of contents) of a SEC filing."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
 
 
 class SecEdgarFilingItemParams(BaseModel):
     """Parameters for retrieving a specific section/item from a SEC filing."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
     item: str = Field(
         ...,
         description=(
@@ -259,9 +229,7 @@ class SecEdgarFilingItemParams(BaseModel):
 class SecEdgarFilingTablesParams(BaseModel):
     """Parameters for listing all tables in a SEC filing."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
     item: str | None = Field(
         default=None,
         description="Optional item identifier to scope tables to a specific section (e.g. '1A', '8')",
@@ -271,12 +239,8 @@ class SecEdgarFilingTablesParams(BaseModel):
 class SecEdgarFilingTableParams(BaseModel):
     """Parameters for retrieving a specific table from a SEC filing as a DataFrame."""
 
-    accession_number: str = Field(
-        ..., description="Filing accession number (e.g. '0001140361-26-006577')"
-    )
-    table_index: int = Field(
-        ..., ge=0, description="Zero-based table index from sec_edgar_filing_tables results"
-    )
+    accession_number: str = Field(..., description="Filing accession number (e.g. '0001140361-26-006577')")
+    table_index: int = Field(..., ge=0, description="Zero-based table index from sec_edgar_filing_tables results")
     item: str | None = Field(
         default=None,
         description="Optional item identifier — must match the item used in sec_edgar_filing_tables",
@@ -286,18 +250,10 @@ class SecEdgarFilingTableParams(BaseModel):
 class SecEdgarInsiderTradesParams(BaseModel):
     """Parameters for retrieving structured insider trades (Form 4) from SEC EDGAR."""
 
-    identifier: str = Field(
-        ..., description="Company name, ticker symbol, or CIK number"
-    )
-    start_date: str | None = Field(
-        default=None, description="Start date for filing range (YYYY-MM-DD)"
-    )
-    end_date: str | None = Field(
-        default=None, description="End date for filing range (YYYY-MM-DD)"
-    )
-    limit: int = Field(
-        default=10, ge=1, le=50, description="Maximum number of Form 4 filings to process"
-    )
+    identifier: str = Field(..., description="Company name, ticker symbol, or CIK number")
+    start_date: str | None = Field(default=None, description="Start date for filing range (YYYY-MM-DD)")
+    end_date: str | None = Field(default=None, description="End date for filing range (YYYY-MM-DD)")
+    limit: int = Field(default=10, ge=1, le=50, description="Maximum number of Form 4 filings to process")
 
 
 # ---------------------------------------------------------------------------
@@ -419,11 +375,15 @@ async def sec_edgar_find_company(params: SecEdgarFindCompanyParams) -> Result:
     else:
         entity = result
         tickers = getattr(entity, "tickers", None) or []
-        df = pd.DataFrame([{
-            "ticker": tickers[0] if tickers else "",
-            "cik": str(getattr(entity, "cik", "")).zfill(10),
-            "name": getattr(entity, "name", ""),
-        }])
+        df = pd.DataFrame(
+            [
+                {
+                    "ticker": tickers[0] if tickers else "",
+                    "cik": str(getattr(entity, "cik", "")).zfill(10),
+                    "name": getattr(entity, "name", ""),
+                }
+            ]
+        )
     return FIND_COMPANY_OUTPUT.build_table_result(
         df,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
@@ -438,14 +398,18 @@ async def sec_edgar_company_profile(params: SecEdgarCompanyProfileParams) -> Res
     """
     entity = await asyncio.to_thread(_resolve_to_entity, params.identifier)
     tickers = getattr(entity, "tickers", None) or []
-    df = pd.DataFrame([{
-        "name": getattr(entity, "name", ""),
-        "cik": str(getattr(entity, "cik", "")).zfill(10),
-        "ticker": tickers[0] if tickers else "",
-        "industry": getattr(entity, "industry", ""),
-        "sic": getattr(entity, "sic", ""),
-        "fiscal_year_end": getattr(entity, "fiscal_year_end", ""),
-    }])
+    df = pd.DataFrame(
+        [
+            {
+                "name": getattr(entity, "name", ""),
+                "cik": str(getattr(entity, "cik", "")).zfill(10),
+                "ticker": tickers[0] if tickers else "",
+                "industry": getattr(entity, "industry", ""),
+                "sic": getattr(entity, "sic", ""),
+                "fiscal_year_end": getattr(entity, "fiscal_year_end", ""),
+            }
+        ]
+    )
     return Result.from_dataframe(
         df,
         Provenance(source="sec_edgar", params=params.model_dump()),
@@ -522,11 +486,7 @@ async def sec_edgar_search_filings(params: SecEdgarSearchFilingsParams) -> Resul
         }
         for r in getattr(results, "results", [])
     ]
-    df = (
-        pd.DataFrame(rows)
-        if rows
-        else pd.DataFrame(columns=["form", "company", "filed", "accession", "cik"])
-    )
+    df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["form", "company", "filed", "accession", "cik"])
     if df.empty:
         raise EmptyDataError(provider="sec_edgar", message=f"No filings found for search: '{params.query}'")
     return SEARCH_FILINGS_OUTPUT.build_table_result(
@@ -549,9 +509,7 @@ async def sec_edgar_filings(params: SecEdgarFilingsParams) -> Result:
         entity = await asyncio.to_thread(_resolve_to_entity, params.identifier)
         filings = entity.get_filings(form=params.form, filing_date=params.filing_date)
     else:
-        filings = await asyncio.to_thread(
-            get_filings, form=params.form, filing_date=params.filing_date
-        )
+        filings = await asyncio.to_thread(get_filings, form=params.form, filing_date=params.filing_date)
     if filings is None:
         raise EmptyDataError(provider="sec_edgar", message="No filings found")
     df = await asyncio.to_thread(filings.head(params.limit).to_pandas)
@@ -628,12 +586,13 @@ async def sec_edgar_filing_metadata(params: SecEdgarFilingMetadataParams) -> Res
     # Fall back to filing-level to_context()
     content = await asyncio.to_thread(filing.to_context, detail="full")
     if not content or not content.strip():
-        raise EmptyDataError(provider="sec_edgar", message=f"No metadata available for filing {params.accession_number}")
+        raise EmptyDataError(
+            provider="sec_edgar", message=f"No metadata available for filing {params.accession_number}"
+        )
     return Result(
         data=content,
         provenance=Provenance(source="sec_edgar", params=params.model_dump()),
     )
-
 
 
 @connector(tags=["sec_edgar"])
@@ -652,10 +611,7 @@ async def sec_edgar_filing_sections(params: SecEdgarFilingSectionsParams) -> Res
         raise EmptyDataError(provider="sec_edgar", message=f"No sections found for filing {params.accession_number}")
 
     # Build a DataFrame from the items list
-    if isinstance(items, (list, tuple)):
-        rows = [{"item": str(i)} for i in items]
-    else:
-        rows = [{"item": str(items)}]
+    rows = [{"item": str(i)} for i in items] if isinstance(items, (list, tuple)) else [{"item": str(items)}]
 
     # Try to get section details (title, confidence) if available
     sections = getattr(obj, "sections", None)
@@ -731,13 +687,15 @@ async def sec_edgar_filing_tables(params: SecEdgarFilingTablesParams) -> Result:
 
     rows = []
     for i, table in enumerate(tables):
-        rows.append({
-            "table_index": i,
-            "caption": getattr(table, "caption", None) or "",
-            "is_financial": getattr(table, "is_financial_table", False),
-            "row_count": getattr(table, "row_count", 0),
-            "col_count": getattr(table, "col_count", 0),
-        })
+        rows.append(
+            {
+                "table_index": i,
+                "caption": getattr(table, "caption", None) or "",
+                "is_financial": getattr(table, "is_financial_table", False),
+                "row_count": getattr(table, "row_count", 0),
+                "col_count": getattr(table, "col_count", 0),
+            }
+        )
 
     df = pd.DataFrame(rows)
     return Result.from_dataframe(
@@ -760,9 +718,7 @@ async def sec_edgar_filing_table(params: SecEdgarFilingTableParams) -> Result:
     if not tables:
         raise EmptyDataError(provider="sec_edgar", message=f"No tables found in filing {params.accession_number}")
     if params.table_index >= len(tables):
-        raise ValueError(
-            f"table_index {params.table_index} out of range (filing has {len(tables)} tables)"
-        )
+        raise ValueError(f"table_index {params.table_index} out of range (filing has {len(tables)} tables)")
 
     table = tables[params.table_index]
     df = await asyncio.to_thread(table.to_dataframe)
@@ -864,15 +820,26 @@ async def sec_edgar_insider_trades(params: SecEdgarInsiderTradesParams) -> Resul
     await asyncio.to_thread(_extract_form4_data)
 
     if not all_dfs:
-        raise EmptyDataError(provider="sec_edgar", message=f"No insider transactions extracted for '{params.identifier}'")
+        raise EmptyDataError(
+            provider="sec_edgar", message=f"No insider transactions extracted for '{params.identifier}'"
+        )
 
     df = pd.concat(all_dfs, ignore_index=True)
 
     # Select and reorder columns for clarity
     keep_cols = [
-        "owner", "position", "TransactionType", "Date", "Security",
-        "Shares", "Price", "Remaining", "AcquiredDisposed", "Code",
-        "filing_date", "accession_number",
+        "owner",
+        "position",
+        "TransactionType",
+        "Date",
+        "Security",
+        "Shares",
+        "Price",
+        "Remaining",
+        "AcquiredDisposed",
+        "Code",
+        "filing_date",
+        "accession_number",
     ]
     available = [c for c in keep_cols if c in df.columns]
     df = df[available]
@@ -910,7 +877,7 @@ def _get_tables_from_filing(filing: Any, item: str | None) -> list[Any]:
         tables_method = getattr(section, "tables", None)
         if tables_method is None:
             raise ParseError(provider="sec_edgar", message="Section does not support table extraction")
-        return tables_method() if callable(tables_method) else tables_method
+        return list(tables_method()) if callable(tables_method) else list(tables_method)
     # Document-level tables
     doc = getattr(obj, "document", None)
     if doc is None:
@@ -920,24 +887,27 @@ def _get_tables_from_filing(filing: Any, item: str | None) -> list[Any]:
         return []
     return tables if isinstance(tables, list) else list(tables)
 
+
 # ---------------------------------------------------------------------------
 # Exports
 # ---------------------------------------------------------------------------
 
-CONNECTORS = Connectors([
-    sec_edgar_find_company,
-    sec_edgar_company_profile,
-    sec_edgar_income_statement,
-    sec_edgar_balance_sheet,
-    sec_edgar_cashflow_statement,
-    sec_edgar_search_filings,
-    sec_edgar_filings,
-    sec_edgar_company_facts,
-    sec_edgar_filing_document,
-    sec_edgar_filing_metadata,
-    sec_edgar_filing_sections,
-    sec_edgar_filing_item,
-    sec_edgar_filing_tables,
-    sec_edgar_filing_table,
-    sec_edgar_insider_trades,
-])
+CONNECTORS = Connectors(
+    [
+        sec_edgar_find_company,
+        sec_edgar_company_profile,
+        sec_edgar_income_statement,
+        sec_edgar_balance_sheet,
+        sec_edgar_cashflow_statement,
+        sec_edgar_search_filings,
+        sec_edgar_filings,
+        sec_edgar_company_facts,
+        sec_edgar_filing_document,
+        sec_edgar_filing_metadata,
+        sec_edgar_filing_sections,
+        sec_edgar_filing_item,
+        sec_edgar_filing_tables,
+        sec_edgar_filing_table,
+        sec_edgar_insider_trades,
+    ]
+)

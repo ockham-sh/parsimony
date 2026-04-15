@@ -258,12 +258,10 @@ def _sdmx_client(agency_id: str):
     def _patched_send(request: Any, **kwargs: Any) -> Any:
         url = getattr(request, "url", "") or ""
         if "dataapi.worldbank.org" in url:
-            request.url = url.replace("dataapi.worldbank.org", "api.worldbank.org").replace(
-                "http://", "https://"
-            )
+            request.url = url.replace("dataapi.worldbank.org", "api.worldbank.org").replace("http://", "https://")
         return original_send(request, **kwargs)
 
-    client.session.send = _patched_send  # type: ignore[assignment]
+    client.session.send = _patched_send  # type: ignore[method-assign]
     try:
         yield client
     finally:
@@ -277,10 +275,7 @@ def _build_sdmx_dataset_url(agency_id: str, dataset_id: str) -> str | None:
     if normalized == "ECB":
         return f"https://data.ecb.europa.eu/data/datasets/{encoded}"
     if normalized == "ESTAT":
-        return (
-            f"https://ec.europa.eu/eurostat/databrowser/view/{encoded}"
-            "/default/table?lang=en"
-        )
+        return f"https://ec.europa.eu/eurostat/databrowser/view/{encoded}/default/table?lang=en"
     if normalized in ("IMF", "IMF_DATA"):
         return f"https://data.imf.org/?sk={encoded}"
     return None
@@ -416,7 +411,7 @@ def _parse_sdmx_key(key: str, dim_ids: list[str]) -> dict[str, list[str]]:
             f"dimension(s) ({', '.join(dim_ids)}). Key: {key!r}"
         )
     result: dict[str, list[str]] = {}
-    for dim_id, part in zip(dim_ids, parts):
+    for dim_id, part in zip(dim_ids, parts, strict=False):
         if part and part != "*":
             codes = [c.strip() for c in part.split("+") if c.strip()]
             if codes:
@@ -498,10 +493,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
             ) from exc
 
     raw = sdmx_lib.to_pandas(msg.data)
-    if isinstance(raw, pd.Series):
-        df = raw.rename("value").to_frame().reset_index()
-    else:
-        df = pd.DataFrame(raw).reset_index()
+    df = raw.rename("value").to_frame().reset_index() if isinstance(raw, pd.Series) else pd.DataFrame(raw).reset_index()
     if df.empty:
         raise EmptyDataError(provider="sdmx", message="No data returned for requested series.")
 
@@ -531,9 +523,7 @@ async def sdmx_fetch(params: SdmxFetchParams) -> Result:
         df.loc[empty_title_mask, "title"] = df.loc[empty_title_mask, "series_key"]
     for dim_id in dim_ids:
         labels = label_maps.get(dim_id, {})
-        df[dim_id] = df[dim_id].map(
-            lambda code, _lbl=labels: _format_code_with_label(str(code), _lbl.get(str(code)))
-        )
+        df[dim_id] = df[dim_id].map(lambda code, _lbl=labels: _format_code_with_label(str(code), _lbl.get(str(code))))
     long_df = df[["series_key", "title", *dim_ids, "TIME_PERIOD", "value"]]
 
     additional_metadata: list[dict[str, str]] = []
@@ -691,10 +681,7 @@ async def sdmx_series_keys(params: SdmxSeriesKeysParams) -> Result:
         with _sdmx_client(agency_id) as client:
             _dataflow, dsd, dsd_msg = _fetch_dsd(client, dataset_id)
             raw = client.series_keys(dataset_id)
-        if isinstance(raw, dict):
-            series_list = list(raw.values())
-        else:
-            series_list = list(raw)
+        series_list = list(raw.values()) if isinstance(raw, dict) else list(raw)
         if not series_list:
             return pd.DataFrame(), []
         sk_df = sdmx_lib.to_pandas(series_list).astype("string")
@@ -705,9 +692,7 @@ async def sdmx_series_keys(params: SdmxSeriesKeysParams) -> Result:
         for dim_id in dim_ids:
             sk_df[dim_id] = sk_df[dim_id].fillna("")
         sk_df["series_key"] = sk_df[dim_ids].agg(".".join, axis=1)
-        active_filters = (
-            _parse_sdmx_key(params.key, dim_ids) if params.key else params.filters
-        )
+        active_filters = _parse_sdmx_key(params.key, dim_ids) if params.key else params.filters
         for fk, allowed in active_filters.items():
             if fk not in sk_df.columns:
                 raise ValueError(f"Filter key {fk!r} is not a dimension column in series keys.")
@@ -807,6 +792,4 @@ async def enumerate_sdmx_dataset_codelists(
     return await asyncio.to_thread(_build_dataset_codelists_tables_sync, params.dataset_key)
 
 
-CONNECTORS = Connectors(
-    [sdmx_fetch, sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys]
-)
+CONNECTORS = Connectors([sdmx_fetch, sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys])

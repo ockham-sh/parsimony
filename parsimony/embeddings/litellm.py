@@ -27,14 +27,10 @@ def _validate_embedding_response(
 ) -> list[list[float]]:
     """Extract and validate embeddings from a litellm response."""
     if "data" not in response:
-        raise ValueError(
-            f"Embedding response missing 'data' key. Keys present: {list(response.keys())}"
-        )
+        raise ValueError(f"Embedding response missing 'data' key. Keys present: {list(response.keys())}")
     items = response["data"]
     if len(items) != expected_count:
-        raise ValueError(
-            f"Embedding response returned {len(items)} items, expected {expected_count}"
-        )
+        raise ValueError(f"Embedding response returned {len(items)} items, expected {expected_count}")
     embeddings: list[list[float]] = []
     for i, item in enumerate(items):
         # litellm returns Pydantic Embedding objects; support both attribute
@@ -46,9 +42,7 @@ def _validate_embedding_response(
         else:
             raise ValueError(f"Embedding item {i} missing 'embedding' key")
         if len(vec) != expected_dim:
-            raise ValueError(
-                f"Embedding item {i} has dimension {len(vec)}, expected {expected_dim}"
-            )
+            raise ValueError(f"Embedding item {i} has dimension {len(vec)}, expected {expected_dim}")
         embeddings.append(vec)
     return embeddings
 
@@ -92,17 +86,19 @@ class LiteLLMEmbeddingProvider(EmbeddingProvider):
         except Exception as exc:
             logger.error(
                 "Embedding call failed: model=%s, batch_size=%d, error=%s",
-                self._model, len(input_texts), exc,
+                self._model,
+                len(input_texts),
+                exc,
             )
-            raise RuntimeError(
-                f"Embedding call failed for model {self._model!r}: {exc}"
-            ) from exc
+            raise RuntimeError(f"Embedding call failed for model {self._model!r}: {exc}") from exc
         elapsed = time.monotonic() - t0
         logger.info(
             "Embedding call: model=%s, batch_size=%d, duration=%.2fs",
-            self._model, len(input_texts), elapsed,
+            self._model,
+            len(input_texts),
+            elapsed,
         )
-        return response
+        return response  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:

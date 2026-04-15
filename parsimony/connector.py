@@ -8,6 +8,16 @@ Typed exceptions live in :mod:`parsimony.errors`.
 
 from __future__ import annotations
 
+__all__ = [
+    "Connector",
+    "Connectors",
+    "Namespace",
+    "ResultCallback",
+    "connector",
+    "enumerator",
+    "loader",
+]
+
 import functools
 import inspect
 import logging
@@ -41,11 +51,9 @@ class Namespace:
         object.__setattr__(self, "name", normalize_code(self.name))
 
     def __get_pydantic_core_schema__(self, source_type: Any, handler: Any) -> CoreSchema:
-        return handler(source_type)
+        return handler(source_type)  # type: ignore[no-any-return]
 
-    def __get_pydantic_json_schema__(
-        self, core_schema: CoreSchema, handler: GetJsonSchemaHandler
-    ) -> dict[str, Any]:
+    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> dict[str, Any]:
         json_schema = handler(core_schema)
         json_schema = handler.resolve_ref_schema(json_schema)
         json_schema["namespace"] = self.name
@@ -58,10 +66,10 @@ def _mapping_proxy(d: dict[str, Any] | None) -> Mapping[str, Any]:
 
 def _resolve_type(spec: dict[str, Any]) -> str:
     if "type" in spec:
-        return spec["type"]
+        return str(spec["type"])
     any_of = spec.get("anyOf", [])
     types = [s.get("type") for s in any_of if s.get("type") and s["type"] != "null"]
-    return types[0] if types else "any"
+    return str(types[0]) if types else "any"
 
 
 def _summarize_params(schema: Mapping[str, Any]) -> str:
@@ -100,9 +108,7 @@ def _parse_first_param_and_deps(
                 model_type = a
                 break
     if model_type is None or not issubclass(model_type, BaseModel):
-        raise TypeError(
-            f"{fn.__name__}: first parameter must be annotated with a Pydantic BaseModel subclass"
-        )
+        raise TypeError(f"{fn.__name__}: first parameter must be annotated with a Pydantic BaseModel subclass")
     required_deps: list[str] = []
     optional_deps: list[str] = []
     for p in params_list[1:]:
@@ -220,9 +226,7 @@ class Connector:
             return params
         if isinstance(params, BaseModel):
             return self.param_type.model_validate(params.model_dump(mode="python"))
-        raise TypeError(
-            f"params must be {self.param_type.__name__} or None; got {type(params).__name__}"
-        )
+        raise TypeError(f"params must be {self.param_type.__name__} or None; got {type(params).__name__}")
 
     async def __call__(
         self,
@@ -258,12 +262,16 @@ class Connector:
             raise ParseError(self.name, str(exc)) from exc
         # Ensure provenance carries the connector name for UI display
         if result.provenance.source != self.name:
-            result = result.model_copy(update={
-                "provenance": result.provenance.model_copy(update={
-                    "source": self.name,
-                    "source_description": result.provenance.source_description or self.description,
-                })
-            })
+            result = result.model_copy(
+                update={
+                    "provenance": result.provenance.model_copy(
+                        update={
+                            "source": self.name,
+                            "source_description": result.provenance.source_description or self.description,
+                        }
+                    )
+                }
+            )
         if self._callbacks:
             await _invoke_result_callbacks(self._callbacks, result)
         return result
@@ -422,9 +430,7 @@ def connector(
         doc = (fn.__doc__ or "").strip()
         desc = description if description is not None else doc
         if not desc:
-            raise ValueError(
-                f"{fn.__name__}: add a docstring or pass description= (connector description is required)"
-            )
+            raise ValueError(f"{fn.__name__}: add a docstring or pass description= (connector description is required)")
         nm = name if name is not None else fn.__name__
         schema = _mapping_proxy(param_type.model_json_schema())
         tag_tup = tuple(tags) if tags else ()
@@ -451,27 +457,21 @@ def _validate_enumerator_output(output: OutputConfig) -> None:
     data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
     if data_names:
         raise ValueError(
-            "Enumerator output must not include DATA columns; "
-            f"remove or reassign roles for: {data_names!r}"
+            f"Enumerator output must not include DATA columns; remove or reassign roles for: {data_names!r}"
         )
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
         raise ValueError(
-            "Enumerator output must define exactly one KEY column for catalog indexing; "
-            f"found {len(key_cols)}"
+            f"Enumerator output must define exactly one KEY column for catalog indexing; found {len(key_cols)}"
         )
     key = key_cols[0]
     if key.namespace is None or not str(key.namespace).strip():
         raise ValueError(
-            "Enumerator KEY column must declare a non-empty namespace=... "
-            "(required by Catalog.index_result)"
+            "Enumerator KEY column must declare a non-empty namespace=... (required by Catalog.index_result)"
         )
     title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
     if len(title_cols) != 1:
-        raise ValueError(
-            "Enumerator output must define exactly one TITLE column; "
-            f"found {len(title_cols)}"
-        )
+        raise ValueError(f"Enumerator output must define exactly one TITLE column; found {len(title_cols)}")
 
 
 def _validate_loader_output(output: OutputConfig) -> None:
@@ -479,31 +479,21 @@ def _validate_loader_output(output: OutputConfig) -> None:
     cols = output.columns
     title_names = [c.name for c in cols if c.role == ColumnRole.TITLE]
     if title_names:
-        raise ValueError(
-            "Loader output must not include TITLE columns; "
-            f"remove or reassign roles for: {title_names!r}"
-        )
+        raise ValueError(f"Loader output must not include TITLE columns; remove or reassign roles for: {title_names!r}")
     meta_names = [c.name for c in cols if c.role == ColumnRole.METADATA]
     if meta_names:
         raise ValueError(
-            "Loader output must not include METADATA columns; "
-            f"remove or reassign roles for: {meta_names!r}"
+            f"Loader output must not include METADATA columns; remove or reassign roles for: {meta_names!r}"
         )
     data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
     if not data_names:
         raise ValueError("Loader output must include at least one DATA column")
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
-        raise ValueError(
-            "Loader output must define exactly one KEY column for identity; "
-            f"found {len(key_cols)}"
-        )
+        raise ValueError(f"Loader output must define exactly one KEY column for identity; found {len(key_cols)}")
     key = key_cols[0]
     if key.namespace is None or not str(key.namespace).strip():
-        raise ValueError(
-            "Loader KEY column must declare a non-empty namespace=... "
-            "(required by DataStore.load_result)"
-        )
+        raise ValueError("Loader KEY column must declare a non-empty namespace=... (required by DataStore.load_result)")
 
 
 def loader(
@@ -573,6 +563,7 @@ def enumerator(
 
 ResultCallback = Callable[[Result], Any]
 """Post-fetch hook: ``(result)``. May return ``None`` or an awaitable."""
+
 
 async def _invoke_result_callbacks(
     callbacks: tuple[ResultCallback, ...],
@@ -674,11 +665,11 @@ class Connectors:
         "execution environment, not in the conversation context.\n"
         "\n"
         "## How to use\n"
-        "- `result = await client[\"name\"](param=value)` — returns Result "
+        '- `result = await client["name"](param=value)` — returns Result '
         "with .data and .provenance (source metadata).\n"
         "- .data is usually a DataFrame; some connectors return text (noted in their description).\n"
         "- Keyword arguments must match the connector's typed parameters.\n"
-        "- `client.filter(name=\"query\")` narrows by name or description.\n"
+        '- `client.filter(name="query")` narrows by name or description.\n'
         "- **ONLY use connectors listed below. Do NOT invent connector names.**\n"
     )
 
@@ -767,6 +758,3 @@ class Connectors:
                 continue
             out.append(c)
         return Connectors(out)
-
-
-

@@ -26,9 +26,6 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-_TICKER_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
-_TICKERS_RE = re.compile(r"^[a-zA-Z0-9._,\-/]+$")
-
 from parsimony.connector import (
     Connectors,
     Namespace,
@@ -50,6 +47,9 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+_TICKER_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
+_TICKERS_RE = re.compile(r"^[a-zA-Z0-9._,\-/]+$")
 
 ENV_VARS: dict[str, str] = {"api_key": "TIINGO_API_KEY"}
 
@@ -208,12 +208,8 @@ class TiingoEodParams(BaseModel):
     ticker: Annotated[str, Namespace("tiingo_ticker")] = Field(
         ..., description="Stock ticker, e.g. 'AAPL'. Use tiingo_search to resolve tickers."
     )
-    start_date: str | None = Field(
-        default=None, description="Start date ISO 8601, e.g. '2024-01-01'."
-    )
-    end_date: str | None = Field(
-        default=None, description="End date ISO 8601, e.g. '2024-12-31'."
-    )
+    start_date: str | None = Field(default=None, description="Start date ISO 8601, e.g. '2024-01-01'.")
+    end_date: str | None = Field(default=None, description="End date ISO 8601, e.g. '2024-12-31'.")
 
     @field_validator("ticker")
     @classmethod
@@ -380,12 +376,8 @@ class TiingoIexHistParams(BaseModel):
     ticker: Annotated[str, Namespace("tiingo_ticker")] = Field(
         ..., description="Stock ticker, e.g. 'AAPL'. Use tiingo_search to resolve tickers."
     )
-    start_date: str | None = Field(
-        default=None, description="Start date ISO 8601, e.g. '2024-01-01'."
-    )
-    end_date: str | None = Field(
-        default=None, description="End date ISO 8601, e.g. '2024-01-05'."
-    )
+    start_date: str | None = Field(default=None, description="Start date ISO 8601, e.g. '2024-01-01'.")
+    end_date: str | None = Field(default=None, description="End date ISO 8601, e.g. '2024-01-05'.")
     resample_freq: str = Field(
         default="1hour",
         description="Resample frequency: '1min', '5min', '15min', '30min', '1hour', '2hour', '4hour'.",
@@ -622,15 +614,9 @@ class TiingoNewsParams(BaseModel):
         default=None,
         description="Comma-separated tickers to filter, e.g. 'AAPL,MSFT'. Omit for all.",
     )
-    source: str | None = Field(
-        default=None, description="News source filter, e.g. 'bloomberg.com'."
-    )
-    start_date: str | None = Field(
-        default=None, description="Start date ISO 8601, e.g. '2024-01-01'."
-    )
-    end_date: str | None = Field(
-        default=None, description="End date ISO 8601, e.g. '2024-12-31'."
-    )
+    source: str | None = Field(default=None, description="News source filter, e.g. 'bloomberg.com'.")
+    start_date: str | None = Field(default=None, description="Start date ISO 8601, e.g. '2024-01-01'.")
+    end_date: str | None = Field(default=None, description="End date ISO 8601, e.g. '2024-12-31'.")
     limit: int = Field(default=50, ge=1, le=100, description="Max articles (1-100)")
 
 
@@ -651,9 +637,7 @@ async def tiingo_news(params: TiingoNewsParams, *, api_key: str) -> Result:
     if params.end_date:
         req["endDate"] = params.end_date
 
-    data = await _tiingo_fetch(
-        http, path="/tiingo/news", params=req, op_name="tiingo_news"
-    )
+    data = await _tiingo_fetch(http, path="/tiingo/news", params=req, op_name="tiingo_news")
 
     if not isinstance(data, list) or not data:
         raise EmptyDataError(
@@ -704,15 +688,9 @@ _CRYPTO_PRICES_OUTPUT = OutputConfig(
 class TiingoCryptoPricesParams(BaseModel):
     """Historical crypto prices."""
 
-    tickers: str = Field(
-        ..., description="Crypto pair, e.g. 'btcusd' or 'ethusd'. Use lowercase."
-    )
-    start_date: str | None = Field(
-        default=None, description="Start date ISO 8601, e.g. '2024-01-01'."
-    )
-    end_date: str | None = Field(
-        default=None, description="End date ISO 8601, e.g. '2024-12-31'."
-    )
+    tickers: str = Field(..., description="Crypto pair, e.g. 'btcusd' or 'ethusd'. Use lowercase.")
+    start_date: str | None = Field(default=None, description="Start date ISO 8601, e.g. '2024-01-01'.")
+    end_date: str | None = Field(default=None, description="End date ISO 8601, e.g. '2024-12-31'.")
     resample_freq: str = Field(
         default="1day",
         description="Resample frequency: '1min', '5min', '15min', '30min', '1hour', '4hour', '1day'.",
@@ -801,9 +779,7 @@ _CRYPTO_TOP_OUTPUT = OutputConfig(
 class TiingoCryptoTopParams(BaseModel):
     """Real-time crypto top-of-book quotes."""
 
-    tickers: str = Field(
-        ..., description="Comma-separated crypto pairs, e.g. 'btcusd' or 'btcusd,ethusd'. Lowercase."
-    )
+    tickers: str = Field(..., description="Comma-separated crypto pairs, e.g. 'btcusd' or 'btcusd,ethusd'. Lowercase.")
 
 
 @connector(output=_CRYPTO_TOP_OUTPUT, tags=["crypto"])
@@ -878,15 +854,9 @@ _FX_PRICES_OUTPUT = OutputConfig(
 class TiingoFxPricesParams(BaseModel):
     """Historical forex prices."""
 
-    tickers: str = Field(
-        ..., description="Forex pair, e.g. 'eurusd' or 'gbpjpy'. Use lowercase."
-    )
-    start_date: str | None = Field(
-        default=None, description="Start date ISO 8601, e.g. '2024-01-01'."
-    )
-    end_date: str | None = Field(
-        default=None, description="End date ISO 8601, e.g. '2024-12-31'."
-    )
+    tickers: str = Field(..., description="Forex pair, e.g. 'eurusd' or 'gbpjpy'. Use lowercase.")
+    start_date: str | None = Field(default=None, description="Start date ISO 8601, e.g. '2024-01-01'.")
+    end_date: str | None = Field(default=None, description="End date ISO 8601, e.g. '2024-12-31'.")
     resample_freq: str = Field(
         default="1day",
         description="Resample frequency: '1min', '5min', '15min', '30min', '1hour', '4hour', '1day'.",
@@ -958,9 +928,7 @@ _FX_TOP_OUTPUT = OutputConfig(
 class TiingoFxTopParams(BaseModel):
     """Real-time forex top-of-book quotes."""
 
-    tickers: str = Field(
-        ..., description="Comma-separated forex pairs, e.g. 'eurusd' or 'eurusd,gbpjpy'. Lowercase."
-    )
+    tickers: str = Field(..., description="Comma-separated forex pairs, e.g. 'eurusd' or 'eurusd,gbpjpy'. Lowercase.")
 
 
 @connector(output=_FX_TOP_OUTPUT, tags=["forex"])

@@ -34,15 +34,9 @@ class FredSearchParams(BaseModel):
 class FredFetchParams(BaseModel):
     """Parameters for fetching FRED time series observations."""
 
-    series_id: Annotated[str, Namespace("fred")] = Field(
-        ..., description="FRED series identifier (e.g. GDPC1, UNRATE)"
-    )
-    observation_start: str | None = Field(
-        default=None, description="Start date (YYYY-MM-DD)"
-    )
-    observation_end: str | None = Field(
-        default=None, description="End date (YYYY-MM-DD)"
-    )
+    series_id: Annotated[str, Namespace("fred")] = Field(..., description="FRED series identifier (e.g. GDPC1, UNRATE)")
+    observation_start: str | None = Field(default=None, description="Start date (YYYY-MM-DD)")
+    observation_end: str | None = Field(default=None, description="End date (YYYY-MM-DD)")
 
     @field_validator("series_id")
     @classmethod
@@ -253,9 +247,7 @@ async def _enumerate_release_series(
     all_series: list[dict[str, Any]] = []
     offset = 0
     while True:
-        batch = await _fetch_release_series_page(
-            http, release_id, limit=page_size, offset=offset
-        )
+        batch = await _fetch_release_series_page(http, release_id, limit=page_size, offset=offset)
         if not batch:
             break
         all_series.extend(batch)
@@ -298,5 +290,3 @@ async def enumerate_fred_release(
             }
         )
     return pd.DataFrame(rows)
-
-

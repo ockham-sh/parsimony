@@ -29,9 +29,18 @@ _BASE_URL = "https://www-genesis.destatis.de/genesisWS/rest/2020"
 ENV_VARS: dict[str, str] = {"username": "DESTATIS_USERNAME", "password": "DESTATIS_PASSWORD"}
 
 _GERMAN_MONTHS = {
-    "Januar": "01", "Februar": "02", "März": "03", "April": "04",
-    "Mai": "05", "Juni": "06", "Juli": "07", "August": "08",
-    "September": "09", "Oktober": "10", "November": "11", "Dezember": "12",
+    "Januar": "01",
+    "Februar": "02",
+    "März": "03",
+    "April": "04",
+    "Mai": "05",
+    "Juni": "06",
+    "Juli": "07",
+    "August": "08",
+    "September": "09",
+    "Oktober": "10",
+    "November": "11",
+    "Dezember": "12",
 }
 
 
@@ -43,9 +52,7 @@ _GERMAN_MONTHS = {
 class DestatisFetchParams(BaseModel):
     """Parameters for fetching Destatis table data."""
 
-    table_id: Annotated[str, Namespace("destatis")] = Field(
-        ..., description="GENESIS table ID (e.g. 61111-0001)"
-    )
+    table_id: Annotated[str, Namespace("destatis")] = Field(..., description="GENESIS table ID (e.g. 61111-0001)")
     start_year: str | None = Field(default=None, description="Start year (YYYY)")
     end_year: str | None = Field(default=None, description="End year (YYYY)")
 
@@ -134,11 +141,14 @@ async def destatis_fetch(
     converted.  German number formats (1.234,56) are handled
     automatically.
     """
-    http = HttpClient(_BASE_URL)
+    HttpClient(_BASE_URL)
 
     req_params: dict[str, Any] = {
-        "username": username, "password": password,
-        "name": params.table_id, "format": "ffcsv", "language": "de",
+        "username": username,
+        "password": password,
+        "name": params.table_id,
+        "format": "ffcsv",
+        "language": "de",
     }
     if params.start_year:
         req_params["startyear"] = params.start_year
@@ -151,7 +161,11 @@ async def destatis_fetch(
         response = await client.get(f"{_BASE_URL}/data/tablefile", params=req_params)
 
     if response.status_code != 200:
-        raise ProviderError(provider="destatis", status_code=response.status_code, message=f"Destatis API error: HTTP {response.status_code}")
+        raise ProviderError(
+            provider="destatis",
+            status_code=response.status_code,
+            message=f"Destatis API error: HTTP {response.status_code}",
+        )
 
     text = response.text
     if "<html" in text.lower() or "announcement" in text.lower() or "datenbank/online" in str(response.url):
@@ -227,10 +241,13 @@ async def enumerate_destatis(
     http = HttpClient(_BASE_URL)
 
     response = await http.request(
-        "GET", "/catalogue/tables",
+        "GET",
+        "/catalogue/tables",
         params={
-            "username": username, "password": password,
-            "language": "en", "pagelength": "500",
+            "username": username,
+            "password": password,
+            "language": "en",
+            "pagelength": "500",
         },
     )
     response.raise_for_status()
@@ -239,16 +256,16 @@ async def enumerate_destatis(
     tables = body.get("Tables", body.get("tables", []))
     rows: list[dict[str, str]] = []
     for t in tables:
-        rows.append({
-            "table_id": t.get("Code", t.get("code", "")),
-            "title": t.get("Content", t.get("content", "")),
-            "category": t.get("Subject", t.get("subject", "")),
-            "frequency": t.get("Time", t.get("time", "")),
-        })
+        rows.append(
+            {
+                "table_id": t.get("Code", t.get("code", "")),
+                "title": t.get("Content", t.get("content", "")),
+                "category": t.get("Subject", t.get("subject", "")),
+                "frequency": t.get("Time", t.get("time", "")),
+            }
+        )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["table_id", "title", "category", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["table_id", "title", "category", "frequency"])
 
 
 # ---------------------------------------------------------------------------

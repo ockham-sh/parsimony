@@ -63,11 +63,9 @@ async def _embed_batch(
     if len(vectors) != len(entries):
         raise ValueError("Embedding batch size mismatch")
     out: list[SeriesEntry] = []
-    for entry, vec in zip(entries, vectors):
+    for entry, vec in zip(entries, vectors, strict=False):
         if len(vec) != embeddings.dimension:
-            raise ValueError(
-                f"Embedding dimension {len(vec)} != expected {embeddings.dimension}"
-            )
+            raise ValueError(f"Embedding dimension {len(vec)} != expected {embeddings.dimension}")
         out.append(entry.model_copy(update={"embedding": vec}))
     return out
 
@@ -82,9 +80,7 @@ def _entries_from_table_result(
     Namespace is read from the KEY column's :attr:`~parsimony.result.Column.namespace`.
     """
     if not isinstance(table.data, (pd.DataFrame, pd.Series)):
-        raise TypeError(
-            f"indexing expected tabular data, got {type(table.data).__name__}"
-        )
+        raise TypeError(f"indexing expected tabular data, got {type(table.data).__name__}")
     df = table.df
     if df.empty:
         return []
@@ -93,34 +89,24 @@ def _entries_from_table_result(
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
         raise ValueError(
-            "SemanticTableResult must have exactly one KEY column in output_schema, "
-            f"found {len(key_cols)}"
+            f"SemanticTableResult must have exactly one KEY column in output_schema, found {len(key_cols)}"
         )
     key_col = key_cols[0]
     if not key_col.namespace:
-        raise ValueError(
-            "KEY column must declare namespace=... on the schema for catalog indexing"
-        )
+        raise ValueError("KEY column must declare namespace=... on the schema for catalog indexing")
     key_name = key_col.name
     if key_name not in df.columns:
-        raise ValueError(
-            f"SemanticTableResult missing KEY column {key_name!r}. Available: {list(df.columns)}"
-        )
+        raise ValueError(f"SemanticTableResult missing KEY column {key_name!r}. Available: {list(df.columns)}")
 
     title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
     title_name = title_cols[0].name if len(title_cols) == 1 else None
     if title_name is not None and title_name not in df.columns:
-        raise ValueError(
-            f"SemanticTableResult missing TITLE column {title_name!r}. "
-            f"Available: {list(df.columns)}"
-        )
+        raise ValueError(f"SemanticTableResult missing TITLE column {title_name!r}. Available: {list(df.columns)}")
 
     meta_names = [c.name for c in cols if c.role == ColumnRole.METADATA]
     for mn in meta_names:
         if mn not in df.columns:
-            raise ValueError(
-                f"SemanticTableResult missing METADATA column {mn!r}. Available: {list(df.columns)}"
-            )
+            raise ValueError(f"SemanticTableResult missing METADATA column {mn!r}. Available: {list(df.columns)}")
 
     raw_codes = df[key_name].dropna().unique()
     ns = normalize_code(key_col.namespace)
@@ -245,9 +231,7 @@ class Catalog:
         if self._embeddings is not None:
             query_embedding = await self._embeddings.embed_query(query)
 
-        return await self._store.search(
-            query, limit, namespaces=namespaces, query_embedding=query_embedding
-        )
+        return await self._store.search(query, limit, namespaces=namespaces, query_embedding=query_embedding)
 
     # ------------------------------------------------------------------
     # Indexing
@@ -266,12 +250,8 @@ class Catalog:
         """Extract catalog rows from *table* and :meth:`ingest` them."""
         entries = _entries_from_table_result(table, extra_tags=extra_tags)
         if dry_run:
-            return await self._preview_ingest(
-                entries, batch_size=batch_size, force=force
-            )
-        return await self.ingest(
-            entries, embed=embed, batch_size=batch_size, force=force
-        )
+            return await self._preview_ingest(entries, batch_size=batch_size, force=force)
+        return await self.ingest(entries, embed=embed, batch_size=batch_size, force=force)
 
     async def ingest(
         self,
@@ -284,8 +264,7 @@ class Catalog:
         """Dedupe, optionally embed, and upsert entries in batches."""
         if embed and self._embeddings is None:
             raise RuntimeError(
-                "ingest(embed=True) requires an EmbeddingProvider; "
-                "pass embeddings=... to Catalog, or use embed=False."
+                "ingest(embed=True) requires an EmbeddingProvider; pass embeddings=... to Catalog, or use embed=False."
             )
         result = IndexResult()
         result.total = len(entries)
@@ -306,9 +285,7 @@ class Catalog:
             try:
                 if embed:
                     if self._embeddings is None:
-                        raise RuntimeError(
-                            "embed=True requires an EmbeddingProvider, but none was configured"
-                        )
+                        raise RuntimeError("embed=True requires an EmbeddingProvider, but none was configured")
                     out = await _embed_batch(self._embeddings, to_insert)
                 else:
                     out = [r.model_copy() for r in to_insert]
@@ -355,10 +332,7 @@ class Catalog:
     ) -> int:
         """Backfill embeddings for entries that don't have them."""
         if self._embeddings is None:
-            raise RuntimeError(
-                "embed_pending requires an EmbeddingProvider; "
-                "pass embeddings=... to Catalog."
-            )
+            raise RuntimeError("embed_pending requires an EmbeddingProvider; pass embeddings=... to Catalog.")
         lim = limit if limit is not None else 10_000
         entries, _ = await self._store.list(namespace=namespace, limit=lim)
         missing = [e for e in entries if e.embedding is None]
@@ -383,9 +357,7 @@ class Catalog:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[SeriesEntry], int]:
-        return await self._store.list(
-            namespace=namespace, q=q, limit=limit, offset=offset
-        )
+        return await self._store.list(namespace=namespace, q=q, limit=limit, offset=offset)
 
     async def get_entry(self, namespace: str, code: str) -> SeriesEntry | None:
         return await self._store.get(namespace, code)
@@ -433,11 +405,7 @@ class Catalog:
             await self._merge_remote_db(str(cache_path))
             return True
 
-        url = (
-            f"https://raw.githubusercontent.com/"
-            f"{self._catalog_repo}/{self._catalog_branch}/"
-            f"{namespace}/catalog.db"
-        )
+        url = f"https://raw.githubusercontent.com/{self._catalog_repo}/{self._catalog_branch}/{namespace}/catalog.db"
         try:
             cache_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = cache_path.with_suffix(".tmp")
@@ -473,9 +441,7 @@ class Catalog:
         # Validate path stays under _CACHE_DIR to prevent path-traversal attacks.
         resolved = Path(remote_path).resolve()
         if not resolved.is_relative_to(_CACHE_DIR.resolve()):
-            raise ValueError(
-                f"Remote catalog path {resolved} is outside the cache directory {_CACHE_DIR.resolve()}"
-            )
+            raise ValueError(f"Remote catalog path {resolved} is outside the cache directory {_CACHE_DIR.resolve()}")
 
         if isinstance(self._store, SQLiteCatalogStore):
             await self._store.merge_from_file(str(resolved))

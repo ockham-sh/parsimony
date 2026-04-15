@@ -13,8 +13,6 @@ import re
 from typing import Annotated
 
 import pandas as pd
-
-logger = logging.getLogger(__name__)
 from pydantic import BaseModel, Field, field_validator
 
 from parsimony.connector import Connectors, Namespace, connector, enumerator
@@ -27,6 +25,8 @@ from parsimony.result import (
     Result,
 )
 from parsimony.transport.http import HttpClient
+
+logger = logging.getLogger(__name__)
 
 _BASE_URL = "https://data.snb.ch"
 
@@ -72,18 +72,10 @@ _CATEGORY_KEYWORDS: dict[str, list[str]] = {
 class SnbFetchParams(BaseModel):
     """Parameters for fetching SNB data from a cube."""
 
-    cube_id: Annotated[str, Namespace("snb")] = Field(
-        ..., description="SNB cube identifier (e.g. rendoblim, devkum)"
-    )
-    from_date: str | None = Field(
-        default=None, description="Start date (YYYY or YYYY-MM or YYYY-MM-DD)"
-    )
-    to_date: str | None = Field(
-        default=None, description="End date (YYYY or YYYY-MM or YYYY-MM-DD)"
-    )
-    dim_sel: str | None = Field(
-        default=None, description="Dimension selection (e.g. D0(V0,V1),D1(ALL))"
-    )
+    cube_id: Annotated[str, Namespace("snb")] = Field(..., description="SNB cube identifier (e.g. rendoblim, devkum)")
+    from_date: str | None = Field(default=None, description="Start date (YYYY or YYYY-MM or YYYY-MM-DD)")
+    to_date: str | None = Field(default=None, description="End date (YYYY or YYYY-MM or YYYY-MM-DD)")
+    dim_sel: str | None = Field(default=None, description="Dimension selection (e.g. D0(V0,V1),D1(ALL))")
     lang: str = Field(default="en", description="Language: en, de, fr, it")
 
     @field_validator("cube_id")
@@ -224,7 +216,9 @@ async def snb_fetch(params: SnbFetchParams) -> Result:
         req_params["dimSel"] = params.dim_sel
 
     response = await http.request(
-        "GET", f"/api/cube/{params.cube_id}/data/csv/{params.lang}", params=req_params,
+        "GET",
+        f"/api/cube/{params.cube_id}/data/csv/{params.lang}",
+        params=req_params,
     )
     response.raise_for_status()
 
@@ -278,7 +272,8 @@ async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
             try:
                 await asyncio.sleep(0.15)
                 data_resp = await client.get(
-                    f"/api/cube/{cid}/data/csv/en", params={"fromDate": "2020"},
+                    f"/api/cube/{cid}/data/csv/en",
+                    params={"fromDate": "2020"},
                 )
                 if data_resp.status_code == 200:
                     dates = []
@@ -291,14 +286,16 @@ async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
             except Exception as exc:
                 logger.debug("Could not infer frequency for SNB cube %s: %s", cid, exc)
 
-            rows.append({
-                "cube_id": cid, "title": title,
-                "category": category, "frequency": frequency,
-            })
+            rows.append(
+                {
+                    "cube_id": cid,
+                    "title": title,
+                    "category": category,
+                    "frequency": frequency,
+                }
+            )
 
-    return pd.DataFrame(rows) if rows else pd.DataFrame(
-        columns=["cube_id", "title", "category", "frequency"]
-    )
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["cube_id", "title", "category", "frequency"])
 
 
 # ---------------------------------------------------------------------------

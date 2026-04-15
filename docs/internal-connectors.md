@@ -434,7 +434,7 @@ an agent or CLI can query:
 ```python
 import os
 from parsimony.connectors.fred import CONNECTORS as FRED
-from parsimony.connectors.sdmx import SDMX_FETCH_CONNECTORS as SDMX
+from parsimony.connectors.sdmx import CONNECTORS as SDMX
 from my_connectors.postgres import CONNECTORS as PG
 from my_connectors.snowflake import CONNECTORS as SF
 from my_connectors.s3 import CONNECTORS as S3

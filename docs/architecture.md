@@ -3,7 +3,7 @@
 **Version**: 0.1.0  
 **Audience**: Contributors, integrators, and developers who need to extend the library
 
-This document describes the internal design of parsimony: the connector pattern and its three decorator variants, the catalog abstraction, the HTTP transport layer, and how the 9 modules and 33 connector functions are organized and composed.
+This document describes the internal design of parsimony: the connector pattern and its three decorator variants, the catalog abstraction, the HTTP transport layer, the typed error hierarchy, and how the 24 connector modules are organized and composed.
 
 ---
 
@@ -17,11 +17,12 @@ This document describes the internal design of parsimony: the connector pattern 
 6. [Result and Schema Layer](#result-and-schema-layer)
 7. [Catalog Subsystem](#catalog-subsystem)
 8. [HTTP Transport Layer](#http-transport-layer)
-9. [Connector Implementations: 9 Modules, 33 Functions](#connector-implementations-9-modules-33-functions)
-10. [Connector Composition and Injection](#connector-composition-and-injection)
-11. [Data Flow Diagrams](#data-flow-diagrams)
-12. [Dependency Graph](#dependency-graph)
-13. [Key Design Decisions](#key-design-decisions)
+9. [Error Hierarchy](#error-hierarchy)
+10. [Connector Implementations: 24 Modules](#connector-implementations-24-modules)
+11. [Connector Composition and Injection](#connector-composition-and-injection)
+12. [Data Flow Diagrams](#data-flow-diagrams)
+13. [Dependency Graph](#dependency-graph)
+14. [Key Design Decisions](#key-design-decisions)
 
 ---
 
@@ -29,7 +30,7 @@ This document describes the internal design of parsimony: the connector pattern 
 
 parsimony is built around three core principles:
 
-**Uniform interface**. Every data source — whether it is FRED's REST API, an SDMX provider, or a local IBKR gateway — exposes the same calling convention: an async function that accepts a Pydantic model and returns a typed DataFrame wrapped in a `Result`.
+**Uniform interface**. Every data source — whether it is FRED's REST API, an SDMX provider, or a central bank endpoint — exposes the same calling convention: an async function that accepts a Pydantic model and returns a typed DataFrame wrapped in a `Result`.
 
 **Immutability**. The `Connector` and `Connectors` types are frozen dataclasses. Every operation that would modify them — binding dependencies, attaching callbacks, filtering — returns a new instance. The original is never mutated.
 
@@ -43,6 +44,7 @@ parsimony is built around three core principles:
 parsimony/
 ├── __init__.py               # Public API surface (__all__)
 ├── connector.py              # Connector, Connectors, decorators
+├── errors.py                 # Typed error hierarchy (ConnectorError and subclasses)
 ├── result.py                 # Result, SemanticTableResult, OutputConfig, Column, ColumnRole
 ├── data_store.py             # DataStore ABC, LoadResult
 ├── catalog/
@@ -61,16 +63,24 @@ parsimony/
 │   ├── http.py               # HttpClient wrapping httpx; API key log redaction
 │   └── json_helpers.py       # json_to_df(), interpolate_path()
 └── connectors/
-    ├── __init__.py           # build_fetch_connectors_from_env(), build_connectors_from_env()
+    ├── __init__.py           # build_connectors_from_env(), PROVIDERS registry
     ├── fred.py               # 3 connectors: fred_search, fred_fetch, enumerate_fred_release
     ├── sdmx.py               # 5 connectors + enumerate_sdmx_dataset_codelists()
     ├── fmp.py                # 18 connectors
     ├── fmp_screener.py       # 1 connector: fmp_screener (fan-out pattern)
-    ├── sec_edgar.py          # 1 connector: sec_edgar_fetch
-    ├── eodhd.py              # 1 connector: eodhd_fetch
-    ├── ibkr.py               # 1 connector: ibkr_fetch
+    ├── sec_edgar.py          # SEC filing connectors
+    ├── eodhd.py              # EODHD market data connectors
     ├── polymarket.py         # 2 connectors: polymarket_gamma_fetch, polymarket_clob_fetch
-    └── financial_reports.py  # 1 connector: financial_reports_fetch
+    ├── finnhub.py            # Finnhub news/events connectors
+    ├── coingecko.py          # CoinGecko crypto connectors
+    ├── tiingo.py             # Tiingo market data connectors
+    ├── alpha_vantage.py      # Alpha Vantage connectors
+    ├── treasury.py           # US Treasury connectors
+    ├── bls.py, eia.py, ...   # Government data (BLS, EIA, Destatis)
+    ├── snb.py, rba.py, ...   # Central banks (SNB, RBA, Riksbank, BDE, BOJ, BOC, BDP, BDF)
+    ├── financial_reports.py  # Financial Reports API connector
+    └── mcp/
+        └── server.py         # MCP server with typed error handling
 ```
 
 The dependency graph is a directed acyclic graph. The two most widely imported modules are `result.py` and `catalog/models.py`. No circular dependencies exist.
@@ -213,7 +223,7 @@ Result returned to caller
 
 Dependencies bound via `bind_deps()` become part of the function partial. They are never stored in `Provenance` (which only contains the Pydantic params model fields). This ensures API keys do not appear in lineage records, logs, or serialized results.
 
-The factory functions `build_fetch_connectors_from_env()` and `build_connectors_from_env()` call `bind_deps()` internally:
+The factory function `build_connectors_from_env()` calls `bind_deps()` internally:
 
 ```python
 # Internal pattern used by factory functions
@@ -320,32 +330,59 @@ Two utility functions used by FMP and Polymarket connectors:
 
 ---
 
-## Connector Implementations: 9 Modules, 33 Functions
+## Error Hierarchy
+
+The `errors.py` module defines typed exceptions for connector operational errors. These are distinct from programmer errors (which remain `TypeError`, `ValueError`, or Pydantic `ValidationError`).
+
+```
+ConnectorError(provider: str)
+├── UnauthorizedError      (401/403 — bad credentials)
+├── PaymentRequiredError   (402 — plan restriction)
+├── RateLimitError         (429 — burst or quota)
+│   ├── retry_after: float
+│   └── quota_exhausted: bool
+├── ProviderError          (5xx / unexpected status)
+├── EmptyDataError         (200 but no rows)
+└── ParseError             (200 but unparseable)
+```
+
+Every subclass carries a `provider: str` attribute so callers can identify the source without parsing message strings. The MCP server maps these to appropriate MCP error responses. `RateLimitError` distinguishes between burst limits (retryable after `retry_after` seconds) and quota exhaustion (terminal, do not retry).
+
+---
+
+## Connector Implementations: 24 Modules
 
 Each data-source module in `connectors/` follows the same structure:
 
 1. Param models (one `BaseModel` subclass per connector).
 2. One or more `OutputConfig` constants defining the column schema.
 3. Connector functions decorated with `@connector`, `@enumerator`, or `@loader`.
-4. A module-level `CONNECTORS` or `FETCH_CONNECTORS` constant (a `list` or `Connectors` instance) used by the factory functions.
+4. A module-level `CONNECTORS` constant (a `list` or `Connectors` instance) and optionally `ENV_VARS`, used by the `PROVIDERS` registry.
 
 ### Module summary
 
-| Module | Functions | Key dependency |
-|--------|-----------|---------------|
-| `fred.py` | 3 | `FRED_API_KEY` + httpx |
-| `sdmx.py` | 5 (+ 1 non-connector helper) | `sdmx1` package |
-| `fmp.py` | 18 | `FMP_API_KEY` + httpx |
-| `fmp_screener.py` | 1 | `FMP_API_KEY` + httpx (fan-out) |
-| `sec_edgar.py` | 1 | `edgartools` (sync, wrapped) |
-| `eodhd.py` | 1 | `EODHD_API_KEY` + httpx |
-| `ibkr.py` | 1 | `IBKR_WEB_API_BASE_URL` + httpx |
-| `polymarket.py` | 2 | httpx only |
-| `financial_reports.py` | 1 | `FINANCIAL_REPORTS_API_KEY` + SDK |
+| Module | Category | Key dependency |
+|--------|----------|---------------|
+| `fred.py` | Public (macro) | `FRED_API_KEY` + httpx |
+| `sdmx.py` | Public (multi-agency) | `sdmx1` package |
+| `treasury.py` | Public (US fiscal) | httpx only |
+| `bls.py`, `eia.py`, `destatis.py` | Public (government stats) | httpx (keys optional/varied) |
+| `boe.py`, `riksbank.py`, `snb.py`, `rba.py` | Public (central banks) | httpx only |
+| `bde.py`, `boc.py`, `boj.py`, `bdf.py`, `bdp.py` | Public (central banks) | httpx (some need keys) |
+| `fmp.py` | Commercial | `FMP_API_KEY` + httpx |
+| `fmp_screener.py` | Commercial | `FMP_API_KEY` + httpx (fan-out) |
+| `alpha_vantage.py` | Commercial | `ALPHA_VANTAGE_API_KEY` + httpx |
+| `coingecko.py` | Commercial (crypto) | `COINGECKO_API_KEY` + httpx |
+| `eodhd.py` | Commercial | `EODHD_API_KEY` + httpx |
+| `finnhub.py` | Commercial | `FINNHUB_API_KEY` + httpx |
+| `tiingo.py` | Commercial | `TIINGO_API_KEY` + httpx |
+| `sec_edgar.py` | Commercial (filings) | `edgartools` (sync, wrapped) |
+| `polymarket.py` | Commercial (predictions) | httpx only |
+| `financial_reports.py` | Commercial | `FINANCIAL_REPORTS_API_KEY` + SDK |
 
 ### Async transport strategies per module
 
-- **FRED, FMP, EODHD, IBKR, Polymarket**: use `HttpClient` (httpx-based async).
+- **FRED, FMP, EODHD, Polymarket, Finnhub, CoinGecko, Tiingo, Alpha Vantage, central banks**: use `HttpClient` (httpx-based async).
 - **SDMX**: uses the `sdmx1` library's own async transport; `sdmx_fetch` yields a `pandasdmx` DataMessage.
 - **SEC Edgar**: uses `edgartools`, a synchronous library. The connector wraps it in `_SecEdgarEngine`, a dispatch class that runs synchronous calls.
 - **Financial Reports**: uses the `financial-reports-generated-client` SDK, which provides its own async client.
@@ -364,23 +401,21 @@ The semaphore limit (`_SEMAPHORE_LIMIT = 10`) prevents overwhelming the FMP rate
 
 ## Connector Composition and Injection
 
-The factory functions in `connectors/__init__.py` compose the per-module connector lists into bundles and bind API keys:
+A single factory in `connectors/__init__.py` composes the per-module connector lists into one bundle and binds API keys:
 
 ```
 connectors/__init__.py
-    build_fetch_connectors_from_env(env)
-        → reads FRED_API_KEY, FMP_API_KEY, EODHD_API_KEY, IBKR_WEB_API_BASE_URL, FINANCIAL_REPORTS_API_KEY
-        → for each key present: binds key to the corresponding connector bundle
-        → concatenates all bound bundles into one Connectors instance
-        → returns Connectors
+    PROVIDERS = (ProviderSpec(...), ...)   # declarative registry of provider modules
 
-    build_connectors_from_env(*, env)
-        → calls build_fetch_connectors_from_env()
-        → adds search and screener connectors
+    build_connectors_from_env(*, env, lenient=False)
+        → iterates PROVIDERS
+        → reads env vars (FRED_API_KEY, FMP_API_KEY, EODHD_API_KEY, etc.)
+        → for each provider whose env vars are present: binds keys to the module's CONNECTORS
+        → concatenates all bound bundles into one Connectors instance
         → returns Connectors
 ```
 
-If `EODHD_API_KEY`, `IBKR_WEB_API_BASE_URL`, or `FINANCIAL_REPORTS_API_KEY` are absent, the corresponding connectors are silently excluded. `FRED_API_KEY` and `FMP_API_KEY` are required for the base bundle.
+`FRED_API_KEY` is required by default; pass `lenient=True` to skip it when missing. All other credentialed providers are optional — if their env vars are absent, they are silently excluded. Consumers needing only the MCP/search surface filter with `connectors.filter(tags=["tool"])`.
 
 Connectors for SDMX (no key needed), SEC Edgar (no key needed), and Polymarket (no key needed) are always included in `build_connectors_from_env()` when their respective package dependencies are installed.
 
@@ -482,9 +517,10 @@ The internal dependency structure (simplified, showing import direction):
 
 ```
 result.py           ← (standalone: pandas, pyarrow)
+errors.py           ← (standalone: no internal deps)
 catalog/models.py   ← (standalone: pydantic)
 
-connector.py        ← result.py
+connector.py        ← result.py, errors.py
 catalog/store.py    ← catalog/models.py
 catalog/catalog.py  ← catalog/store.py, catalog/models.py, catalog/embeddings.py, result.py
 data_store.py       ← catalog/models.py, result.py
@@ -527,3 +563,27 @@ Not all connectors have fully declared schemas. Keeping `Result` as the base typ
 ### Why is the Supabase backend external to this package?
 
 parsimony is a client library. It does not manage any schema or runtime infrastructure. The `CatalogStore` and `DataStore` ABCs define the contracts; production backends are injected by the consuming application. This keeps the package self-contained and testable with in-memory implementations.
+
+### Why separate MCP tools from client data connectors?
+
+parsimony draws a hard line between two access paths to the same data sources:
+
+| | MCP Tools (search/discovery) | Client Connectors (fetch/load) |
+|---|---|---|
+| **Tagged** | `"tool"` | No `"tool"` tag |
+| **Caller** | Agent via MCP protocol | Agent-written Python code |
+| **Result size** | Small — fits comfortably in a context window | Large — full datasets, thousands of rows |
+| **Purpose** | Figure out *what* to fetch | Fetch the actual data |
+| **Examples** | `fred_search`, `sdmx_dsd`, `fmp_screener` | `fred_fetch`, `sdmx_fetch`, `eodhd_fetch` |
+
+**The core problem is context window economics.** When an agent calls an MCP tool, the result is injected into its context window alongside the system prompt, conversation history, and reasoning. A 10,000-row DataFrame returned as an MCP tool response would consume most of the context budget and crowd out the agent's ability to reason about the data. Worse, the agent doesn't need all that data in its context — it needs it in a variable it can manipulate with code.
+
+**The workflow this enables:** discover → fetch → analyze.
+
+1. **Discover** (MCP tool): the agent calls `fred_search("unemployment rate")` as an MCP tool. It receives a compact table of series metadata — IDs, titles, frequencies — that fits in a few hundred tokens.
+2. **Fetch** (client code): the agent writes and executes Python code that calls `await client['fred_fetch'](series_id='UNRATE')`. The resulting DataFrame lands in the code execution environment, not in the context window.
+3. **Analyze** (client code): the agent operates on the DataFrame programmatically — computing statistics, plotting, joining with other data — and only surfaces the conclusions back into the conversation.
+
+This mirrors a broader principle in the MCP ecosystem: **MCP is for point-in-time, scoped answers; APIs (and client libraries) are for bulk data.** They are complements, not competitors. The MCP tool gives the agent a quick, context-friendly answer to "what data exists?" The client connector gives it the full dataset to work with — through code, not through the context window.
+
+**Implementation.** The `"tool"` tag is the only mechanism. Connectors tagged `"tool"` are filtered by the MCP server at startup (`connectors.filter(tags=["tool"])`) and registered as MCP tools. All other connectors remain accessible via `from parsimony import client` for programmatic use. Adding or removing `"tool"` from a connector's tags is the single switch that moves it between the two access paths.

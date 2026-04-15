@@ -3,7 +3,7 @@
 **Version**: 0.1.0
 **Audience**: Python developers building data pipelines, notebooks, or agent integrations
 
-parsimony is a Python library that gives you a single, consistent async interface for fetching financial and macroeconomic data from FRED, SDMX providers (ECB, Eurostat, IMF, World Bank, BIS), Financial Modeling Prep, SEC Edgar, EODHD, Interactive Brokers, Polymarket, and Financial Reports APIs. All results are typed pandas DataFrames with provenance metadata and optional column-role schemas.
+parsimony is a Python library that gives you a single, consistent async interface for fetching financial and macroeconomic data from FRED, SDMX providers (ECB, Eurostat, IMF, World Bank, BIS), Financial Modeling Prep, SEC Edgar, EODHD, Polymarket, and more. All results are typed pandas DataFrames with provenance metadata and optional column-role schemas.
 
 ---
 
@@ -53,7 +53,7 @@ pip install financial-reports-generated-client  # Financial Reports connector
 
 ### Python version
 
-parsimony requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
+parsimony requires **Python 3.11+**.
 
 ---
 
@@ -63,22 +63,24 @@ Different connectors require different credentials. Set the variables for the da
 
 | Variable | Required | Used By |
 |----------|----------|---------|
-| `FRED_API_KEY` | Yes (for FRED) | All FRED connectors |
-| `FMP_API_KEY` | Yes (for FMP) | All FMP connectors and FMP Screener |
+| `FRED_API_KEY` | Yes | All FRED connectors |
+| `FMP_API_KEY` | Optional | All FMP connectors and FMP Screener |
 | `EODHD_API_KEY` | Optional | EODHD connector |
-| `IBKR_WEB_API_BASE_URL` | Optional | IBKR connector (local gateway URL) |
+| `FINNHUB_API_KEY` | Optional | Finnhub connector |
+| `TIINGO_API_KEY` | Optional | Tiingo connector |
+| `COINGECKO_API_KEY` | Optional | CoinGecko connector |
+| `EIA_API_KEY` | Optional | EIA connector |
+| `ALPHA_VANTAGE_API_KEY` | Optional | Alpha Vantage connector |
 | `FINANCIAL_REPORTS_API_KEY` | Optional | Financial Reports connector |
-| `SEC_EDGAR_USER_AGENT` | Optional | SEC Edgar connector (request identification) |
-| `EDGAR_IDENTITY` | Optional | SEC Edgar connector (alternative to `SEC_EDGAR_USER_AGENT`) |
 
-SDMX and Polymarket connectors require no credentials.
+SDMX, Polymarket, SEC Edgar, US Treasury, and central bank connectors require no credentials.
 
 ### .env file example
 
 ```bash
 # .env
 FRED_API_KEY=your-fred-api-key
-FMP_API_KEY=your-fmp-api-key
+FMP_API_KEY=your-fmp-api-key       # optional
 EODHD_API_KEY=your-eodhd-key       # optional
 ```
 
@@ -624,14 +626,15 @@ summary = await catalog.index_result(result, embed=False)
 print(f"Catalog now has {summary.indexed} entries")
 ```
 
-### Pattern 4: Fetch-only bundle for simpler setups
+### Pattern 4: Tool-only bundle for the MCP/search surface
 
-If you only need data fetching (no search/screener connectors):
+If you only need the interactive agent tools (search, discovery, reference lookups), filter by tag:
 
 ```python
-from parsimony.connectors import build_fetch_connectors_from_env
+from parsimony.connectors import build_connectors_from_env
 
-fetch_only = build_fetch_connectors_from_env()
+connectors = build_connectors_from_env()
+tools = connectors.filter(tags=["tool"])
 ```
 
 ### Pattern 5: Handle missing optional connectors gracefully

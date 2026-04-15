@@ -4,7 +4,7 @@
 
 ### What Python version do I need?
 
-parsimony requires **Python 3.11 or 3.12**. Python 3.13 is not supported due to a dependency constraint.
+parsimony requires **Python 3.11+**.
 
 ### What are the optional extras?
 
@@ -135,16 +135,6 @@ nest_asyncio.apply()
 
 ## Common Errors
 
-### `ValueError: FRED_API_KEY is not configured`
-
-`build_connectors_from_env()` requires `FRED_API_KEY` and `FMP_API_KEY` to be set. If you only need one provider, build connectors manually instead:
-
-```python
-from parsimony.connectors.fred import CONNECTORS as FRED
-
-fred = FRED.bind_deps(api_key="your-key")
-```
-
 ### `TypeError: Connector 'fred_fetch' has unbound dependencies`
 
 You called a connector that requires API keys without binding them first. Call `bind_deps()`:
@@ -161,7 +151,7 @@ result = await bound(series_id="GDP")
 FRED and FMP both have rate limits. FRED allows 120 requests per minute. FMP limits vary by plan. If you hit rate limits:
 
 - Add delays between requests in batch operations
-- Use `build_fetch_connectors_from_env()` (smaller surface) instead of the full bundle when you only need fetch operations
+- Filter with `connectors.filter(tags=["tool"])` for a smaller surface when you only need interactive tool operations
 - Check your FMP plan tier for API limits
 
 ### Empty results
@@ -197,10 +187,6 @@ This means API keys stay out of logs, LLM prompts, and serialized results.
 ### Is the FMP screener `where_clause` safe?
 
 No. The `where_clause` parameter uses `DataFrame.query()` internally, which can execute arbitrary Python expressions. **Never pass untrusted user input** as a `where_clause` value. Only use it with trusted, developer-authored filter strings.
-
-### What about IBKR SSL warnings?
-
-The Interactive Brokers connector talks to a local gateway (Client Portal or TWS). If you see SSL certificate warnings, this is expected for the self-signed certificates used by the local gateway. The connection stays on your local machine.
 
 ---
 

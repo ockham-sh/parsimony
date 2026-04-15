@@ -266,8 +266,7 @@ parsimony/connectors/my_source.py
 ├── _make_http() helper     # HttpClient factory (if needed)
 ├── @connector functions    # async fetch/search operations
 ├── @enumerator functions   # async catalog population
-├── FETCH_CONNECTORS        # fetch-only bundle
-└── CONNECTORS              # full bundle (fetch + enumerator + search)
+└── CONNECTORS              # all connectors (fetch + enumerator + search)
 ```
 
 Reference implementations:
@@ -852,50 +851,39 @@ Key differences from API-based enumerators:
 
 ---
 
-## Step 7: Export the Bundles
+## Step 7: Export the Bundle
 
 ```python
-FETCH_CONNECTORS = Connectors([my_source_fetch])
-CONNECTORS = Connectors([my_source_fetch, enumerate_my_source])
+CONNECTORS = Connectors([my_source_search, my_source_fetch, enumerate_my_source])
 ```
 
 Every connector module must export:
 
 | Name | Contents | Used by |
 |------|----------|---------|
-| `ENV_VARS` | `dict[str, str]` mapping dep names → env vars | Factory in `__init__.py` (only for modules with credentials) |
-| `FETCH_CONNECTORS` | Fetch-only connectors | Agent runtime (discovery via catalog) |
-| `CONNECTORS` | Full surface (fetch + search + enumerator) | Catalog building, integration tests, MCP server |
+| `ENV_VARS` | `dict[str, str]` mapping dep names → env vars | Provider registry (only for modules with credentials) |
+| `CONNECTORS` | All connectors (search + fetch + enumerator) | Factory, MCP server, catalog builder, integration tests |
+
+Tag search/discovery connectors with `tags=["tool"]` so downstream consumers
+(MCP server, terminal agent) can filter them from the full set.
 
 ---
 
-## Step 8: Register in the Factory
+## Step 8: Register in the Provider Registry
 
-Add your connector to both factory functions in `parsimony/connectors/__init__.py`.
-
-**Providers with credentials** use two helpers that read your `ENV_VARS` dict:
-
-- `_bind_required_deps(result, connectors, env_vars, env)` -- raises if env vars are missing.
-- `_bind_optional_deps(result, connectors, env_vars, env)` -- silently skips if missing.
+Add one entry to the `PROVIDERS` tuple in `parsimony/connectors/__init__.py`:
 
 ```python
-# At the top of each factory function, add the import:
-from parsimony.connectors import my_source
-
-# For required providers (startup fails without the key):
-result = _bind_required_deps(result, my_source.FETCH_CONNECTORS, my_source.ENV_VARS, _env)
-
-# For optional providers (silently skipped if key absent):
-result = _bind_optional_deps(result, my_source.FETCH_CONNECTORS, my_source.ENV_VARS, _env)
+PROVIDERS: tuple[ProviderSpec, ...] = (
+    # ...existing entries...
+    ProviderSpec("parsimony.connectors.my_source"),            # optional (skipped if key absent)
+    ProviderSpec("parsimony.connectors.my_source", required=True),  # required (raises if key absent)
+    # ...
+)
 ```
 
-**Public APIs with no credentials** don't need `ENV_VARS` or helper functions --
-add them directly:
-
-```python
-# No credentials, no ENV_VARS needed in the module:
-result = result + my_source.FETCH_CONNECTORS
-```
+That's it. The factory reads `CONNECTORS` and `ENV_VARS` from your module
+automatically. No other wiring needed.
 
 ---
 
@@ -1667,9 +1655,8 @@ to the project beyond writing the connector code itself.
 - [ ] `async` connector function(s) with descriptive docstring
 - [ ] `OutputConfig` with semantic column roles (KEY + namespace, TITLE, DATA, METADATA)
 - [ ] Typed exceptions (`EmptyDataError`, `UnauthorizedError`, etc.) -- not `ValueError`
-- [ ] `FETCH_CONNECTORS` and `CONNECTORS` bundles exported
-- [ ] Registered in both `build_fetch_connectors_from_env` and `build_connectors_from_env`
-  using `_bind_required_deps` or `_bind_optional_deps`
+- [ ] `CONNECTORS` bundle exported (all connectors: search + fetch + enumerator)
+- [ ] `ProviderSpec` entry added to `PROVIDERS` in `parsimony/connectors/__init__.py`
 - [ ] At least one `@enumerator` for catalog population
 - [ ] **Typed connectors per operation** -- not a generic path-based dispatcher (see Anti-Pattern section)
 - [ ] **Tier annotations** in docstrings for paid providers (`[Starter+]`, `[Professional+]`, etc.)

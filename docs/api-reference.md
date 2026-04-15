@@ -25,7 +25,6 @@ This reference covers every public symbol exported by `parsimony`, all 33 connec
    - [FMP Screener Connector](#fmp-screener-connector)
    - [SEC Edgar Connector](#sec-edgar-connector)
    - [EODHD Connector](#eodhd-connector)
-   - [IBKR Connector](#ibkr-connector)
    - [Polymarket Connectors](#polymarket-connectors)
    - [Financial Reports Connector](#financial-reports-connector)
 
@@ -281,7 +280,7 @@ Subclass of `Result` with a required `OutputConfig`. Produced by connectors deco
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `entity_keys` | `list[Column]` | Columns with `role == KEY` |
+| `entity_keys` | `pd.DataFrame` | DataFrame subset containing KEY columns |
 | `data_columns` | `list[Column]` | Columns with `role == DATA` |
 | `metadata_columns` | `list[Column]` | Columns with `role == METADATA` |
 
@@ -531,36 +530,30 @@ from parsimony import (
 These functions are not in `__all__` but are the primary entry points for production use. Import from `parsimony.connectors`.
 
 ```python
-from parsimony.connectors import (
-    build_fetch_connectors_from_env,
-    build_connectors_from_env,
-)
+from parsimony.connectors import build_connectors_from_env
 ```
-
-### `build_fetch_connectors_from_env`
-
-```python
-build_fetch_connectors_from_env(*, env: dict[str, str] | None = None) -> Connectors
-```
-
-Builds a `Connectors` bundle containing all **fetch** connectors with API keys injected from environment variables.
-
-- `env`: optional dict of environment variables; defaults to `os.environ` if `None`.
-
-**Required env vars**: `FRED_API_KEY`, `FMP_API_KEY`  
-**Optional env vars**: `EODHD_API_KEY`, `IBKR_WEB_API_BASE_URL`, `FINANCIAL_REPORTS_API_KEY`
-
-Connectors whose required env var is absent are silently excluded from the returned bundle.
 
 ### `build_connectors_from_env`
 
 ```python
-build_connectors_from_env(*, env: dict[str, str] | None = None) -> Connectors
+build_connectors_from_env(*, env: dict[str, str] | None = None, lenient: bool = False) -> Connectors
 ```
 
-Builds the **full** `Connectors` bundle, including search, screener, and enumerator connectors in addition to all fetch connectors.
+Single factory that builds the complete `Connectors` bundle — all providers registered in the `PROVIDERS` registry — with API keys injected from environment variables.
 
-Same env var behavior as `build_fetch_connectors_from_env`.
+- `env`: optional dict of environment variables; defaults to `os.environ` if `None`.
+- `lenient`: when `True`, skips required providers whose env vars are missing (used by the catalog builder). When `False` (default), missing required env vars raise an error.
+
+**Required env vars**: `FRED_API_KEY`  
+**Optional env vars**: `FMP_API_KEY`, `EODHD_API_KEY`, `FINNHUB_API_KEY`, `TIINGO_API_KEY`, `COINGECKO_API_KEY`, `EIA_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `FINANCIAL_REPORTS_API_KEY`, and others
+
+Connectors whose optional env var is absent are silently excluded from the returned bundle.
+
+To get only the interactive agent tools (search, discovery, reference lookups), filter the result:
+
+```python
+tools = connectors.filter(tags=["tool"])
+```
 
 ---
 
@@ -577,16 +570,16 @@ graph LR
     classDef dep fill:#9B6B9B,stroke:#7A4A7A,color:#fff
     classDef nodep fill:#50C878,stroke:#2E7D50,color:#fff
 
-    subgraph Modules["9 Connector Modules — 33 Functions"]
+    subgraph Modules["Connector Modules"]
         FRED["fred.py\n3 functions"]:::module
         SDMX["sdmx.py\n5 functions"]:::module
         FMP["fmp.py\n18 functions"]:::module
         FMPS["fmp_screener.py\n1 function"]:::module
-        SEC["sec_edgar.py\n1 function"]:::module
-        EOD["eodhd.py\n1 function"]:::module
-        IBKR["ibkr.py\n1 function"]:::module
+        SEC["sec_edgar.py"]:::module
+        EOD["eodhd.py"]:::module
         POLY["polymarket.py\n2 functions"]:::module
-        FIN["financial_reports.py\n1 function"]:::module
+        FIN["financial_reports.py"]:::module
+        MORE["+ 15 more modules"]:::module
     end
 
     subgraph Deps["External Dependencies"]
@@ -595,7 +588,6 @@ graph LR
         D3["FMP_API_KEY"]:::dep
         D4["edgartools package"]:::dep
         D5["EODHD_API_KEY"]:::dep
-        D6["IBKR_WEB_API_BASE_URL"]:::dep
         D7["None required"]:::nodep
         D8["FINANCIAL_REPORTS_API_KEY\n+ SDK"]:::dep
     end
@@ -606,7 +598,6 @@ graph LR
     FMPS --> D3
     SEC --> D4
     EOD --> D5
-    IBKR --> D6
     POLY --> D7
     FIN --> D8
 ```
@@ -1015,33 +1006,6 @@ Fetch SEC Edgar filings for a company. Uses the `edgartools` synchronous library
 | `period` | `str` | Bar period: `"d"` (daily), `"w"` (weekly), `"m"` (monthly) |
 
 Fetch historical end-of-day price data from EODHD.
-
----
-
-### IBKR Connector
-
-**Module**: `parsimony.connectors.ibkr`  
-**Required dependency**: `IBKR_WEB_API_BASE_URL` environment variable (local gateway URL)
-
-#### `ibkr_fetch`
-
-| Field | Value |
-|-------|-------|
-| Tags | `["ibkr"]` |
-| Decorator | `@loader` |
-| Required env | `IBKR_WEB_API_BASE_URL` |
-
-**Params model** (`IbkrFetchParams`):
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `conid` | `Annotated[str, Namespace("ibkr")]` | IB contract ID |
-| `period` | `str` | Time period string (e.g. `"1y"`, `"6m"`) |
-| `bar_size` | `str` | Bar size string (e.g. `"1d"`, `"1h"`) |
-
-Fetch historical market data from a locally running Interactive Brokers Web API gateway.
-
-> **Note**: The IBKR connector uses `verify_ssl=False` because the IB gateway runs on localhost with a self-signed certificate. Ensure `IBKR_WEB_API_BASE_URL` points to a trusted local endpoint.
 
 ---
 

@@ -372,9 +372,11 @@ class Connector:
             opt = "?" if fname not in required else ""
             ns = spec.get("namespace")
             ns_hint = f" [ns:{ns}]" if ns else ""
+            enum_vals = spec.get("enum")
+            enum_hint = f" enum: {', '.join(str(v) for v in enum_vals)}" if enum_vals else ""
             fdesc = spec.get("description", "")
             desc_part = f" — {fdesc}" if fdesc else ""
-            lines.append(f"- {fname}{opt}: {typ}{ns_hint}{desc_part}")
+            lines.append(f"- {fname}{opt}: {typ}{ns_hint}{enum_hint}{desc_part}")
 
         return "\n".join(lines)
 
@@ -657,71 +659,48 @@ class Connectors:
             lines.append(f"  {i:2}. {c.name:<{name_w}} {desc}")
         return "\n".join(lines)
 
-    _CODE_HEADER = (
-        "\n# Data connectors (code execution)\n"
+    TOOL_TAG = "tool"
+    """Tag that marks a connector as a native tool (MCP, agent registry, etc.)."""
+
+    _LLM_PROMPT_HEADER = (
+        "\n# Data connectors\n"
         "\n"
-        "These connectors are available via `client` in the code executor. "
-        "They return full datasets as DataFrames — the data stays in the "
-        "execution environment, not in the conversation context.\n"
+        "These connectors are available via `client` "
+        "(`from parsimony import client`).\n"
         "\n"
         "## How to use\n"
         '- `result = await client["name"](param=value)` — returns Result '
         "with .data and .provenance (source metadata).\n"
-        "- .data is usually a DataFrame; some connectors return text (noted in their description).\n"
+        "- .data is usually a DataFrame; some connectors return text "
+        "(noted in their description).\n"
         "- Keyword arguments must match the connector's typed parameters.\n"
         '- `client.filter(name="query")` narrows by name or description.\n'
+        "- `[ns:X]` on a parameter means valid values come from catalog "
+        "namespace X — use `catalog_search` to discover codes.\n"
         "- **ONLY use connectors listed below. Do NOT invent connector names.**\n"
     )
 
-    _MCP_HEADER = (
-        "\n# Parsimony — financial data discovery tools\n"
-        "\n"
-        "These MCP tools search and discover data. They return compact, "
-        "context-friendly results — metadata, listings, search matches — "
-        "not bulk datasets. For bulk retrieval, write and execute a Python "
-        "script:\n"
-        "```python\n"
-        "from parsimony import client\n"
-        "result = await client['fred_fetch'](series_id='UNRATE')\n"
-        "df = result.data  # pandas DataFrame\n"
-        "```\n"
-        "\n"
-        "After discovering data with MCP tools, always execute the fetch — "
-        "do not just suggest code.\n"
-        "\n"
-        "Workflow: discover (MCP tool) → fetch and execute (client) → analyze.\n"
-        "For SDMX: list_datasets → dsd → codelist → series_keys → fetch.\n"
-    )
+    def to_llm(self) -> str:
+        """Return an LLM-ready prompt section describing client-callable connectors.
 
-    def to_llm(self, context: str = "code") -> str:
-        """Return an LLM-ready prompt section describing all connectors.
+        Lists all connectors **except** those tagged ``"tool"``.  Tool-tagged
+        connectors are excluded because the consuming framework (MCP server,
+        agent tool registry, etc.) registers them natively with their own
+        schemas — including them here would double-describe them.
 
-        Compact format inspired by parsimony's ``enhanced_description``
-        pattern: full descriptions with output columns appended, structured
-        parameter lists, no decorative separators.  Designed to be injected
-        into an agent's system prompt.
-
-        Parameters
-        ----------
-        context:
-            ``"code"`` (default) — header explains ``client["name"](...)`` usage
-            for code-execution agents.
-            ``"mcp"`` — header explains MCP discovery workflow and directs bulk
-            retrieval to code execution.
+        Compact format: full descriptions with output columns appended,
+        structured parameter lists, no decorative separators.  Designed to be
+        injected into an agent's system prompt alongside the framework's own
+        tool descriptions.
         """
-        parts: list[str] = []
+        client_connectors = [c for c in self._items if self.TOOL_TAG not in c.tags]
+        parts: list[str] = [self._LLM_PROMPT_HEADER]
 
-        if context == "mcp":
-            parts.append(self._MCP_HEADER)
-        else:
-            parts.append(self._CODE_HEADER)
-
-        if not self._items:
+        if not client_connectors:
             parts.append("No connectors available.\n")
         else:
-            label = "Tools" if context == "mcp" else "Connectors"
-            parts.append(f"## {label} ({len(self._items)})\n")
-            for c in self._items:
+            parts.append(f"## Connectors ({len(client_connectors)})\n")
+            for c in client_connectors:
                 parts.append(c.to_llm())
                 parts.append("")  # single blank line separator
 

@@ -860,8 +860,13 @@ async def enumerate_coingecko(params: CoinGeckoEnumerateParams, *, api_key: str)
 # Connector collections
 # ---------------------------------------------------------------------------
 
-COINGECKO_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        coingecko_search,
+        coingecko_trending,
+        coingecko_top_gainers_losers,
+        # Fetch
         coingecko_price,
         coingecko_markets,
         coingecko_coin_detail,
@@ -869,16 +874,7 @@ COINGECKO_FETCH_CONNECTORS = Connectors(
         coingecko_market_chart_range,
         coingecko_ohlc,
         coingecko_token_price_onchain,
+        # Enumeration
+        enumerate_coingecko,
     ]
 )
-
-COINGECKO_DISCOVERY_CONNECTORS = Connectors(
-    [
-        coingecko_search,
-        coingecko_trending,
-        coingecko_top_gainers_losers,
-    ]
-)
-
-FETCH_CONNECTORS = COINGECKO_FETCH_CONNECTORS
-CONNECTORS = COINGECKO_DISCOVERY_CONNECTORS + COINGECKO_FETCH_CONNECTORS + Connectors([enumerate_coingecko])

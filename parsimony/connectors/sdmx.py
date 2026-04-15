@@ -807,10 +807,6 @@ async def enumerate_sdmx_dataset_codelists(
     return await asyncio.to_thread(_build_dataset_codelists_tables_sync, params.dataset_key)
 
 
-SDMX_FETCH_CONNECTORS = Connectors([sdmx_fetch])
-
-SDMX_DISCOVERY_CONNECTORS = Connectors(
-    [sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys]
+CONNECTORS = Connectors(
+    [sdmx_fetch, sdmx_list_datasets, sdmx_dsd, sdmx_codelist, sdmx_series_keys]
 )
-
-CONNECTORS = SDMX_FETCH_CONNECTORS + SDMX_DISCOVERY_CONNECTORS

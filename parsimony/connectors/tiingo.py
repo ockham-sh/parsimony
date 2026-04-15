@@ -1073,8 +1073,11 @@ async def enumerate_tiingo(params: TiingoEnumerateParams, *, api_key: str) -> pd
 # Connector collections
 # ---------------------------------------------------------------------------
 
-TIINGO_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        tiingo_search,
+        # Fetch
         tiingo_eod,
         tiingo_iex,
         tiingo_iex_historical,
@@ -1086,14 +1089,7 @@ TIINGO_FETCH_CONNECTORS = Connectors(
         tiingo_crypto_top,
         tiingo_fx_prices,
         tiingo_fx_top,
+        # Enumeration
+        enumerate_tiingo,
     ]
 )
-
-TIINGO_DISCOVERY_CONNECTORS = Connectors(
-    [
-        tiingo_search,
-    ]
-)
-
-FETCH_CONNECTORS = TIINGO_FETCH_CONNECTORS
-CONNECTORS = TIINGO_DISCOVERY_CONNECTORS + TIINGO_FETCH_CONNECTORS + Connectors([enumerate_tiingo])

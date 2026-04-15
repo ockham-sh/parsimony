@@ -305,5 +305,4 @@ async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([snb_fetch])
 CONNECTORS = Connectors([snb_fetch, enumerate_snb])

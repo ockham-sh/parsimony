@@ -996,8 +996,13 @@ async def eodhd_screener(params: EodhdScreenerParams, *, api_key: str) -> Result
 # Connector collections
 # ---------------------------------------------------------------------------
 
-EODHD_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        eodhd_search,
+        eodhd_exchanges,
+        eodhd_news,
+        eodhd_screener,
         # Market data
         eodhd_eod,
         eodhd_live,
@@ -1021,14 +1026,3 @@ EODHD_FETCH_CONNECTORS = Connectors(
         eodhd_insider,
     ]
 )
-
-EODHD_DISCOVERY_CONNECTORS = Connectors(
-    [
-        eodhd_search,
-        eodhd_exchanges,
-        eodhd_news,
-        eodhd_screener,
-    ]
-)
-
-CONNECTORS = EODHD_DISCOVERY_CONNECTORS + EODHD_FETCH_CONNECTORS

@@ -212,5 +212,4 @@ async def enumerate_bdf(params: BdfEnumerateParams, *, api_key: str) -> pd.DataF
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([bdf_fetch])
 CONNECTORS = Connectors([bdf_fetch, enumerate_bdf])

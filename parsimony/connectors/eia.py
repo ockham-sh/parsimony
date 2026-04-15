@@ -170,5 +170,4 @@ async def enumerate_eia(params: EiaEnumerateParams, *, api_key: str) -> pd.DataF
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([eia_fetch])
 CONNECTORS = Connectors([eia_fetch, enumerate_eia])

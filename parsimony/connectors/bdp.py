@@ -282,5 +282,4 @@ async def enumerate_bdp(params: BdpEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([bdp_fetch])
 CONNECTORS = Connectors([bdp_fetch, enumerate_bdp])

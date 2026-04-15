@@ -290,5 +290,4 @@ async def enumerate_bde(params: BdeEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([bde_fetch])
 CONNECTORS = Connectors([bde_fetch, enumerate_bde])

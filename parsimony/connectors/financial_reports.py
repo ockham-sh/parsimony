@@ -713,7 +713,7 @@ async def fr_reference_data(params: FrReferenceDataParams, *, api_key: str) -> R
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([
+CONNECTORS = Connectors([
     fr_companies_search,
     fr_company_retrieve,
     fr_filings_search,
@@ -725,5 +725,3 @@ FETCH_CONNECTORS = Connectors([
     fr_isin_lookup,
     fr_reference_data,
 ])
-
-CONNECTORS = FETCH_CONNECTORS

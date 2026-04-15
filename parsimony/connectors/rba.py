@@ -361,5 +361,4 @@ async def enumerate_rba(params: RbaEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([rba_fetch])
 CONNECTORS = Connectors([rba_fetch, enumerate_rba])

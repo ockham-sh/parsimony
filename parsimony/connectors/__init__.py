@@ -1,22 +1,81 @@
 """Data source connectors and env-var-based factory.
 
-Each connector module exports a ``CONNECTORS`` constant (full surface: search,
-discovery, and fetch).  Fetch-only bundles (e.g. ``FETCH_CONNECTORS``,
-``SDMX_FETCH_CONNECTORS``) are composed by :func:`build_fetch_connectors_from_env`
-for the application agent: discovery via the series catalog + fetch
-connectors only.
+Each connector module exports a ``CONNECTORS`` constant (the full surface:
+search, discovery, fetch, enumerators).  The unified :data:`PROVIDERS` registry
+lists every module once; :func:`build_connectors_from_env` drives off it.
 
-The :func:`build_connectors_from_env` factory composes the full set from
-environment variables — used for indexing, examples, and integration tests.
+Consumers that want a subset (e.g. only ``"tool"``-tagged connectors for MCP,
+or excluding enumerators) filter the returned :class:`~parsimony.connector.Connectors`
+collection themselves::
+
+    all_connectors = build_connectors_from_env()
+    tool_connectors = all_connectors.filter(tags=["tool"])
 """
 
 from __future__ import annotations
 
+import importlib
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from parsimony.connector import Connectors
+
+# ---------------------------------------------------------------------------
+# Provider registry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    """Declarative description of a data-source provider module.
+
+    Each module must export:
+    * ``CONNECTORS`` — a :class:`~parsimony.connector.Connectors` collection.
+    * ``ENV_VARS``   — ``dict[str, str]`` mapping dep name → env var
+      (empty or absent for public/no-auth providers).
+    """
+
+    module: str
+    """Fully-qualified module path, e.g. ``"parsimony.connectors.fred"``."""
+
+    required: bool = False
+    """If ``True``, :func:`build_connectors_from_env` raises when the
+    provider's env vars are missing.  If ``False``, the provider is silently
+    skipped."""
+
+
+PROVIDERS: tuple[ProviderSpec, ...] = (
+    # --- Required providers (raise if env vars absent, unless lenient=True) ---
+    ProviderSpec("parsimony.connectors.fred", required=True),
+    # --- Optional providers with credentials ---
+    ProviderSpec("parsimony.connectors.fmp"),
+    ProviderSpec("parsimony.connectors.fmp_screener"),
+    ProviderSpec("parsimony.connectors.eodhd"),
+    ProviderSpec("parsimony.connectors.coingecko"),
+    ProviderSpec("parsimony.connectors.finnhub"),
+    ProviderSpec("parsimony.connectors.tiingo"),
+    ProviderSpec("parsimony.connectors.financial_reports"),
+    ProviderSpec("parsimony.connectors.eia"),
+    ProviderSpec("parsimony.connectors.bdf"),
+    ProviderSpec("parsimony.connectors.alpha_vantage"),
+    ProviderSpec("parsimony.connectors.riksbank"),
+    ProviderSpec("parsimony.connectors.destatis"),
+    ProviderSpec("parsimony.connectors.bls"),
+    # --- Public providers (no credentials) ---
+    ProviderSpec("parsimony.connectors.sdmx"),
+    ProviderSpec("parsimony.connectors.polymarket"),
+    ProviderSpec("parsimony.connectors.sec_edgar"),
+    ProviderSpec("parsimony.connectors.treasury"),
+    ProviderSpec("parsimony.connectors.snb"),
+    ProviderSpec("parsimony.connectors.rba"),
+    ProviderSpec("parsimony.connectors.bde"),
+    ProviderSpec("parsimony.connectors.boc"),
+    ProviderSpec("parsimony.connectors.boj"),
+    ProviderSpec("parsimony.connectors.bdp"),
+)
+
 
 # ---------------------------------------------------------------------------
 # Dependency wiring
@@ -86,159 +145,40 @@ def _bind_optional_deps(
 
 
 # ---------------------------------------------------------------------------
-# Factory functions
+# Factory
 # ---------------------------------------------------------------------------
-
-
-def build_fetch_connectors_from_env(
-    *,
-    env: dict[str, Any] | None = None,
-) -> Connectors:
-    """Build **fetch-only** connectors from environment variables.
-
-    Excludes source-level search/discovery (e.g. ``fred_search``, ``fmp_search``,
-    SDMX DSD/codelist/list helpers, FMP screener). The app layers
-    :func:`parsimony.connectors.catalog.catalog_search` on top for discovery.
-    """
-    from parsimony.connectors import (
-        alpha_vantage,
-        bde,
-        bdf,
-        bdp,
-        bls,
-        boc,
-        boj,
-        coingecko,
-        destatis,
-        eia,
-        eodhd,
-        financial_reports,
-        finnhub,
-        fmp,
-        fred,
-        polymarket,
-        rba,
-        riksbank,
-        sdmx,
-        sec_edgar,
-        snb,
-        tiingo,
-        treasury,
-    )
-
-    _env = env if env is not None else os.environ
-
-    # Required providers (raise if key missing)
-    result = _bind_required_deps(Connectors([]), fred.FETCH_CONNECTORS, fred.ENV_VARS, _env)
-    result = result + sdmx.SDMX_FETCH_CONNECTORS
-    result = _bind_required_deps(result, fmp.FMP_FETCH_CONNECTORS, fmp.ENV_VARS, _env)
-
-    # Optional providers (skipped if key absent)
-    result = _bind_optional_deps(result, eodhd.EODHD_FETCH_CONNECTORS, eodhd.ENV_VARS, _env)
-    result = _bind_optional_deps(result, coingecko.FETCH_CONNECTORS, coingecko.ENV_VARS, _env)
-    result = _bind_optional_deps(result, finnhub.FETCH_CONNECTORS, finnhub.ENV_VARS, _env)
-    result = _bind_optional_deps(result, tiingo.FETCH_CONNECTORS, tiingo.ENV_VARS, _env)
-    result = _bind_optional_deps(result, financial_reports.FETCH_CONNECTORS, financial_reports.ENV_VARS, _env)
-    result = _bind_optional_deps(result, eia.FETCH_CONNECTORS, eia.ENV_VARS, _env)
-    result = _bind_optional_deps(result, bdf.FETCH_CONNECTORS, bdf.ENV_VARS, _env)
-    result = _bind_optional_deps(result, alpha_vantage.FETCH_CONNECTORS, alpha_vantage.ENV_VARS, _env)
-
-    # Public data providers (no credentials needed)
-    result = (
-        result
-        + polymarket.CONNECTORS
-        + sec_edgar.CONNECTORS
-        + treasury.FETCH_CONNECTORS
-        + snb.FETCH_CONNECTORS
-        + rba.FETCH_CONNECTORS
-        + bde.FETCH_CONNECTORS
-        + boc.FETCH_CONNECTORS
-        + boj.FETCH_CONNECTORS
-        + bdp.FETCH_CONNECTORS
-    )
-
-    # Optional providers with credentials (skipped if key absent)
-    result = _bind_optional_deps(result, riksbank.FETCH_CONNECTORS, riksbank.ENV_VARS, _env)
-    result = _bind_optional_deps(result, destatis.FETCH_CONNECTORS, destatis.ENV_VARS, _env)
-    result = _bind_optional_deps(result, bls.FETCH_CONNECTORS, bls.ENV_VARS, _env)
-
-    return result
 
 
 def build_connectors_from_env(
     *,
     env: dict[str, Any] | None = None,
+    lenient: bool = False,
 ) -> Connectors:
     """Build the full connector surface from environment variables.
 
-    Includes search, discovery, screener, and fetch operations. Use
-    :func:`build_fetch_connectors_from_env` for the agent runtime when
-    ``catalog_search`` is the sole discovery path.
+    Iterates the :data:`PROVIDERS` registry.  Each module's ``CONNECTORS``
+    are composed after binding dependencies resolved from *env* (or
+    ``os.environ`` when *env* is ``None``).
+
+    Set *lenient* to ``True`` to skip providers whose env vars are missing
+    even when they are marked ``required``.  This is useful for partial
+    environments such as catalog builds that may lack all API keys.
 
     Pass *env* to override ``os.environ`` (useful for testing).
     """
-    from parsimony.connectors import (
-        alpha_vantage,
-        bde,
-        bdf,
-        bdp,
-        bls,
-        boc,
-        boj,
-        coingecko,
-        destatis,
-        eia,
-        eodhd,
-        financial_reports,
-        finnhub,
-        fmp,
-        fmp_screener,
-        fred,
-        polymarket,
-        rba,
-        riksbank,
-        sdmx,
-        sec_edgar,
-        snb,
-        tiingo,
-        treasury,
-    )
+    _env = env if env is not None else dict(os.environ)
+    result = Connectors([])
 
-    _env = env if env is not None else os.environ
+    for spec in PROVIDERS:
+        module = importlib.import_module(spec.module)
+        connectors: Connectors = module.CONNECTORS
+        env_vars: dict[str, str] = getattr(module, "ENV_VARS", {})
 
-    # Required providers (raise if key missing)
-    result = _bind_required_deps(Connectors([]), fred.CONNECTORS, fred.ENV_VARS, _env)
-    result = result + sdmx.CONNECTORS
-    result = _bind_required_deps(result, fmp.CONNECTORS, fmp.ENV_VARS, _env)
-    result = _bind_required_deps(result, fmp_screener.CONNECTORS, fmp_screener.ENV_VARS, _env)
-
-    # Optional providers with credentials (skipped if key absent)
-    result = _bind_optional_deps(result, eodhd.CONNECTORS, eodhd.ENV_VARS, _env)
-    result = _bind_optional_deps(result, coingecko.CONNECTORS, coingecko.ENV_VARS, _env)
-    result = _bind_optional_deps(result, finnhub.CONNECTORS, finnhub.ENV_VARS, _env)
-    result = _bind_optional_deps(result, tiingo.CONNECTORS, tiingo.ENV_VARS, _env)
-    result = _bind_optional_deps(result, financial_reports.CONNECTORS, financial_reports.ENV_VARS, _env)
-    result = _bind_optional_deps(result, eia.CONNECTORS, eia.ENV_VARS, _env)
-    result = _bind_optional_deps(result, bdf.CONNECTORS, bdf.ENV_VARS, _env)
-    result = _bind_optional_deps(result, alpha_vantage.CONNECTORS, alpha_vantage.ENV_VARS, _env)
-
-    # Public data providers (no credentials needed)
-    result = (
-        result
-        + polymarket.CONNECTORS
-        + sec_edgar.CONNECTORS
-        + treasury.CONNECTORS
-        + snb.CONNECTORS
-        + rba.CONNECTORS
-        + bde.CONNECTORS
-        + boc.CONNECTORS
-        + boj.CONNECTORS
-        + bdp.CONNECTORS
-    )
-
-    # Optional providers with credentials (skipped if key absent)
-    result = _bind_optional_deps(result, riksbank.CONNECTORS, riksbank.ENV_VARS, _env)
-    result = _bind_optional_deps(result, destatis.CONNECTORS, destatis.ENV_VARS, _env)
-    result = _bind_optional_deps(result, bls.CONNECTORS, bls.ENV_VARS, _env)
+        if not env_vars:
+            result = result + connectors
+        elif spec.required and not lenient:
+            result = _bind_required_deps(result, connectors, env_vars, _env)
+        else:
+            result = _bind_optional_deps(result, connectors, env_vars, _env)
 
     return result

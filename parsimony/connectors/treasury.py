@@ -207,5 +207,4 @@ async def enumerate_treasury(params: TreasuryEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([treasury_fetch])
 CONNECTORS = Connectors([treasury_fetch, enumerate_treasury])

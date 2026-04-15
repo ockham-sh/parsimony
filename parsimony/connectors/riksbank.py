@@ -236,5 +236,4 @@ async def enumerate_riksbank(params: RiksbankEnumerateParams, *, api_key: str = 
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([riksbank_fetch])
 CONNECTORS = Connectors([riksbank_fetch, enumerate_riksbank])

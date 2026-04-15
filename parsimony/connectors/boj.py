@@ -263,5 +263,4 @@ async def enumerate_boj(params: BojEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([boj_fetch])
 CONNECTORS = Connectors([boj_fetch, enumerate_boj])

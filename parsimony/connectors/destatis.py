@@ -255,5 +255,4 @@ async def enumerate_destatis(
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([destatis_fetch])
 CONNECTORS = Connectors([destatis_fetch, enumerate_destatis])

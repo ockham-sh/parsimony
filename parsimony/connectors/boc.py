@@ -216,5 +216,4 @@ async def enumerate_boc(params: BocEnumerateParams) -> pd.DataFrame:
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([boc_fetch])
 CONNECTORS = Connectors([boc_fetch, enumerate_boc])

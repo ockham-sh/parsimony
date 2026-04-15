@@ -260,5 +260,4 @@ async def enumerate_bls(params: BlsEnumerateParams, *, api_key: str = "") -> pd.
 # Exports
 # ---------------------------------------------------------------------------
 
-FETCH_CONNECTORS = Connectors([bls_fetch])
 CONNECTORS = Connectors([bls_fetch, enumerate_bls])

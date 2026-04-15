@@ -527,12 +527,13 @@ def loader(
     """
 
     _validate_loader_output(output)
+    merged_tags = ["loader", *(tags or [])]
     return connector(
         name=name,
         description=description,
         params=params,
         output=output,
-        tags=tags,
+        tags=merged_tags,
         properties=properties,
     )
 
@@ -559,12 +560,13 @@ def enumerator(
     """
 
     _validate_enumerator_output(output)
+    merged_tags = ["enumerator", *(tags or [])]
     return connector(
         name=name,
         description=description,
         params=params,
         output=output,
-        tags=tags,
+        tags=merged_tags,
         properties=properties,
     )
 
@@ -665,10 +667,11 @@ class Connectors:
         return "\n".join(lines)
 
     _CODE_HEADER = (
-        "\n# Data connectors\n"
+        "\n# Data connectors (code execution)\n"
         "\n"
-        "You have `client` in the code executor — a Connectors collection "
-        "for fetching data.\n"
+        "These connectors are available via `client` in the code executor. "
+        "They return full datasets as DataFrames — the data stays in the "
+        "execution environment, not in the conversation context.\n"
         "\n"
         "## How to use\n"
         "- `result = await client[\"name\"](param=value)` — returns Result "
@@ -682,8 +685,10 @@ class Connectors:
     _MCP_HEADER = (
         "\n# Ockham — financial data discovery tools\n"
         "\n"
-        "These MCP tools search and discover data. For bulk retrieval, "
-        "write and execute a Python script:\n"
+        "These MCP tools search and discover data. They return compact, "
+        "context-friendly results — metadata, listings, search matches — "
+        "not bulk datasets. For bulk retrieval, write and execute a Python "
+        "script:\n"
         "```python\n"
         "from parsimony import client\n"
         "result = await client['fred_fetch'](series_id='UNRATE')\n"

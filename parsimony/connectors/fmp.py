@@ -876,10 +876,11 @@ async def fmp_market_movers(
 # Collection
 # ---------------------------------------------------------------------------
 
-FMP_DISCOVERY_CONNECTORS = Connectors([fmp_search, fmp_taxonomy])
-
-FMP_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        fmp_search,
+        fmp_taxonomy,
         # Core market data
         fmp_quotes,
         fmp_prices,
@@ -903,5 +904,3 @@ FMP_FETCH_CONNECTORS = Connectors(
         fmp_market_movers,
     ]
 )
-
-CONNECTORS = FMP_DISCOVERY_CONNECTORS + FMP_FETCH_CONNECTORS

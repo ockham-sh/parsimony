@@ -2259,8 +2259,10 @@ async def enumerate_alpha_vantage(
 # Connector collections
 # ---------------------------------------------------------------------------
 
-AV_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        alpha_vantage_search,
         # Market data
         alpha_vantage_quote,
         alpha_vantage_daily,
@@ -2298,15 +2300,7 @@ AV_FETCH_CONNECTORS = Connectors(
         alpha_vantage_technical,
         # Options
         alpha_vantage_options,
-    ]
-)
-
-FETCH_CONNECTORS = AV_FETCH_CONNECTORS
-
-CONNECTORS = Connectors(
-    [
-        alpha_vantage_search,
-        *AV_FETCH_CONNECTORS,
+        # Enumeration
         enumerate_alpha_vantage,
     ]
 )

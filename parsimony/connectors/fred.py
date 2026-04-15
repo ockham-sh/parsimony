@@ -218,8 +218,6 @@ async def fred_fetch(params: FredFetchParams, *, api_key: str) -> Result:
     )
 
 
-FETCH_CONNECTORS = Connectors([fred_fetch])
-
 CONNECTORS = Connectors([fred_search, fred_fetch])
 
 

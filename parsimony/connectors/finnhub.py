@@ -835,8 +835,11 @@ async def enumerate_finnhub(params: FinnhubEnumerateParams, *, api_key: str) -> 
 # Connector collections
 # ---------------------------------------------------------------------------
 
-FINNHUB_FETCH_CONNECTORS = Connectors(
+CONNECTORS = Connectors(
     [
+        # Discovery
+        finnhub_search,
+        # Fetch
         finnhub_quote,
         finnhub_profile,
         finnhub_peers,
@@ -847,14 +850,7 @@ FINNHUB_FETCH_CONNECTORS = Connectors(
         finnhub_market_news,
         finnhub_earnings_calendar,
         finnhub_ipo_calendar,
+        # Enumeration
+        enumerate_finnhub,
     ]
 )
-
-FINNHUB_DISCOVERY_CONNECTORS = Connectors(
-    [
-        finnhub_search,
-    ]
-)
-
-FETCH_CONNECTORS = FINNHUB_FETCH_CONNECTORS
-CONNECTORS = FINNHUB_DISCOVERY_CONNECTORS + FINNHUB_FETCH_CONNECTORS + Connectors([enumerate_finnhub])

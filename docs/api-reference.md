@@ -489,7 +489,7 @@ LiteLLMEmbeddingProvider(
 )
 ```
 
-Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony[search]`.
+Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony-core[search]`.
 
 - Batches embedding requests at 100 texts per call (`_EMBED_BATCH_SIZE = 100`; hardcoded).
 - Applies L2 normalization to all returned vectors.

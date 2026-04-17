@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Distribution name is now `parsimony-core` on PyPI.** The `parsimony` name on PyPI
+  is currently held by an unrelated squatted project. Import path is unchanged
+  (`from parsimony import ...`). The distribution will migrate to the bare `parsimony`
+  name once it becomes available; a shim `parsimony-core` will then depend on `parsimony`
+  for backwards compatibility.
+- `pyproject.toml`: explicit `[tool.hatch.build.targets.wheel]` and `sdist` sections added
+  so the `parsimony/` package is unambiguously included in the built distributions.
+
 ### Added
 
 - `@loader` decorator for observation-persistence connectors

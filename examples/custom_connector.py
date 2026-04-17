@@ -6,7 +6,7 @@ Demonstrates:
 3. Composing the custom connector into a Connectors bundle alongside FRED.
 
 Setup:
-    pip install parsimony
+    pip install parsimony-core
     export FRED_API_KEY="your-key-here"
 
 Expected output:

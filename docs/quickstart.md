@@ -5,7 +5,7 @@ Get from zero to fetching macroeconomic data in under five minutes -- no API key
 ## Install
 
 ```bash
-pip install parsimony
+pip install parsimony-core
 ```
 
 > **Python 3.11+** required. SDMX providers (ECB, Eurostat, IMF, World Bank) are included in the base install.
@@ -194,7 +194,7 @@ Indexed: 1, Skipped: 0
 For semantic (vector) search, add the search extra and an embedding provider:
 
 ```bash
-pip install parsimony[search]
+pip install parsimony-core[search]
 ```
 
 ```python

@@ -1,7 +1,7 @@
 """Quickstart: Search and fetch US GDP from FRED.
 
 Setup:
-    pip install parsimony
+    pip install parsimony-core
     export FRED_API_KEY="your-key-here"
 
     Register for a free FRED API key at:

@@ -28,7 +28,7 @@ parsimony is a Python library that gives you a single, consistent async interfac
 ## Installation
 
 ```bash
-pip install parsimony
+pip install parsimony-core
 ```
 
 ### Optional extras
@@ -37,10 +37,10 @@ SDMX support (ECB, Eurostat, IMF, World Bank, BIS) is included in the base insta
 
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `search` | `pip install "parsimony[search]"` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
-| `sec` | `pip install "parsimony[sec]"` | SEC Edgar connector via edgartools |
-| `mcp` | `pip install "parsimony[mcp]"` | MCP server for AI agents |
-| `all` | `pip install "parsimony[all]"` | Everything |
+| `search` | `pip install "parsimony-core[search]"` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
+| `sec` | `pip install "parsimony-core[sec]"` | SEC Edgar connector via edgartools |
+| `mcp` | `pip install "parsimony-core[mcp]"` | MCP server for AI agents |
+| `all` | `pip install "parsimony-core[all]"` | Everything |
 
 Two connectors require separately-installed packages:
 

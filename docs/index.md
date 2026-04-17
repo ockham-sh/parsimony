@@ -19,16 +19,21 @@ print(result.provenance)  # source="fred_fetch", params={...}
 ## Installation
 
 ```bash
-pip install parsimony
+pip install parsimony-core
 ```
 
 With optional extras:
 
 ```bash
-pip install parsimony[sec]         # + SEC Edgar
-pip install parsimony[search]      # + semantic catalog search
-pip install parsimony[all]         # Everything
+pip install parsimony-core[sec]         # + SEC Edgar
+pip install parsimony-core[search]      # + semantic catalog search
+pip install parsimony-core[all]         # Everything
 ```
+
+!!! note "Distribution name vs import name"
+    The PyPI distribution is **`parsimony-core`**; imports remain `from parsimony import ...`.
+    The bare `parsimony` name on PyPI is currently unavailable — we plan to migrate the
+    distribution name to `parsimony` once it becomes available. The import path will not change.
 
 ## Built-in Data Sources
 

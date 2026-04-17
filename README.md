@@ -1,8 +1,8 @@
 # parsimony
 
-[![PyPI version](https://img.shields.io/pypi/v/parsimony)](https://pypi.org/project/parsimony/)
+[![PyPI version](https://img.shields.io/pypi/v/parsimony-core)](https://pypi.org/project/parsimony-core/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
-[![Python](https://img.shields.io/pypi/pyversions/parsimony)](https://pypi.org/project/parsimony/)
+[![Python](https://img.shields.io/pypi/pyversions/parsimony-core)](https://pypi.org/project/parsimony-core/)
 [![CI](https://github.com/ockham-sh/parsimony/actions/workflows/test.yml/badge.svg)](https://github.com/ockham-sh/parsimony/actions)
 [![Docs](https://img.shields.io/badge/docs-parsimony.dev-blue)](https://docs.parsimony.dev)
 
@@ -19,10 +19,14 @@ Typed, composable data connectors with searchable catalogs for Python.
 ## Install
 
 ```bash
-pip install parsimony           # FRED, ECB, Eurostat, IMF, World Bank + all httpx connectors
-pip install parsimony[sec]      # + SEC Edgar
-pip install parsimony[all]      # everything (adds semantic search, MCP server)
+pip install parsimony-core           # FRED, ECB, Eurostat, IMF, World Bank + all httpx connectors
+pip install parsimony-core[sec]      # + SEC Edgar
+pip install parsimony-core[all]      # everything (adds semantic search, MCP server)
 ```
+
+> Installed from PyPI as **`parsimony-core`**; imports remain `from parsimony import ...`.
+> The bare `parsimony` name on PyPI is currently unavailable — we plan to migrate the
+> distribution name to `parsimony` once it becomes available. The import path will not change.
 
 ## 30-Second Example (No API Key)
 

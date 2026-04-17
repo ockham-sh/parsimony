@@ -6,7 +6,7 @@ Demonstrates the FMP equity research workflow:
 3. Fetch recent historical prices for that symbol.
 
 Setup:
-    pip install parsimony
+    pip install parsimony-core
     export FMP_API_KEY="your-key-here"
 
     FMP API keys are available at https://financialmodelingprep.com/

@@ -7,7 +7,7 @@ Demonstrates the full catalog lifecycle:
 4. List entries and namespaces.
 
 Setup:
-    pip install parsimony
+    pip install parsimony-core
     export FRED_API_KEY="your-key-here"
 
 Expected output:

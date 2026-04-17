@@ -12,15 +12,15 @@ SDMX support is included in the base install. The remaining optional extras are:
 
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `search` | `pip install parsimony[search]` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
-| `sec` | `pip install parsimony[sec]` | SEC Edgar connector via edgartools |
-| `mcp` | `pip install parsimony[mcp]` | MCP server for AI agents |
-| `all` | `pip install parsimony[all]` | Everything |
+| `search` | `pip install parsimony-core[search]` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
+| `sec` | `pip install parsimony-core[sec]` | SEC Edgar connector via edgartools |
+| `mcp` | `pip install parsimony-core[mcp]` | MCP server for AI agents |
+| `all` | `pip install parsimony-core[all]` | Everything |
 
 Install multiple extras at once:
 
 ```bash
-pip install "parsimony[sec,search]"
+pip install "parsimony-core[sec,search]"
 ```
 
 ### I get `ModuleNotFoundError: No module named 'edgartools'`

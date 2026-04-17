@@ -11,12 +11,11 @@ import pytest
 
 litellm = pytest.importorskip("litellm")
 
-from parsimony.embeddings.litellm import (
+from parsimony.embeddings.litellm import (  # noqa: E402
     LiteLLMEmbeddingProvider,
     _normalize_embedding,
     _validate_embedding_response,
 )
-
 
 # --- Unit tests for helpers ---
 

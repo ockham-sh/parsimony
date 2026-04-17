@@ -37,3 +37,14 @@ clean:  ## Remove build artifacts
 help:  ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'
+
+# ----------------------------------------------------------------------
+# HF catalog bundles are built and published via the CLI, not make:
+#
+#   $(PYTHON) -m parsimony.stores.hf_bundle.builder build <ns> <out_dir>
+#   $(PYTHON) -m parsimony.stores.hf_bundle.builder publish <ns> --dry-run
+#   $(PYTHON) -m parsimony.stores.hf_bundle.builder publish <ns> --yes
+#
+# PARSIMONY_EMBED_REVISION must be set (pinned model commit SHA).
+# HF_TOKEN (or HUGGING_FACE_HUB_TOKEN) must be set for publish.
+# ----------------------------------------------------------------------

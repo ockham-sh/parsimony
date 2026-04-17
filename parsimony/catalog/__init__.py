@@ -14,7 +14,6 @@ from parsimony.catalog.models import (
     normalize_series_catalog_row,
     series_match_from_entry,
 )
-from parsimony.stores.catalog_store import CatalogStore
 
 __all__ = [
     "Catalog",
@@ -40,4 +39,10 @@ def __getattr__(name: str) -> Any:
         from parsimony.catalog.catalog import build_embedding_text
 
         return build_embedding_text
+    if name == "CatalogStore":
+        # Lazy to break the catalog <-> stores circular import when the
+        # stores package is the entry point (e.g., the bundle builder CLI).
+        from parsimony.stores.catalog_store import CatalogStore
+
+        return CatalogStore
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -26,7 +26,7 @@ With optional extras:
 
 ```bash
 pip install parsimony[sec]         # + SEC Edgar
-pip install parsimony[search]      # + semantic catalog search
+pip install parsimony[search]      # + local SQLite catalog (HF bundle search is in base)
 pip install parsimony[all]         # Everything
 ```
 

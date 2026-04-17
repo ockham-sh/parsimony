@@ -8,11 +8,12 @@ parsimony requires **Python 3.11+**.
 
 ### What are the optional extras?
 
-SDMX support is included in the base install. The remaining optional extras are:
+SDMX support and the catalog-bundle subsystem (FAISS + sentence-transformers
++ huggingface_hub) are included in the base install. Optional extras:
 
 | Extra | Install command | What it enables |
-|-------|----------------|-----------------|
-| `search` | `pip install parsimony[search]` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
+|---|---|---|
+| `search` | `pip install parsimony[search]` | Legacy local-SQLite search path via LiteLLM embeddings + sqlite-vec |
 | `sec` | `pip install parsimony[sec]` | SEC Edgar connector via edgartools |
 | `mcp` | `pip install parsimony[mcp]` | MCP server for AI agents |
 | `all` | `pip install parsimony[all]` | Everything |

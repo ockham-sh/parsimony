@@ -1,4 +1,9 @@
-"""Tests for Catalog lazy namespace population: GitHub download + enumerator fallback."""
+"""Integration tests for Catalog lazy namespace population via live enumerators.
+
+The former GitHub-download tests were removed in the HF bundle cutover —
+bundle-store integration is covered by :mod:`tests.test_hf_bundle_store`,
+which uses a local fixture layout (no HF network required).
+"""
 
 from __future__ import annotations
 
@@ -12,30 +17,12 @@ from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_lazy_github_download(tmp_path):
-    """Catalog auto-downloads treasury catalog from GitHub."""
-    store = SQLiteCatalogStore(tmp_path / "catalog.db")
-    catalog = Catalog(store, connectors=TREASURY)
-
-    matches = await catalog.search("debt", limit=5, namespaces=["treasury"])
-    assert len(matches) > 0
-    assert all(m.namespace == "treasury" for m in matches)
-
-    ns = await catalog.list_namespaces()
-    assert "treasury" in ns
-
-    await catalog.close()
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
 async def test_lazy_enumerator_fallback(tmp_path):
-    """Catalog falls back to live enumerator when GitHub catalog doesn't exist."""
+    """Catalog falls back to live enumerator when no HF bundle is published."""
     connectors = RIKSBANK.bind_deps(api_key="")
     store = SQLiteCatalogStore(tmp_path / "catalog.db")
     catalog = Catalog(store, connectors=connectors)
 
-    # Riksbank has no GitHub catalog — should enumerate live
     await catalog.search("SEK", limit=5, namespaces=["riksbank"])
 
     ns = await catalog.list_namespaces()
@@ -47,7 +34,7 @@ async def test_lazy_enumerator_fallback(tmp_path):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_lazy_caches_across_calls(tmp_path):
-    """Second search for same namespace doesn't re-download."""
+    """Second search for same namespace doesn't re-enumerate."""
     store = SQLiteCatalogStore(tmp_path / "catalog.db")
     catalog = Catalog(store, connectors=TREASURY)
 
@@ -71,9 +58,8 @@ async def test_lazy_persists_between_instances(tmp_path):
     await cat1.search("debt", limit=1, namespaces=["treasury"])
     await cat1.close()
 
-    # Second instance — treasury already in SQLite, no download needed
     store2 = SQLiteCatalogStore(db_path)
-    cat2 = Catalog(store2)  # no connectors needed
+    cat2 = Catalog(store2)
     matches = await cat2.search("debt", limit=5, namespaces=["treasury"])
     assert len(matches) > 0
     await cat2.close()

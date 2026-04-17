@@ -46,19 +46,25 @@ parsimony/
 ├── connector.py              # Connector, Connectors, decorators
 ├── errors.py                 # Typed error hierarchy (ConnectorError and subclasses)
 ├── result.py                 # Result, SemanticTableResult, OutputConfig, Column, ColumnRole
-├── data_store.py             # DataStore ABC, LoadResult
 ├── catalog/
 │   ├── catalog.py            # Catalog orchestration layer
-│   ├── store.py              # CatalogStore ABC
-│   ├── models.py             # SeriesEntry, SeriesMatch, IndexResult (Pydantic)
-│   ├── embeddings.py         # EmbeddingProvider ABC
-│   ├── series_pipeline.py    # build_embedding_text(), text composition for indexing
+│   ├── models.py             # SeriesEntry, SeriesMatch, IndexResult, EmbeddingProvider ABC
+│   ├── arrow_adapters.py     # Pure SeriesEntry <-> Arrow table transforms (build+load contract)
 │   └── identity_from_params.py  # Namespace field extraction utilities
 ├── stores/
-│   ├── memory.py             # SQLiteCatalogStore
-│   └── memory_data.py        # InMemoryDataStore
+│   ├── __init__.py           # Lazy __getattr__ for HFBundleCatalogStore, SQLiteCatalogStore
+│   ├── catalog_store.py      # CatalogStore ABC
+│   ├── data_store.py         # DataStore ABC, LoadResult
+│   ├── sqlite_catalog.py     # SQLiteCatalogStore (local-only, legacy FTS5+vec0 path)
+│   ├── memory_data.py        # InMemoryDataStore
+│   └── hf_bundle/            # HF Parquet + FAISS catalog bundles
+│       ├── format.py         # BundleManifest, Parquet schema, filenames, size caps
+│       ├── errors.py         # BundleError / BundleNotFoundError / BundleIntegrityError
+│       ├── store.py          # HFBundleCatalogStore (single-flight, LRU, FAISS search)
+│       └── builder.py        # Local bundle builder + publish CLI
 ├── embeddings/
-│   └── litellm.py            # LiteLLMEmbeddingProvider
+│   ├── sentence_transformers.py  # SentenceTransformersEmbeddingProvider (default)
+│   └── litellm.py            # LiteLLMEmbeddingProvider (hosted-API path, [search] extra)
 ├── transport/
 │   ├── http.py               # HttpClient wrapping httpx; API key log redaction
 │   └── json_helpers.py       # json_to_df(), interpolate_path()
@@ -261,47 +267,121 @@ If a connector returns a plain `Result` but the caller needs schema information,
 
 ## Catalog Subsystem
 
-The catalog subsystem (`parsimony/catalog/`) manages the lifecycle of series metadata: indexing, deduplication, embedding, and search.
+The catalog indexes series metadata `(namespace, code, title, …)` per data
+source and exposes vector search over the loaded namespaces.
 
 ### Component responsibilities
 
 | Component | File | Responsibility |
-|-----------|------|---------------|
-| `Catalog` | `catalog.py` | Orchestration: indexing pipeline, search routing, embedding coordination |
-| `CatalogStore` | `store.py` | Persistence ABC: CRUD + text search + vector search |
-| `SeriesEntry` / `SeriesMatch` / `IndexResult` | `models.py` | Pydantic data models for catalog records and results |
-| `EmbeddingProvider` | `embeddings.py` | ABC for text-to-vector embedding |
-| `build_embedding_text` | `series_pipeline.py` | Composes text from `SeriesEntry` fields for embedding; format affects search quality |
-| `identity_from_params` | `identity_from_params.py` | Extracts `(namespace, code)` from a Pydantic params model using `Namespace` annotations |
+|---|---|---|
+| `Catalog` | `catalog/catalog.py` | Thin orchestration: per-namespace population, search dispatch, indexing pipeline |
+| `CatalogStore` | `stores/catalog_store.py` | Persistence + search ABC with an optional `try_load_remote` hook |
+| `HFBundleCatalogStore` | `stores/hf_bundle/store.py` | Read-only store backed by Parquet + FAISS bundles on HuggingFace Hub |
+| `SQLiteCatalogStore` | `stores/sqlite_catalog.py` | Local-only FTS5 + vec0 store for custom catalogs (legacy path) |
+| `BundleManifest` / Parquet schema | `stores/hf_bundle/format.py` | Wire contract — strict Pydantic manifest + pinned Parquet schema |
+| `arrow_table_to_entries` / `arrow_rows_to_entries` | `catalog/arrow_adapters.py` | Pure transforms — dense `row_id` 0..N-1 matches FAISS position (full load vs point-lookup variants) |
+| `SeriesEntry` / `SeriesMatch` / `IndexResult` / `EmbeddingProvider` | `catalog/models.py` | Pydantic data models + embedding ABC |
+| `SentenceTransformersEmbeddingProvider` | `embeddings/sentence_transformers.py` | Default provider; process-wide LRU model cache; per-instance embed semaphore |
 
-### Indexing pipeline
+### Bundle layout
 
-When `Catalog.index_result()` is called with a `SemanticTableResult`:
+Each namespace ships as three files at `parsimony-dev/<namespace>` on
+HuggingFace Hub:
 
-1. Each row with a KEY column is extracted and converted to a `SeriesEntry` using the `Namespace` annotation to determine `namespace` and `code`.
-2. If `force=False`, existing entries in the store are checked; unchanged entries are skipped.
-3. `build_embedding_text()` composes a text string from each entry's `title`, `tags`, `description`, and `metadata` fields.
-4. If `embed=True` and an `EmbeddingProvider` is configured, `EmbeddingProvider.embed()` is called on the batch of texts.
-5. Entries (with optional embeddings) are upserted into the `CatalogStore`.
-6. An `IndexResult` summarizing `total`, `indexed`, `skipped`, and `errors` is returned.
+```
+entries.parquet   # rows; dense row_id 0..N-1 matches FAISS vector position
+index.faiss       # IndexHNSWFlat over L2-normalized embeddings (cosine via inner-product)
+manifest.json     # BundleManifest — namespace, counts, model id+revision, SHA-256s
+```
 
-### Identity resolution
+The client cache layout mirrors the HF commit:
 
-The `Namespace` metadata annotation on a Pydantic field is the bridge between connector params and catalog identity:
+```
+<cache_base>/<namespace>/<commit_sha>/{manifest.json,entries.parquet,index.faiss}
+```
+
+One revision per namespace is kept; a fresh download cleans up sibling SHA directories.
+
+### Search flow
+
+`Catalog.search(query, namespaces=[...])` requires an explicit non-empty
+namespace list. For each requested namespace the `Catalog` calls
+`store.try_load_remote(ns)` (the HF store downloads the bundle and runs
+integrity checks; other stores return `False` by default). Then
+`store.search` is invoked with the raw query; the store owns embedding,
+FAISS search, and result merging:
+
+1. `embed_query(query)` produces a single 384-d vector (for the default model).
+2. FAISS searches are fanned out across loaded bundles in parallel threads.
+3. Results are merged, sorted by similarity, and truncated to `limit`.
+
+One structured log line per call records model id, revision, dim,
+embed/search latency, namespaces searched, top similarity, and result
+count — no raw query text.
+
+### Freshness + loading
+
+`HFBundleCatalogStore._load_one` resolves the target revision inline:
+
+- **Pinned** (`PARSIMONY_CATALOG_PIN=<sha>`): use the cached revision if
+  it matches; otherwise download that exact SHA. If HF is unreachable
+  and the pin isn't cached, raise `BundleIntegrityError`.
+- **Unpinned**: call `HfApi.repo_info` for the current SHA. On success,
+  use the cache if it matches; otherwise download. If the HEAD check
+  fails and a cache exists, serve stale with a WARN log; otherwise raise.
+
+Concurrent `try_load_remote` and `refresh` calls on the same namespace
+share a single `asyncio.Future` (single-flight), so N callers trigger
+one physical download. The store maintains an LRU of loaded bundles
+(`PARSIMONY_MAX_LOADED_BUNDLES`, default 16) — evicted entries release
+their FAISS index.
+
+### Integrity checks on load
+
+On every load, the store verifies: filename allowlist, size caps on each
+file, path confinement under `cache_base`, SHA-256 of `entries.parquet`
+and `index.faiss` against the manifest, provider `model_id` / `revision`
+/ `dimension` match the manifest, Parquet row count matches
+`entry_count`, FAISS `ntotal` matches `entry_count`, FAISS `d` matches
+`embedding_dim`, and dense `row_id` 0..N-1. Any failure raises
+`BundleIntegrityError` with a message that identifies the specific
+invariant that broke.
+
+### Error hierarchy
+
+Three exception classes rooted at `BundleError`:
+
+- `BundleNotFoundError` — the HF repo doesn't exist for this namespace
+  (legitimate "no bundle published" case; `try_load_remote` returns
+  `False`).
+- `BundleIntegrityError` — everything else bad: network errors, manifest
+  corrupt, SHA mismatch, shape mismatch, model dim mismatch, pinned
+  revision unavailable. The message discriminates.
+- `BundleError` — base; catch this to handle any bundle failure.
+
+### Identity resolution for indexing
+
+The `Namespace` annotation on a Pydantic field bridges connector params
+and catalog identity:
 
 ```python
 class FredFetchParams(BaseModel):
     series_id: Annotated[str, Namespace("fred")]
 ```
 
-`identity_from_params()` inspects the params model, finds the field annotated with `Namespace`, and returns `(namespace, code)`. The constraint is that exactly one `Namespace`-annotated field may exist per params model. A params model without a `Namespace` field cannot be used to auto-resolve identity.
+`identity_from_params()` inspects the params model, finds the field
+annotated with `Namespace`, and returns `(namespace, code)`. Exactly one
+`Namespace`-annotated field may exist per params model.
 
-### Search routing
+### Indexing pipeline (custom / local catalogs only)
 
-`Catalog.search()` dispatches to either token-based or vector-based search depending on the `semantic=` flag:
-
-- `semantic=False`: delegates to `CatalogStore.search()` (text/token matching).
-- `semantic=True`: calls `EmbeddingProvider.embed([query])` to get the query vector, then delegates to `CatalogStore.vector_search()`. Requires an `EmbeddingProvider` configured on the `Catalog`.
+For users running `SQLiteCatalogStore` locally (not published bundles),
+`Catalog.index_result(table)` extracts rows with a KEY column, converts
+to `SeriesEntry` instances, optionally embeds via
+`EmbeddingProvider.embed_texts()`, and upserts into the store. Returns an
+`IndexResult` with `total`/`indexed`/`skipped`/`errors`. Errors during
+embed/upsert are retried only for `httpx.TransportError` — programmer
+errors (`RuntimeError`, `OSError`, dim mismatches) propagate.
 
 ---
 
@@ -473,9 +553,31 @@ SemanticTableResult (from connector)
       → Each row → SeriesEntry(namespace="fred", code="GDP", title="...", ...)
       → CatalogStore.exists() checked per entry (unless force=True)
       → build_embedding_text(entry) called
-      → EmbeddingProvider.embed(texts) called (if embed=True)
+      → EmbeddingProvider.embed_texts(texts) called (if embed=True)
       → CatalogStore.upsert(entries) called
   → IndexResult(total, indexed, skipped, errors) returned
+```
+
+This flow applies to custom/local catalogs (`SQLiteCatalogStore`). For the
+default published-bundle path, catalogs are built once by the library
+maintainer via `python -m parsimony.stores.hf_bundle.builder publish <ns>`
+and consumed by clients via `HFBundleCatalogStore`, which is read-only —
+`upsert`/`delete` raise `NotImplementedError`.
+
+**Bundle search flow**:
+
+```
+Caller
+  → catalog.search("unemployment rate", namespaces=["fred"])
+      → for each namespace: store.try_load_remote(ns)
+          → (first call) HEAD check, download to <cache>/<ns>/<sha>/
+          → SHA + shape + schema integrity checks
+          → FAISS index + Parquet table loaded into LoadedNamespace
+      → store.search(query, limit, namespaces=[...])
+          → embed_query(query) → 384-d vector
+          → parallel FAISS search across loaded bundles
+          → merge + sort + truncate to top-k
+  → list[SeriesMatch] returned
 ```
 
 The diagram below shows the catalog indexing pipeline from a `SemanticTableResult` through to the persisted `IndexResult`.
@@ -516,29 +618,40 @@ graph TD
 The internal dependency structure (simplified, showing import direction):
 
 ```
-result.py           ← (standalone: pandas, pyarrow)
-errors.py           ← (standalone: no internal deps)
-catalog/models.py   ← (standalone: pydantic)
+result.py                       ← (standalone: pandas, pyarrow)
+errors.py                       ← (standalone: no internal deps)
+catalog/models.py               ← (standalone: pydantic)
 
-connector.py        ← result.py, errors.py
-catalog/store.py    ← catalog/models.py
-catalog/catalog.py  ← catalog/store.py, catalog/models.py, catalog/embeddings.py, result.py
-data_store.py       ← catalog/models.py, result.py
+connector.py                    ← result.py, errors.py
+stores/catalog_store.py         ← catalog/models.py
+stores/data_store.py            ← catalog/models.py, result.py
+stores/hf_bundle/errors.py      ← (standalone)
+stores/hf_bundle/format.py      ← pyarrow, pydantic
+catalog/arrow_adapters.py       ← catalog/models.py, stores/hf_bundle/{errors,format}
+catalog/catalog.py              ← catalog/models.py, stores/catalog_store.py, result.py
+stores/hf_bundle/store.py       ← catalog/arrow_adapters.py, catalog/models.py,
+                                  stores/catalog_store.py, stores/hf_bundle/{errors,format}
+stores/hf_bundle/builder.py     ← catalog/{arrow_adapters,catalog,models}, stores/hf_bundle/format
+stores/sqlite_catalog.py        ← catalog/models.py, stores/catalog_store.py
+stores/memory_data.py           ← catalog/models.py, stores/data_store.py
+embeddings/sentence_transformers.py  ← catalog/models.py, stores/hf_bundle/{errors,format}
+embeddings/litellm.py           ← catalog/models.py, litellm (optional, [search] extra)
 
-stores/memory.py         ← catalog/models.py, catalog/store.py
-stores/memory_data.py    ← catalog/models.py, data_store.py
-embeddings/litellm.py    ← catalog/embeddings.py, litellm (optional)
+stores/__init__.py              ← stores/{catalog_store,data_store}, lazy-imports HF + SQLite
+catalog/__init__.py             ← catalog/models.py, lazy-imports Catalog + CatalogStore
 
-transport/http.py        ← httpx
-transport/json_helpers.py← pandas
+transport/http.py               ← httpx
+transport/json_helpers.py       ← pandas
 
-connectors/fred.py       ← connector.py, result.py, transport/http.py
-connectors/sdmx.py       ← connector.py, result.py (sdmx1 optional)
-connectors/fmp.py        ← connector.py, result.py, transport/http.py, transport/json_helpers.py
-connectors/__init__.py   ← all connector modules
+connectors/*                    ← connector.py, result.py, transport/*
+connectors/__init__.py          ← all connector modules
 ```
 
-No circular dependencies. `result.py` and `catalog/models.py` have the highest in-degree (most modules depend on them). Changes to these two files have the widest blast radius.
+No circular dependencies; the `stores/__init__.py` and `catalog/__init__.py`
+packages use lazy `__getattr__` so that importing them doesn't pull in
+pyarrow/faiss/huggingface_hub. `result.py`, `catalog/models.py`, and
+`stores/hf_bundle/format.py` have the highest in-degree; changes there have
+the widest blast radius.
 
 ---
 

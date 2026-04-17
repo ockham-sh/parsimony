@@ -163,48 +163,54 @@ print(result.data.tail())
 
 ---
 
-## Step 5: Build a Mini Catalog
+## Step 5: Search the Catalog
 
-Index fetched series into a searchable catalog:
+parsimony ships pre-built catalog bundles for 6 central-bank namespaces
+(snb, riksbank, boc, rba, bde, treasury) on HuggingFace Hub. The first
+`search()` call per namespace downloads the bundle (~50–200 MB) and
+loads the sentence-transformers embedding model; subsequent calls hit
+the local cache.
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
+from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
+from parsimony.stores import HFBundleCatalogStore
 
-catalog = Catalog(store=SQLiteCatalogStore(":memory:"))
-
-# Index the ECB exchange rate result
-ecb_result = await SDMX["sdmx_fetch"](
-    dataset_key="ECB-EXR",
-    series_key="D.USD.EUR.SP00.A",
+provider = SentenceTransformersEmbeddingProvider(
+    model_id="sentence-transformers/all-MiniLM-L6-v2",
+    revision="c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+    expected_dim=384,
 )
-summary = await catalog.index_result(ecb_result, embed=False)
-print(f"Indexed: {summary.indexed}, Skipped: {summary.skipped}")
+catalog = Catalog(HFBundleCatalogStore(embeddings=provider), embeddings=provider)
 
-# Search the catalog
-matches = await catalog.search("dollar euro exchange", limit=5)
+matches = await catalog.search("policy rate", limit=5, namespaces=["snb"])
 for m in matches:
-    print(f"  [{m.namespace}:{m.code}] {m.title}")
+    print(f"  [{m.namespace}:{m.code}] {m.title}  (sim={m.similarity:.3f})")
 ```
 
-```
-Indexed: 1, Skipped: 0
-  [sdmx_ecb_exr:D.USD.EUR.SP00.A] US dollar/Euro (EXR)
-```
+> `namespaces=[...]` is **required** — each namespace has its own
+> embedding model, so implicit cross-namespace merging is unsound.
 
-For semantic (vector) search, add the search extra and an embedding provider:
+### Custom local catalog
+
+If you want to build your own catalog from arbitrary connector results,
+use `SQLiteCatalogStore` (in the `[search]` extra):
 
 ```bash
 pip install parsimony[search]
 ```
 
 ```python
-from parsimony import LiteLLMEmbeddingProvider
+from parsimony import Catalog
+from parsimony.stores import SQLiteCatalogStore
 
-catalog = Catalog(
-    store=SQLiteCatalogStore(":memory:"),
-    embeddings=LiteLLMEmbeddingProvider(model="text-embedding-3-small", dimension=1536),
+catalog = Catalog(store=SQLiteCatalogStore(":memory:"))
+ecb_result = await SDMX["sdmx_fetch"](
+    dataset_key="ECB-EXR",
+    series_key="D.USD.EUR.SP00.A",
 )
-await catalog.index_result(ecb_result, embed=True)
+summary = await catalog.index_result(ecb_result, embed=False)
+print(f"Indexed: {summary.indexed}, Skipped: {summary.skipped}")
 ```
 
 ---

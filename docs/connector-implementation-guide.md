@@ -1220,10 +1220,11 @@ except ImportError:
     pass
 ```
 
-Then build the catalog:
+Then build the catalog bundle locally:
 
 ```bash
-python -m parsimony.catalog.builder build catalog.db
+python -m parsimony.stores.hf_bundle.builder build <namespace> ./build/<namespace>
+# produces ./build/<namespace>/{entries.parquet, index.faiss, manifest.json}
 ```
 
 ### How the Agent Uses the Catalog
@@ -1602,46 +1603,111 @@ example of typed connectors per operation.
 
 ---
 
-## Contributing Pre-Built Catalogs
+## Publishing HF Catalog Bundles
 
-After building a catalog with your new `@enumerator`, contribute the pre-built
-catalog to [`ockham-sh/parsimony-catalogs`](https://github.com/ockham-sh/parsimony-catalogs)
-so other users get instant search without running enumerators themselves.
+After building a catalog with your new `@enumerator`, publish it as a
+HuggingFace Hub bundle under the `parsimony-dev` organization so other users
+get instant search without running your enumerator themselves.
 
 ### How it works
 
-The `Catalog` class lazily downloads pre-built catalog databases from the
-`parsimony-catalogs` repo on GitHub. When a user searches for a namespace
-that isn't in their local SQLite DB, the catalog checks GitHub first (fast
-download) before falling back to running the `@enumerator` live (slower).
+The `Catalog` class lazily downloads pre-built bundles from HuggingFace Hub.
+When a user searches for a namespace that isn't already loaded, the store
+(`HFBundleCatalogStore`) asks `HfApi.repo_info` for the current revision,
+downloads `entries.parquet` + `index.faiss` + `manifest.json` via
+`snapshot_download`, verifies SHA-256 integrity against the manifest, and
+loads the bundle for FAISS vector search. If no bundle is published, the
+catalog falls back to running the `@enumerator` live (slower).
 
-### Contributing your catalog
+Each namespace lives in its own HF dataset repo:
+`parsimony-dev/<namespace>`.
 
-1. **Build it locally:**
+### Publishing your bundle
+
+Prerequisites:
+
+- Write access to the `parsimony-dev` HF org.
+- A write-scoped HF token exported as `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`).
+- The pinned embedding-model revision exported as `PARSIMONY_EMBED_REVISION`
+  (full 40-char commit SHA of the `sentence-transformers/all-MiniLM-L6-v2`
+  weights).
+
+The publish CLI has three safety rails:
+
+| Flag | Purpose |
+|---|---|
+| `--dry-run` | Build locally, print the manifest JSON, skip upload entirely |
+| `--yes` | Required for an actual upload (prevents stray CLI invocations) |
+| `--allow-shrink` | Permit publishing when the fresh `entry_count` is <50% of the currently-published bundle (otherwise refused) |
+| `--keep-dir <path>` | Copy the built bundle into a caller-owned directory before the tempdir is cleaned up |
+
+1. **Build locally and inspect:**
    ```bash
-   python -m parsimony.catalog.builder build catalog.db
+   python -m parsimony.stores.hf_bundle.builder build <namespace> ./build/<namespace>
+   ls ./build/<namespace>
+   # entries.parquet  index.faiss  manifest.json
    ```
 
-2. **Verify the entries:**
+2. **Verify the bundle loads:**
    ```python
-   from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
-   store = SQLiteCatalogStore("catalog.db")
-   entries, total = await store.list(namespace="my_source", limit=10)
-   print(f"{total} entries in my_source namespace")
-   for e in entries:
-       print(f"  {e.code}: {e.title}")
+   from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
+   from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+
+   provider = SentenceTransformersEmbeddingProvider(
+       model_id="sentence-transformers/all-MiniLM-L6-v2",
+       revision="<pinned-sha>",
+       expected_dim=384,
+   )
+   store = HFBundleCatalogStore(embeddings=provider, cache_dir="./build")
+   # Use try_load_remote with cache-only semantics by setting PARSIMONY_CATALOG_PIN
+   # to a bundle revision you've placed in ./build/<namespace>/<revision>/.
    ```
 
-3. **Submit a PR** to `ockham-sh/parsimony-catalogs` with the catalog file.
-   Include:
-   - The namespace(s) added
-   - Entry count
-   - Provider name and data coverage summary
-   - Date of enumeration
+3. **Dry-run publish to preview the manifest:**
+   ```bash
+   python -m parsimony.stores.hf_bundle.builder publish <namespace> --dry-run
+   ```
+   The full manifest JSON is written to stdout; no upload happens.
 
-Contributing pre-built catalogs means users get instant search without
-having to rebuild the catalog themselves. It's the easiest way to contribute
-to the project beyond writing the connector code itself.
+4. **Publish:**
+   ```bash
+   python -m parsimony.stores.hf_bundle.builder publish <namespace> --yes
+   ```
+   Runs the builder, writes the three files, fetches the currently-published
+   `entry_count` for a shrink guard, and calls
+   `HfApi.upload_folder(..., allow_patterns=[...], ...)` to commit the
+   bundle to `parsimony-dev/<namespace>`. The publish report (commit SHA,
+   entry counts, shrink ratio, status) is written to stdout as JSON.
+
+### Bundle versioning
+
+Cache freshness is keyed on the HF commit SHA. To pin to a specific
+revision for reproducibility (CI, regression tests, customer repro):
+
+```bash
+export PARSIMONY_CATALOG_PIN=<40-char-commit-sha>
+```
+
+When `PARSIMONY_CATALOG_PIN` is set, the store skips the HEAD check and
+serves only that revision; if the pin isn't in the local cache and HF is
+unreachable, `BundleIntegrityError` is raised (fail-closed — pinning is a
+security/reproducibility contract).
+
+### Cache layout
+
+The client cache lives at `$PARSIMONY_CACHE_DIR` (defaults to the
+platformdirs user cache) with layout:
+
+```
+<cache_base>/<namespace>/<commit_sha>/
+    manifest.json
+    entries.parquet
+    index.faiss
+```
+
+One revision per namespace is kept — a fresh download cleans up sibling
+SHA directories. The commit SHA is encoded in the directory name; there
+is no sidecar metadata file.
 
 ---
 
@@ -1668,7 +1734,7 @@ to the project beyond writing the connector code itself.
 - [ ] `@field_validator` for input sanitization
 - [ ] Pagination for large result sets
 - [ ] `to_llm()` output reviewed for clarity
-- [ ] **Pre-built catalog PR** to `ockham-sh/parsimony-catalogs` (see Contributing Pre-Built Catalogs)
+- [ ] **HF catalog bundle published** to `parsimony-dev/<namespace>` (see Publishing HF Catalog Bundles)
 
 ### Before submitting
 

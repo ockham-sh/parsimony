@@ -1,12 +1,11 @@
-"""Tests for uncovered paths in parsimony.catalog.catalog."""
+"""Tests for parsimony.catalog.catalog — dispatcher logic, CRUD, embedding backfill."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import httpx
 import pytest
 
 from parsimony.catalog.catalog import Catalog, _find_enumerator
@@ -16,7 +15,7 @@ from parsimony.result import Column, ColumnRole, OutputConfig
 from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 # ---------------------------------------------------------------------------
-# Mock embedding provider (matches conftest.py MockEmbeddingProvider)
+# Mock embedding provider
 # ---------------------------------------------------------------------------
 
 
@@ -132,22 +131,17 @@ class TestCRUDPassthroughs:
 class TestSearchWithEmbeddings:
     @pytest.mark.asyncio
     async def test_search_embeds_query(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
-        """When embeddings are configured, search should embed the query."""
         entries = _make_entries("fred", 3)
-        embedded = []
-        for e in entries:
-            embedded.append(e.model_copy(update={"embedding": [1.0, 1.0, 1.0]}))
+        embedded = [e.model_copy(update={"embedding": [1.0, 1.0, 1.0]}) for e in entries]
         await store.upsert(embedded)
 
         results = await catalog.search("Series", limit=5, namespaces=["fred"])
-        # Should return results from the store
         assert isinstance(results, list)
 
     @pytest.mark.asyncio
     async def test_search_without_embeddings(self, catalog_no_embed: Catalog, store: SQLiteCatalogStore) -> None:
-        """Without embeddings, search uses keyword-only path."""
         await store.upsert(_make_entries("fred", 2))
-        results = await catalog_no_embed.search("Series", limit=5)
+        results = await catalog_no_embed.search("Series", limit=5, namespaces=["fred"])
         assert isinstance(results, list)
 
     @pytest.mark.asyncio
@@ -160,142 +154,40 @@ class TestSearchWithEmbeddings:
 
 
 # ---------------------------------------------------------------------------
-# _ensure_namespace()
+# _ensure_namespace() — thin dispatcher: populated -> store -> remote -> enumerate
 # ---------------------------------------------------------------------------
 
 
 class TestEnsureNamespace:
     @pytest.mark.asyncio
     async def test_already_populated_skips(self, catalog: Catalog) -> None:
-        """If namespace was already populated, skip entirely."""
         catalog._populated.add("fred")
-        # Should return immediately without error
-        await catalog._ensure_namespace("fred")
+        await catalog._ensure_namespace("fred")  # no-op, no error
 
     @pytest.mark.asyncio
     async def test_existing_namespace_marks_populated(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
-        """If namespace exists in store, mark populated and return."""
         await store.upsert(_make_entries("fred", 1))
         await catalog._ensure_namespace("fred")
         assert "fred" in catalog._populated
 
     @pytest.mark.asyncio
-    async def test_falls_through_to_github_then_enumerate(self, catalog: Catalog) -> None:
-        """When namespace not in store, tries GitHub then enumerator."""
-        with (
-            patch.object(catalog, "_try_github_download", new_callable=AsyncMock, return_value=False),
-            patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=False),
-        ):
-            await catalog._ensure_namespace("unknown_ns")
-            catalog._try_github_download.assert_awaited_once_with("unknown_ns")
-            catalog._try_enumerate.assert_awaited_once_with("unknown_ns")
-            # Marks populated to avoid retry
-            assert "unknown_ns" in catalog._populated
+    async def test_falls_through_to_remote_then_enumerate(self, catalog: Catalog) -> None:
+        """When namespace not in store, tries store.try_load_remote, then enumerator."""
+        catalog._store.try_load_remote = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        catalog._try_enumerate = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        await catalog._ensure_namespace("unknown_ns")
+        catalog._store.try_load_remote.assert_awaited_once_with("unknown_ns")
+        catalog._try_enumerate.assert_awaited_once_with("unknown_ns")
+        assert "unknown_ns" in catalog._populated
 
     @pytest.mark.asyncio
-    async def test_github_success_stops_early(self, catalog: Catalog) -> None:
-        """If GitHub download succeeds, don't try enumerator."""
-        with (
-            patch.object(catalog, "_try_github_download", new_callable=AsyncMock, return_value=True),
-            patch.object(catalog, "_try_enumerate", new_callable=AsyncMock, return_value=False),
-        ):
-            await catalog._ensure_namespace("new_ns")
-            catalog._try_github_download.assert_awaited_once()
-            catalog._try_enumerate.assert_not_awaited()
-            assert "new_ns" in catalog._populated
-
-
-# ---------------------------------------------------------------------------
-# _try_github_download()
-# ---------------------------------------------------------------------------
-
-
-class TestTryGithubDownload:
-    @pytest.mark.asyncio
-    async def test_404_returns_false(self, catalog: Catalog) -> None:
-        """A 404 from GitHub returns False."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 404
-        mock_resp.raise_for_status = MagicMock()
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("nonexistent_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_http_error_returns_false(self, catalog: Catalog) -> None:
-        """An HTTP error returns False."""
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.HTTPError("connection failed"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("some_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_http_status_error_returns_false(self, catalog: Catalog) -> None:
-        """An HTTPStatusError (e.g. 500) returns False."""
-        request = httpx.Request("GET", "https://example.com")
-        response = httpx.Response(500, request=request)
-        exc = httpx.HTTPStatusError("server error", request=request, response=response)
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=exc)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client):
-            result = await catalog._try_github_download("some_ns")
-        assert result is False
-
-    @pytest.mark.asyncio
-    async def test_successful_download(self, catalog: Catalog, tmp_path: Any) -> None:
-        """Successful download merges into local store."""
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.content = b"fake-db-content"
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        cache_dir = tmp_path / "catalogs"
-
-        with (
-            patch("parsimony.catalog.catalog.httpx.AsyncClient", return_value=mock_client),
-            patch("parsimony.catalog.catalog._CACHE_DIR", cache_dir),
-            patch.object(catalog, "_merge_remote_db", new_callable=AsyncMock) as mock_merge,
-        ):
-            result = await catalog._try_github_download("test_ns")
-
-        assert result is True
-        mock_merge.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_cached_file_skips_download(self, catalog: Catalog, tmp_path: Any) -> None:
-        """If a cached file exists, use it directly without downloading."""
-        cache_dir = tmp_path / "catalogs"
-        cached_file = cache_dir / "test_ns" / "catalog.db"
-        cached_file.parent.mkdir(parents=True, exist_ok=True)
-        cached_file.write_bytes(b"cached-db")
-
-        with (
-            patch("parsimony.catalog.catalog._CACHE_DIR", cache_dir),
-            patch.object(catalog, "_merge_remote_db", new_callable=AsyncMock) as mock_merge,
-        ):
-            result = await catalog._try_github_download("test_ns")
-
-        assert result is True
-        mock_merge.assert_awaited_once_with(str(cached_file))
+    async def test_remote_success_stops_early(self, catalog: Catalog) -> None:
+        catalog._store.try_load_remote = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        catalog._try_enumerate = AsyncMock(return_value=False)  # type: ignore[method-assign]
+        await catalog._ensure_namespace("new_ns")
+        catalog._store.try_load_remote.assert_awaited_once()
+        catalog._try_enumerate.assert_not_awaited()
+        assert "new_ns" in catalog._populated
 
 
 # ---------------------------------------------------------------------------
@@ -327,7 +219,6 @@ class TestTryEnumerate:
 
     @pytest.mark.asyncio
     async def test_no_matching_enumerator(self, catalog: Catalog) -> None:
-        """If no connector matches the namespace, return False."""
         col = Column(name="ticker", role=ColumnRole.KEY, namespace="fmp")
         title_col = Column(name="name", role=ColumnRole.TITLE)
         connector = _FakeConnector(output_config=_FakeOutputConfig(columns=[col, title_col]))
@@ -339,8 +230,6 @@ class TestTryEnumerate:
     async def test_enumerator_runs_and_ingests(
         self, store: SQLiteCatalogStore, embeddings: MockEmbeddingProvider
     ) -> None:
-        """A matching enumerator should run and ingest entries."""
-        # Build a mock SemanticTableResult
         import pandas as pd
 
         from parsimony.result import Provenance, SemanticTableResult
@@ -365,14 +254,11 @@ class TestTryEnumerate:
         result = await catalog._try_enumerate("fmp")
         assert result is True
 
-        # Verify entries were ingested
         ns = await store.list_namespaces()
         assert "fmp" in ns
 
     @pytest.mark.asyncio
     async def test_enumerator_connector_error(self, catalog: Catalog) -> None:
-        """ConnectorError from enumerator returns False."""
-
         async def _failing_call(params: Any) -> Any:
             raise ConnectorError("boom", provider="test_provider")
 
@@ -403,7 +289,6 @@ class TestFindEnumerator:
         assert result is conn
 
     def test_skips_data_role_connector(self) -> None:
-        """Connectors with DATA role columns are not enumerators."""
         col = Column(name="code", role=ColumnRole.KEY, namespace="fred")
         data_col = Column(name="value", role=ColumnRole.DATA)
         title_col = Column(name="name", role=ColumnRole.TITLE)
@@ -412,7 +297,6 @@ class TestFindEnumerator:
         assert result is None
 
     def test_skips_no_title_connector(self) -> None:
-        """Connectors without TITLE role are not enumerators."""
         col = Column(name="code", role=ColumnRole.KEY, namespace="fred")
         conn = _FakeConnector(output_config=_FakeOutputConfig(columns=[col]))
         result = _find_enumerator([conn], "fred")
@@ -439,14 +323,12 @@ class TestFindEnumerator:
 class TestEmbedPending:
     @pytest.mark.asyncio
     async def test_embed_pending_backfills(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
-        """Entries without embeddings get backfilled."""
         entries = _make_entries("fred", 3)
-        await store.upsert(entries)  # no embeddings
+        await store.upsert(entries)
 
         count = await catalog.embed_pending(namespace="fred")
         assert count == 3
 
-        # Verify embeddings were set
         for e in entries:
             stored = await store.get("fred", e.code)
             assert stored is not None
@@ -454,7 +336,6 @@ class TestEmbedPending:
 
     @pytest.mark.asyncio
     async def test_embed_pending_no_missing(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
-        """When all entries have embeddings, return 0."""
         entries = [e.model_copy(update={"embedding": [1.0, 2.0, 3.0]}) for e in _make_entries("fred", 2)]
         await store.upsert(entries)
         count = await catalog.embed_pending(namespace="fred")
@@ -469,7 +350,6 @@ class TestEmbedPending:
     async def test_embed_pending_with_limit(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
         entries = _make_entries("fred", 5)
         await store.upsert(entries)
-        # Limit controls how many entries are fetched from store
         count = await catalog.embed_pending(limit=2)
         assert count <= 5
 
@@ -489,9 +369,7 @@ class TestClose:
 
     @pytest.mark.asyncio
     async def test_close_no_close_method(self) -> None:
-        """If store has no close method, close() should not raise."""
         store_without_close = MagicMock()
-        del store_without_close.close  # remove the attribute
+        del store_without_close.close
         catalog = Catalog(store_without_close)
-        # Should not raise
         await catalog.close()

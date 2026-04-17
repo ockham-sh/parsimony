@@ -513,25 +513,6 @@ class SQLiteCatalogStore(CatalogStore):
 
         return await self._run(_list)  # type: ignore[no-any-return]
 
-    async def merge_from_file(self, remote_path: str) -> None:
-        """ATTACH a remote SQLite catalog and merge its rows via the upsert path.
-
-        Reads entries from the remote database and upserts them through the
-        normal code path so FTS triggers and vec0 sync are handled correctly.
-        """
-
-        def _merge(conn: sqlite3.Connection) -> builtins.list[SeriesEntry]:
-            conn.execute(f'ATTACH DATABASE "{remote_path}" AS remote')
-            try:
-                rows = conn.execute("SELECT * FROM remote.series_catalog").fetchall()
-                return [_row_to_entry(r) for r in rows]
-            finally:
-                conn.execute("DETACH DATABASE remote")
-
-        entries = await self._run(_merge)
-        if entries:
-            await self.upsert(entries)
-
     async def close(self) -> None:
         """Close the underlying SQLite connection."""
         if self._conn is not None:

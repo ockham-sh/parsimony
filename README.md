@@ -21,12 +21,21 @@ Typed, composable data connectors with searchable catalogs for Python.
 ```bash
 pip install parsimony-core           # FRED, ECB, Eurostat, IMF, World Bank + all httpx connectors
 pip install parsimony-core[sec]      # + SEC Edgar
-pip install parsimony-core[all]      # everything (adds semantic search, MCP server)
+pip install parsimony-core[all]      # everything (adds legacy SQLite search path, MCP server)
 ```
 
 > Installed from PyPI as **`parsimony-core`**; imports remain `from parsimony import ...`.
 > The bare `parsimony` name on PyPI is currently unavailable — we plan to migrate the
 > distribution name to `parsimony` once it becomes available. The import path will not change.
+
+> **First-run download:** `parsimony` ships Parquet + FAISS catalog bundles
+> from HuggingFace Hub (`parsimony-dev/<namespace>`). The
+> first `Catalog.search(...)` call per namespace downloads ~50-200 MB and
+> loads a sentence-transformers embedding model (~90 MB + torch). Plan for
+> ~1 GB total install footprint and 5-15s first-query latency. Subsequent
+> calls are served from local cache and run in milliseconds. Pin a specific
+> bundle revision via `PARSIMONY_CATALOG_PIN=<40-char-sha>` for reproducible
+> builds in CI.
 
 ## 30-Second Example (No API Key)
 
@@ -107,6 +116,37 @@ print(result.provenance)
 **Composable routing** -- combine connectors from multiple sources with `+`, bind dependencies once with `bind_deps()`, attach callbacks with `with_callback()`.
 
 **MCP server** -- run `python -m parsimony.mcp` to expose all configured connectors as MCP tools for Claude, GPT, and other AI agents.
+
+## Troubleshooting
+
+Bundle subsystem errors are surfaced through three exception classes; the
+message always says what went wrong specifically.
+
+| Exception | When it fires | Fix |
+|-----------|---------------|-----|
+| `BundleNotFoundError` | No HF bundle published for this namespace | Check namespace spelling, or use a connector that ships an `@enumerator` and accept the live-fetch fallback |
+| `BundleIntegrityError` | Download failure, malformed manifest, SHA/shape/size mismatch, model dim mismatch, or pinned revision unavailable | Clear the cache (`rm -rf ~/.cache/parsimony/bundles/<namespace>`) and retry. Under `PARSIMONY_CATALOG_PIN`, unset the pin or restore network. If it persists on a fresh download, file an issue |
+| `BundleError` | Base class; catch this to handle any bundle failure | — |
+
+Environment variables:
+
+| Variable | Purpose | Default |
+|---|---|---|
+| `PARSIMONY_CATALOG_PIN` | 40-char HF commit SHA; pins every namespace to this revision | unset (HEAD check per session) |
+| `PARSIMONY_CACHE_DIR` | Override the on-disk cache location | platformdirs user cache |
+| `PARSIMONY_MAX_LOADED_BUNDLES` | LRU cap on concurrently-loaded bundles in memory (`0` = unbounded) | `16` |
+| `PARSIMONY_EMBED_CONCURRENCY` | Max concurrent embed calls (bounds torch against asyncio thread pool) | `os.cpu_count()` |
+| `PARSIMONY_EVAL_HF` | Set to `1` to opt into the retrieval-quality eval fixture (requires live bundles) | unset |
+
+Running offline or in CI:
+
+```bash
+# Pin every namespace to a specific HF commit SHA — no network calls except cache misses.
+export PARSIMONY_CATALOG_PIN=<40-char-sha>
+
+# Pre-warm the cache in a Dockerfile build step to avoid first-run download latency:
+RUN python -c "import asyncio; from parsimony.catalog.catalog import Catalog; ..."
+```
 
 ## Documentation
 

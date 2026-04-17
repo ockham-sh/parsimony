@@ -52,7 +52,7 @@ async def main() -> None:
     print()
 
     # --- 4. Search the catalog ---
-    matches = await catalog.search("unemployment rate", limit=5)
+    matches = await catalog.search("unemployment rate", limit=5, namespaces=["fred"])
     print("--- Search: 'unemployment rate' ---")
     for m in matches:
         print(f"  {m.namespace}/{m.code}: {m.title}")

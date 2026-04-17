@@ -99,7 +99,7 @@ async def main():
     # Release 50 = Employment Situation
     result = await enum_conn(FredEnumerateParams(release_id=50))
     await catalog.index_result(result, embed=False)
-    matches = await catalog.search("unemployment rate", limit=5)
+    matches = await catalog.search("unemployment rate", limit=5, namespaces=["fred"])
     for m in matches:
         print(f"  {m.code:15s}  {m.title}")
 
@@ -236,7 +236,7 @@ async def main():
         print(f"  {label} (release {release_id}): indexed {idx.indexed}, skipped {idx.skipped}")
     namespaces = await catalog.list_namespaces()
     print(f"Namespaces: {namespaces}")
-    matches = await catalog.search("consumer price index", limit=5)
+    matches = await catalog.search("consumer price index", limit=5, namespaces=["fred"])
     for m in matches:
         print(f"  {m.code:15s}  {m.title}")
 

@@ -193,7 +193,7 @@ async def _section_catalog_and_callbacks() -> None:
     )
 
     print("\n--- 9) Text search (no embedding provider) ---\n")
-    matches = await catalog.search("Beta", limit=5)
+    matches = await catalog.search("Beta", limit=5, namespaces=[DEMO_NAMESPACE])
     print(f"  search('Beta'): {[m.code for m in matches]}")
 
 

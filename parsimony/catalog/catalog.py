@@ -1,16 +1,27 @@
-"""Catalog: search, bulk indexing, optional embeddings, and lazy namespace population."""
+"""Catalog: search and lazy namespace population from HF bundles or enumerators.
+
+Search flow:
+
+1. Caller names one or more namespaces (``namespaces=...`` is required;
+   implicit "search all namespaces" is rejected by design).
+2. :meth:`Catalog._ensure_namespace` populates each requested namespace:
+   if the store already has it → return; else ask the store to
+   :meth:`~parsimony.stores.catalog_store.CatalogStore.try_load_remote`
+   (HF bundle stores know how); else fall back to a live
+   ``@enumerator``-decorated connector.
+
+The old GitHub-SQLite distribution path has been replaced by
+:class:`~parsimony.stores.hf_bundle.store.HFBundleCatalogStore`. This
+module no longer performs any HTTP downloads itself.
+"""
 
 from __future__ import annotations
 
 import logging
-import os
-import sqlite3
-from pathlib import Path
 from typing import Any
 
 import httpx
 import pandas as pd
-import platformdirs
 
 from parsimony.catalog.models import (
     EmbeddingProvider,
@@ -25,15 +36,6 @@ from parsimony.result import ColumnRole, SemanticTableResult
 from parsimony.stores.catalog_store import CatalogStore
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_DB_DIR = Path.home() / ".parsimony"
-_CATALOG_REPO = os.environ.get("PARSIMONY_CATALOG_REPO", "ockham-sh/parsimony-catalogs")
-_CATALOG_BRANCH = os.environ.get("PARSIMONY_CATALOG_BRANCH", "main")
-_CACHE_DIR = (
-    Path(os.environ["PARSIMONY_CACHE_DIR"])
-    if os.environ.get("PARSIMONY_CACHE_DIR")
-    else Path(platformdirs.user_cache_dir("parsimony")) / "catalogs"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -151,11 +153,7 @@ def _entries_from_table_result(
 
 
 def _find_enumerator(connectors: Any, namespace: str) -> Any | None:
-    """Find an ``@enumerator`` whose KEY column declares *namespace*.
-
-    *connectors* is duck-typed: any iterable of objects with an ``output_config``
-    attribute whose ``columns`` expose ``role`` and ``namespace`` fields.
-    """
+    """Find an ``@enumerator`` whose KEY column declares *namespace*."""
     for conn in connectors:
         oc = conn.output_config
         if oc is None:
@@ -176,14 +174,25 @@ def _find_enumerator(connectors: Any, namespace: str) -> Any | None:
 # ---------------------------------------------------------------------------
 
 
+_NAMESPACE_REQUIRED_MSG = (
+    "Catalog.search requires an explicit non-empty namespaces=[...] list. "
+    "Implicit cross-namespace search was removed — each catalog namespace "
+    "lives in its own HF bundle with its own embedding model. "
+    "Migration: change Catalog.search(query) -> "
+    "Catalog.search(query, namespaces=['fred', 'snb', ...])."
+)
+
+
 class Catalog:
-    """Catalog service: search, bulk indexing, optional embeddings, and lazy loading.
+    """Catalog service: search, bulk indexing, and lazy namespace loading.
 
     Composes a :class:`CatalogStore` and optional :class:`EmbeddingProvider`.
 
     When *connectors* is provided, :meth:`search` auto-populates requested
-    namespaces from pre-built catalogs on GitHub or live enumerators before
-    querying.
+    namespaces via the store's
+    :meth:`~parsimony.stores.catalog_store.CatalogStore.try_load_remote`
+    (HF bundle stores fetch from HuggingFace Hub), falling back to a live
+    enumerator when no bundle is published.
     """
 
     def __init__(
@@ -192,14 +201,10 @@ class Catalog:
         *,
         embeddings: EmbeddingProvider | None = None,
         connectors: Any | None = None,  # duck-typed iterable of Connector-like objects
-        catalog_repo: str = _CATALOG_REPO,
-        catalog_branch: str = _CATALOG_BRANCH,
     ) -> None:
         self._store = store
         self._embeddings = embeddings
         self._connectors = connectors
-        self._catalog_repo = catalog_repo
-        self._catalog_branch = catalog_branch
         self._populated: set[str] = set()
 
     @property
@@ -218,20 +223,30 @@ class Catalog:
         *,
         namespaces: list[str] | None = None,
     ) -> list[SeriesMatch]:
-        """Search the catalog.
+        """Search the catalog for a query.
 
-        When connectors are configured, auto-populates requested namespaces.
-        When an embedding provider is configured, embeds the query for hybrid search.
+        ``namespaces`` is required: must be a non-empty list. The old
+        implicit "search every namespace" behavior was removed — each
+        namespace ships in its own HF bundle and may declare its own
+        embedding model; merging without explicit scoping is unsound.
+
+        Embedding ownership: the store owns ``embed_query`` on vector
+        searches. :class:`Catalog` does not pre-embed — doing so either
+        duplicates work (when the store has its own provider) or leaves
+        the store without a provider to re-embed with. Stores that don't
+        need an embedding ignore ``query_embedding=None``.
         """
-        if namespaces:
-            for ns in namespaces:
-                await self._ensure_namespace(ns)
+        if namespaces is None or len(namespaces) == 0:
+            raise ValueError(_NAMESPACE_REQUIRED_MSG)
 
-        query_embedding: list[float] | None = None
-        if self._embeddings is not None:
-            query_embedding = await self._embeddings.embed_query(query)
+        for ns in namespaces:
+            await self._ensure_namespace(ns)
 
-        return await self._store.search(query, limit, namespaces=namespaces, query_embedding=query_embedding)
+        return await self._store.search(
+            query,
+            limit,
+            namespaces=namespaces,
+        )
 
     # ------------------------------------------------------------------
     # Indexing
@@ -282,17 +297,25 @@ class Catalog:
                 result.skipped += len(batch) - len(to_insert)
             if not to_insert:
                 continue
-            try:
-                if embed:
-                    if self._embeddings is None:
-                        raise RuntimeError("embed=True requires an EmbeddingProvider, but none was configured")
+            if embed:
+                if self._embeddings is None:
+                    raise RuntimeError("embed=True requires an EmbeddingProvider, but none was configured")
+                try:
                     out = await _embed_batch(self._embeddings, to_insert)
-                else:
-                    out = [r.model_copy() for r in to_insert]
+                except httpx.TransportError as exc:
+                    # Retryable network blip — keep going, count as errors.
+                    # Programmer bugs (dim mismatch, misconfigured provider)
+                    # raise RuntimeError / ValueError and must propagate.
+                    logger.warning("ingest embed network error: %s", exc)
+                    result.errors += len(to_insert)
+                    continue
+            else:
+                out = [r.model_copy() for r in to_insert]
+            try:
                 await self._store.upsert(out)
                 result.indexed += len(out)
-            except (OSError, RuntimeError, httpx.HTTPError) as exc:
-                logger.warning("ingest batch failed: %s", exc)
+            except httpx.TransportError as exc:
+                logger.warning("ingest upsert network error: %s", exc)
                 result.errors += len(to_insert)
         return result
 
@@ -368,88 +391,51 @@ class Catalog:
     async def upsert_entries(self, entries: list[SeriesEntry]) -> None:
         await self._store.upsert(entries)
 
+    async def refresh(self, namespace: str) -> Any:
+        """Force a store-side refresh of *namespace* (stores that support it).
+
+        Returns whatever the store's ``refresh`` returned (e.g.,
+        :class:`~parsimony.stores.hf_bundle.store.RefreshResult`). Raises
+        ``NotImplementedError`` for stores that do not support refresh.
+        """
+        refresh = getattr(self._store, "refresh", None)
+        if refresh is None:
+            raise NotImplementedError(f"{type(self._store).__name__} does not support refresh")
+        result = await refresh(normalize_code(namespace))
+        self._populated.discard(normalize_code(namespace))
+        return result
+
     # ------------------------------------------------------------------
-    # Lazy namespace population
+    # Lazy namespace population (Task 10 — thin dispatcher)
     # ------------------------------------------------------------------
 
     async def _ensure_namespace(self, namespace: str) -> None:
-        """Populate *namespace* if not already in the local catalog."""
-        if namespace in self._populated:
+        """Populate *namespace* if not already known to the store.
+
+        Three-step dispatcher: already-populated guard, store remote load,
+        live-enumerator fallback. All remote-fetch logic lives inside the
+        store — this method only sequences the fallbacks.
+        """
+        ns = normalize_code(namespace)
+        if ns in self._populated:
             return
 
         existing = await self._store.list_namespaces()
-        if namespace in existing:
-            self._populated.add(namespace)
+        if ns in existing:
+            self._populated.add(ns)
             return
 
-        if await self._try_github_download(namespace):
-            self._populated.add(namespace)
+        if await self._store.try_load_remote(ns):
+            self._populated.add(ns)
             return
 
-        if await self._try_enumerate(namespace):
-            self._populated.add(namespace)
+        if await self._try_enumerate(ns):
+            self._populated.add(ns)
             return
 
-        self._populated.add(namespace)  # Don't retry
-        logger.debug("Namespace %r not available from GitHub or enumerator", namespace)
-
-    async def _try_github_download(self, namespace: str) -> bool:
-        """Download pre-built catalog.db from GitHub and merge."""
-        import asyncio
-
-        import httpx
-
-        cache_path = _CACHE_DIR / namespace / "catalog.db"
-
-        if cache_path.exists():
-            await self._merge_remote_db(str(cache_path))
-            return True
-
-        url = f"https://raw.githubusercontent.com/{self._catalog_repo}/{self._catalog_branch}/{namespace}/catalog.db"
-        try:
-            cache_path.parent.mkdir(parents=True, exist_ok=True)
-            tmp_path = cache_path.with_suffix(".tmp")
-
-            async with httpx.AsyncClient(follow_redirects=True, timeout=60) as client:
-                resp = await client.get(url)
-                if resp.status_code == 404:
-                    logger.debug("No catalog on GitHub for %s", namespace)
-                    return False
-                resp.raise_for_status()
-
-            await asyncio.to_thread(tmp_path.write_bytes, resp.content)
-            tmp_path.rename(cache_path)
-
-            await self._merge_remote_db(str(cache_path))
-            logger.info("Downloaded %s catalog from GitHub", namespace)
-            return True
-        except httpx.HTTPStatusError as exc:
-            logger.debug("GitHub download failed for %s: %s", namespace, exc)
-            return False
-        except (httpx.HTTPError, OSError, sqlite3.Error) as exc:
-            logger.warning("Unexpected error downloading catalog for %s: %s", namespace, exc)
-            return False
-
-    async def _merge_remote_db(self, remote_path: str) -> None:
-        """Merge a remote SQLite catalog into the local store.
-
-        Routes through the store's ``merge_from_file`` method so FTS triggers
-        and vec0 synchronization are handled correctly.
-        """
-        from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
-
-        # Validate path stays under _CACHE_DIR to prevent path-traversal attacks.
-        resolved = Path(remote_path).resolve()
-        if not resolved.is_relative_to(_CACHE_DIR.resolve()):
-            raise ValueError(f"Remote catalog path {resolved} is outside the cache directory {_CACHE_DIR.resolve()}")
-
-        if isinstance(self._store, SQLiteCatalogStore):
-            await self._store.merge_from_file(str(resolved))
-        else:
-            logger.warning(
-                "Remote catalog merge not yet supported for %s stores",
-                type(self._store).__name__,
-            )
+        # Mark as attempted even on miss so we don't retry every call.
+        self._populated.add(ns)
+        logger.debug("Namespace %r not available from remote or enumerator", ns)
 
     async def _try_enumerate(self, namespace: str) -> bool:
         """Find and run the enumerator for *namespace* from the connectors."""

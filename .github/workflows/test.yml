@@ -42,3 +42,18 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: uv pip install --system -e ".[dev]"
       - run: pytest tests/ -v -m "not integration" --cov=parsimony --cov-report=term-missing --cov-fail-under=80
+
+  audit:
+    # Supply-chain audit — moved torch + faiss-cpu + sentence-transformers
+    # into base deps, so every CVE in that chain is a parsimony CVE. Required
+    # for every PR; treat as a hard gate, not a dev-only concern (Hunt R2 / R10).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e ".[dev]"
+      - name: pip-audit on resolved environment
+        run: uv tool run pip-audit --strict --disable-pip

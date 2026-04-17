@@ -64,3 +64,13 @@ class CatalogStore(ABC):
     ) -> tuple[builtins.list[SeriesEntry], int]:
         """Return (entries, total_count) for pagination. Optional substring q on title/code."""
         ...
+
+    async def try_load_remote(self, namespace: str) -> bool:
+        """Attempt to populate *namespace* from a remote source.
+
+        Stores that know how to fetch their own data (e.g., the HF bundle
+        store) override this. Default implementation returns ``False``:
+        "this store has no remote source," so the catalog proceeds to the
+        next fallback (typically a live enumerator).
+        """
+        return False

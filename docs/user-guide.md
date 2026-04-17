@@ -300,31 +300,84 @@ async def fmp_examples():
 
 ## Using the Catalog
 
-The catalog lets you index discovered series and search them by text or semantic similarity.
+The catalog has two personas:
 
-### Basic setup with in-memory storage
+1. **Read pre-built bundles** from HuggingFace Hub (the default path for
+   built-in namespaces). Zero configuration — just search.
+2. **Build a custom catalog** locally from connector enumerations. Uses
+   `SQLiteCatalogStore` from the `[search]` extra.
+
+### Reading pre-built HF bundles
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
+from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
+from parsimony.stores import HFBundleCatalogStore
+
+async def hf_bundle_example():
+    provider = SentenceTransformersEmbeddingProvider(
+        model_id="sentence-transformers/all-MiniLM-L6-v2",
+        revision="c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
+        expected_dim=384,
+    )
+    catalog = Catalog(HFBundleCatalogStore(embeddings=provider), embeddings=provider)
+
+    # First call per namespace downloads the bundle; subsequent calls hit cache.
+    matches = await catalog.search("policy rate", limit=5, namespaces=["snb"])
+    for match in matches:
+        print(f"  {match.namespace}/{match.code}: {match.title}  (sim={match.similarity:.3f})")
+
+asyncio.run(hf_bundle_example())
+```
+
+> `namespaces=[...]` is **required** and non-empty. Each bundle pins its
+> own embedding model in the manifest; a query vector is only valid
+> within namespaces that share a model.
+
+### Reproducible builds: pin a revision
+
+For CI and customer reproductions, pin every namespace to a specific HF
+commit SHA:
+
+```bash
+export PARSIMONY_CATALOG_PIN=<40-char-commit-sha>
+```
+
+The store skips the HEAD freshness check, serves only the pinned
+revision, and raises `BundleIntegrityError` if the pin isn't available
+locally and HF is unreachable (fail-closed).
+
+### Building a custom local catalog
+
+If you have connectors with `@enumerator` variants that aren't
+published as HF bundles, index them into a local `SQLiteCatalogStore`:
+
+```bash
+pip install parsimony[search]
+```
+
+```python
+from parsimony import Catalog
 from parsimony.connectors import build_connectors_from_env
+from parsimony.embeddings.litellm import LiteLLMEmbeddingProvider
+from parsimony.stores import SQLiteCatalogStore
 
-async def catalog_example():
+async def custom_catalog():
     connectors = build_connectors_from_env()
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    provider = LiteLLMEmbeddingProvider(
+        model="gemini/text-embedding-004",
+        dimension=768,
+    )
+    catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 
-    # Enumerate all series in a FRED release and index them
     result = await connectors["enumerate_fred_release"](release_id=10)
-    index_summary = await catalog.index_result(result, embed=False)
+    summary = await catalog.index_result(result, embed=True)
+    print(f"Indexed {summary.indexed} series, skipped {summary.skipped}")
 
-    print(f"Indexed {index_summary.indexed} series, skipped {index_summary.skipped}")
-
-    # Search the catalog
-    matches = await catalog.search("unemployment rate", limit=5)
+    matches = await catalog.search("unemployment rate", limit=5, namespaces=["fred"])
     for match in matches:
         print(f"  {match.namespace}/{match.code}: {match.title}")
-
-asyncio.run(catalog_example())
 ```
 
 ### Using the `dry_run` option
@@ -335,41 +388,19 @@ summary = await catalog.index_result(result, embed=False, dry_run=True)
 print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 ```
 
-### Semantic search with embeddings
-
-Semantic search requires the `[search]` extra and a LiteLLM-compatible embedding model.
-
-```python
-from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
-
-async def semantic_search():
-    provider = LiteLLMEmbeddingProvider(
-        model="gemini/text-embedding-004",
-        dimension=768,
-    )
-    catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
-
-    # Index some results (embeddings are computed during indexing)
-    result = await connectors["enumerate_fred_release"](release_id=10)
-    await catalog.index_result(result, embed=True)
-
-    # Search using semantic similarity
-    matches = await catalog.search("jobs market labor", limit=5)
-    for match in matches:
-        print(f"  {match.title}")
-```
-
 ### Listing and retrieving catalog entries
 
 ```python
-# List all namespaces
+# List all loaded namespaces
 namespaces = await catalog.list_namespaces()
 
-# Paginate through entries in a namespace
-entries, total = await catalog.list_entries(namespace="fred", limit=50, offset=0)
+# Paginate through entries in a namespace (filter pushed to pyarrow.compute)
+entries, total = await catalog.list_entries(
+    namespace="snb", q="policy", limit=50, offset=0
+)
 
-# Retrieve a specific entry
-entry = await catalog.get_entry(namespace="fred", code="UNRATE")
+# Retrieve a specific entry (O(1) via a prebuilt code -> row_id index)
+entry = await catalog.get_entry(namespace="snb", code="...")
 if entry:
     print(entry.title)
 ```

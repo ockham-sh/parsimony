@@ -63,7 +63,7 @@ def live_catalog():
     from parsimony.embeddings.sentence_transformers import (
         SentenceTransformersEmbeddingProvider,
     )
-    from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+    from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
     provider = SentenceTransformersEmbeddingProvider(
         model_id="sentence-transformers/all-MiniLM-L6-v2",

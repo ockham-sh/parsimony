@@ -20,7 +20,7 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony.connectors.fred import fred_fetch, fred_search
+from parsimony_fred import fred_fetch, fred_search
 
 
 async def main() -> None:

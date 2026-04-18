@@ -74,3 +74,13 @@ class CatalogStore(ABC):
         next fallback (typically a live enumerator).
         """
         return False
+
+    def get_embedding_identity(self, namespace: str) -> tuple[str, str, int] | None:
+        """Return ``(embedding_model, embedding_model_revision, embedding_dim)`` for *namespace*.
+
+        Returns ``None`` for stores without a per-namespace embedding identity
+        (e.g., live-only stores). Bundle-backed stores return the manifest
+        fields so consumers can sanity-check their EmbeddingProvider against
+        the bundle before issuing queries.
+        """
+        return None

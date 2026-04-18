@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+from parsimony.catalog.catalog import Catalog, entries_from_table_result
 from parsimony.catalog.models import (
     EmbeddingProvider,
     IndexResult,
@@ -19,7 +19,6 @@ from parsimony.catalog.models import (
     code_token,
 )
 from parsimony.connector import Connectors, enumerator
-from parsimony.connectors.sdmx import institution_source_from_dataset_key
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -37,17 +36,6 @@ class _AutoIndexFetchParams(BaseModel):
 def test_code_token_normalizes() -> None:
     assert code_token("ECB-YC") == "ecb_yc"
     assert code_token("  SR.3M  ") == "sr_3m"
-
-
-def test_institution_source_from_dataset_key() -> None:
-    assert institution_source_from_dataset_key("ECB-YC") == "ecb"
-    assert institution_source_from_dataset_key("ESTAT-NAMQ") == "eurostat"
-
-
-def test_sdmx_agency_namespace() -> None:
-    from parsimony.connectors.sdmx import sdmx_agency_namespace
-
-    assert sdmx_agency_namespace("ECB") == "sdmx_ecb_datasets"
 
 
 class _FixedEmbeddings(EmbeddingProvider):
@@ -117,7 +105,7 @@ class _RecordingStore(CatalogStore):
 
 @pytest.mark.asyncio
 async def test_fred_enumerate_requires_bound_api_key() -> None:
-    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
 
     with pytest.raises(TypeError, match="unbound dependencies"):
         await enumerate_fred_release(FredEnumerateParams(release_id=1))
@@ -317,15 +305,15 @@ async def test_fred_enumerate_connector_produces_entries(monkeypatch: pytest.Mon
         ]
 
     monkeypatch.setattr(
-        "parsimony.connectors.fred._enumerate_release_series",
+        "parsimony_fred._enumerate_release_series",
         _fake_enumerate,
     )
 
-    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
 
     conn = enumerate_fred_release.bind_deps(api_key="dummy")
     res = await conn(FredEnumerateParams(release_id=51))
-    entries = _entries_from_table_result(res, extra_tags=["release_51"])
+    entries = entries_from_table_result(res, extra_tags=["release_51"])
 
     assert len(entries) == 2
     ids = sorted(e.code for e in entries)
@@ -358,15 +346,15 @@ async def test_fred_enumerate_entries_have_metadata(
         ]
 
     monkeypatch.setattr(
-        "parsimony.connectors.fred._enumerate_release_series",
+        "parsimony_fred._enumerate_release_series",
         _fake_enumerate,
     )
 
-    from parsimony.connectors.fred import FredEnumerateParams, enumerate_fred_release
+    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
 
     conn = enumerate_fred_release.bind_deps(api_key="dummy")
     res = await conn(FredEnumerateParams(release_id=51))
-    entries = _entries_from_table_result(res)
+    entries = entries_from_table_result(res)
 
     by_code = {e.code: e for e in entries}
     assert by_code["GDPC1"].metadata["frequency_short"] == "Q"

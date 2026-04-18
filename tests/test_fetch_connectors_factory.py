@@ -4,7 +4,12 @@ from __future__ import annotations
 
 
 def test_factory_includes_all_surfaces() -> None:
-    """The unified factory returns search, discovery, fetch, and enumerator connectors."""
+    """The unified factory returns search, discovery, fetch, and enumerator connectors.
+
+    sdmx_* connectors live in the external ``parsimony-sdmx`` plugin and
+    are discovered only when that plugin is installed alongside the
+    kernel; this test exercises the kernel-only surface.
+    """
     env = {
         "FRED_API_KEY": "test",
         "FMP_API_KEY": "test",
@@ -16,15 +21,11 @@ def test_factory_includes_all_surfaces() -> None:
 
     # Fetch connectors present
     assert "fred_fetch" in names
-    assert "sdmx_fetch" in names
     assert "fmp_quotes" in names
+    assert "treasury_fetch" in names
 
     # Search/discovery connectors present (previously excluded by fetch factory)
     assert "fred_search" in names
-    assert "sdmx_list_datasets" in names
-    assert "sdmx_dsd" in names
-    assert "sdmx_codelist" in names
-    assert "sdmx_series_keys" in names
     assert "fmp_search" in names
     assert "fmp_taxonomy" in names
     assert "fmp_screener" in names
@@ -46,11 +47,9 @@ def test_tool_tag_filter_matches_mcp_pattern() -> None:
     assert "fred_search" in tool_names
     assert "fmp_search" in tool_names
     assert "fmp_screener" in tool_names
-    assert "sdmx_list_datasets" in tool_names
 
     # Non-tool connectors are excluded
     assert "fred_fetch" not in tool_names
-    assert "sdmx_fetch" not in tool_names
     assert "fmp_quotes" not in tool_names
 
 
@@ -61,8 +60,8 @@ def test_lenient_skips_required_providers() -> None:
     c = build_connectors_from_env(env={}, lenient=True)
     names = {x.name for x in c}
 
-    # Public providers still present
-    assert "sdmx_fetch" in names
+    # Public providers still present (treasury is credential-free and
+    # bundled; sdmx_fetch moved to the parsimony-sdmx plugin).
     assert "treasury_fetch" in names
 
     # Required providers skipped (no API keys)

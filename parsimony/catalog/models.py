@@ -76,10 +76,6 @@ class SeriesEntry(BaseModel):
 
     Identity is ``(namespace, code)``. ``code`` is the connector-native identifier string
     for that namespace (e.g. FRED ``GDPC1``, FMP ``AAPL``).
-
-    ``observable_id`` is reserved for a future knowledge-layer identifier (e.g.
-    linking catalog rows to concepts in a graph). The framework persists it but
-    does not assign or resolve observables yet.
     """
 
     namespace: str
@@ -90,7 +86,6 @@ class SeriesEntry(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     properties: dict[str, Any] = Field(default_factory=dict)
     embedding: list[float] | None = None
-    observable_id: str | None = None
 
     @field_validator("namespace")
     @classmethod
@@ -150,7 +145,9 @@ def series_match_from_entry(entry: SeriesEntry, *, similarity: float) -> SeriesM
         title=entry.title,
         similarity=similarity,
         tags=list(entry.tags),
+        description=entry.description,
         metadata=dict(entry.metadata),
+        properties=dict(entry.properties),
     )
 
 

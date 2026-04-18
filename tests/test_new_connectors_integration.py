@@ -256,13 +256,13 @@ async def test_enumerate_destatis():
 @pytest.mark.asyncio
 async def test_build_and_search_treasury_catalog(tmp_path):
     """Full pipeline: enumerate → index → SQLite FTS search."""
-    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.catalog.catalog import Catalog, entries_from_table_result
     from parsimony.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
     from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     # 1) Enumerate
     result = await enumerate_treasury(TreasuryEnumerateParams())
-    entries = _entries_from_table_result(result)
+    entries = entries_from_table_result(result)
     assert len(entries) > 10
 
     # 2) Index into SQLite
@@ -291,13 +291,13 @@ async def test_build_and_search_bls_catalog(tmp_path):
     if not _has_key("BLS_API_KEY"):
         pytest.skip("BLS_API_KEY not set")
 
-    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.catalog.catalog import Catalog, entries_from_table_result
     from parsimony.connectors.bls import BlsEnumerateParams, enumerate_bls
     from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
     conn = enumerate_bls.bind_deps(api_key=os.environ["BLS_API_KEY"])
     result = await conn(BlsEnumerateParams())
-    entries = _entries_from_table_result(result)
+    entries = entries_from_table_result(result)
     assert len(entries) > 30
 
     db_path = tmp_path / "bls_catalog.db"
@@ -316,7 +316,7 @@ async def test_build_and_search_bls_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_build_and_search_riksbank_catalog(tmp_path):
     """Full pipeline: Riksbank enumerate → index → search."""
-    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.catalog.catalog import Catalog, entries_from_table_result
     from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
     from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
@@ -325,7 +325,7 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
         result = await conn(RiksbankEnumerateParams())
     except httpx.HTTPStatusError as exc:
         pytest.skip(f"Riksbank API unavailable: {exc.response.status_code}")
-    entries = _entries_from_table_result(result)
+    entries = entries_from_table_result(result)
     assert len(entries) > 5
 
     db_path = tmp_path / "riksbank_catalog.db"
@@ -347,7 +347,7 @@ async def test_build_and_search_riksbank_catalog(tmp_path):
 @pytest.mark.asyncio
 async def test_multi_provider_catalog_search(tmp_path):
     """Build a catalog from multiple providers and search across all."""
-    from parsimony.catalog.catalog import Catalog, _entries_from_table_result
+    from parsimony.catalog.catalog import Catalog, entries_from_table_result
     from parsimony.connectors.riksbank import RiksbankEnumerateParams, enumerate_riksbank
     from parsimony.connectors.treasury import TreasuryEnumerateParams, enumerate_treasury
     from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
@@ -358,14 +358,14 @@ async def test_multi_provider_catalog_search(tmp_path):
 
     # Index Treasury
     result = await enumerate_treasury(TreasuryEnumerateParams())
-    entries = _entries_from_table_result(result)
+    entries = entries_from_table_result(result)
     await catalog.ingest(entries, embed=False, force=True)
 
     # Index Riksbank (may 429 if run after other Riksbank tests)
     try:
         conn = enumerate_riksbank.bind_deps(api_key="")
         result = await conn(RiksbankEnumerateParams())
-        entries = _entries_from_table_result(result)
+        entries = entries_from_table_result(result)
         await catalog.ingest(entries, embed=False, force=True)
     except Exception:
         pass  # Rate limited — test with Treasury data alone

@@ -1,8 +1,5 @@
 """Parsimony — detachable catalog + connector framework.
 
-Public surface (import from ``parsimony`` directly). Heavy symbols that pull in
-optional stacks use lazy loading via :func:`__getattr__` to keep core imports light.
-
 **Contracts**
 
 * :class:`~parsimony.connector.Connectors` is an immutable collection of
@@ -29,14 +26,57 @@ optional stacks use lazy loading via :func:`__getattr__` to keep core imports li
   for auto-indexing after fetch.
 * Optional :class:`~parsimony.connector.Namespace` metadata on a param field
   documents which catalog namespace supplies valid values for that field.
-* :class:`~parsimony.catalog.models.SeriesEntry.observable_id` is reserved
-  for a future knowledge-layer link; the framework does not interpret it yet.
+
+Optional providers under the ``[search]`` extra (``SQLiteCatalogStore``,
+``LiteLLMEmbeddingProvider``) are not re-exported from the root namespace —
+import them directly from their modules.
 """
 
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
+
+from parsimony.catalog.catalog import Catalog, build_embedding_text
+from parsimony.catalog.models import (
+    EmbeddingProvider,
+    IndexResult,
+    SeriesEntry,
+    SeriesMatch,
+    code_token,
+    normalize_code,
+    normalize_series_catalog_row,
+    series_match_from_entry,
+)
+from parsimony.connector import (
+    Connector,
+    Connectors,
+    Namespace,
+    ResultCallback,
+    connector,
+    enumerator,
+    loader,
+)
+from parsimony.errors import (
+    ConnectorError,
+    EmptyDataError,
+    ParseError,
+    PaymentRequiredError,
+    ProviderError,
+    RateLimitError,
+    UnauthorizedError,
+)
+from parsimony.result import (
+    Column,
+    ColumnRole,
+    OutputConfig,
+    Provenance,
+    Result,
+    SemanticTableResult,
+)
+from parsimony.stores.catalog_store import CatalogStore
+from parsimony.stores.data_store import DataStore, LoadResult
+from parsimony.stores.memory_data import InMemoryDataStore
 
 try:
     __version__ = version("parsimony")
@@ -62,12 +102,11 @@ __all__ = [
     # --- Catalog ---
     "Catalog",
     "CatalogStore",
-    "SQLiteCatalogStore",
     "EmbeddingProvider",
-    "LiteLLMEmbeddingProvider",
     "IndexResult",
     "SeriesEntry",
     "SeriesMatch",
+    "SQLiteCatalogStore",
     # --- Data persistence ---
     "DataStore",
     "InMemoryDataStore",
@@ -91,60 +130,14 @@ __all__ = [
 ]
 
 
-# Lazy-loaded symbols: maps name → (module_path, attribute_name).
-_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
-    # Core abstractions
-    "Connector": ("parsimony.connector", "Connector"),
-    "Connectors": ("parsimony.connector", "Connectors"),
-    "ResultCallback": ("parsimony.connector", "ResultCallback"),
-    "connector": ("parsimony.connector", "connector"),
-    "enumerator": ("parsimony.connector", "enumerator"),
-    "loader": ("parsimony.connector", "loader"),
-    "Namespace": ("parsimony.connector", "Namespace"),
-    # Result system
-    "Column": ("parsimony.result", "Column"),
-    "ColumnRole": ("parsimony.result", "ColumnRole"),
-    "OutputConfig": ("parsimony.result", "OutputConfig"),
-    "Provenance": ("parsimony.result", "Provenance"),
-    "Result": ("parsimony.result", "Result"),
-    "SemanticTableResult": ("parsimony.result", "SemanticTableResult"),
-    # Catalog models
-    "EmbeddingProvider": ("parsimony.catalog.models", "EmbeddingProvider"),
-    "IndexResult": ("parsimony.catalog.models", "IndexResult"),
-    "SeriesEntry": ("parsimony.catalog.models", "SeriesEntry"),
-    "SeriesMatch": ("parsimony.catalog.models", "SeriesMatch"),
-    "normalize_code": ("parsimony.catalog.models", "normalize_code"),
-    "normalize_series_catalog_row": ("parsimony.catalog.models", "normalize_series_catalog_row"),
-    "series_match_from_entry": ("parsimony.catalog.models", "series_match_from_entry"),
-    "code_token": ("parsimony.catalog.models", "code_token"),
-    # Catalog
-    "Catalog": ("parsimony.catalog.catalog", "Catalog"),
-    "CatalogStore": ("parsimony.stores.catalog_store", "CatalogStore"),
-    "LiteLLMEmbeddingProvider": ("parsimony.embeddings.litellm", "LiteLLMEmbeddingProvider"),
-    "SQLiteCatalogStore": ("parsimony.stores.sqlite_catalog", "SQLiteCatalogStore"),
-    "InMemoryDataStore": ("parsimony.stores.memory_data", "InMemoryDataStore"),
-    "DataStore": ("parsimony.stores.data_store", "DataStore"),
-    "LoadResult": ("parsimony.stores.data_store", "LoadResult"),
-    "build_embedding_text": ("parsimony.catalog.catalog", "build_embedding_text"),
-    # Errors
-    "ConnectorError": ("parsimony.errors", "ConnectorError"),
-    "PaymentRequiredError": ("parsimony.errors", "PaymentRequiredError"),
-    "RateLimitError": ("parsimony.errors", "RateLimitError"),
-    "UnauthorizedError": ("parsimony.errors", "UnauthorizedError"),
-    "ProviderError": ("parsimony.errors", "ProviderError"),
-    "EmptyDataError": ("parsimony.errors", "EmptyDataError"),
-    "ParseError": ("parsimony.errors", "ParseError"),
-}
-
-# Cache for the convenience client singleton.
+# Convenience: `from parsimony import client` builds a ready-to-use Connectors
+# collection with API keys from environment variables (cached after first access).
 _client_cache: Any = None
 
 
 def __getattr__(name: str) -> Any:
     global _client_cache
 
-    # Convenience: `from parsimony import client` builds a ready-to-use Connectors
-    # collection with API keys from environment variables (cached after first access).
     if name == "client":
         if _client_cache is None:
             from parsimony.connectors import build_connectors_from_env
@@ -152,11 +145,11 @@ def __getattr__(name: str) -> Any:
             _client_cache = build_connectors_from_env(lenient=True)
         return _client_cache
 
-    spec = _LAZY_IMPORTS.get(name)
-    if spec is not None:
-        import importlib
+    # SQLiteCatalogStore needs sqlite-vec from the [search] extra; fail at
+    # access time (with a real ImportError) rather than at package import.
+    if name == "SQLiteCatalogStore":
+        from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
-        module = importlib.import_module(spec[0])
-        return getattr(module, spec[1])
+        return SQLiteCatalogStore
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

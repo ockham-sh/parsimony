@@ -1,8 +1,9 @@
 """Bundle wire format: manifest schema, Parquet schema, allowed filenames.
 
-Single source of truth shared by :mod:`parsimony.stores.hf_bundle.store`
-(reader) and :mod:`parsimony.stores.hf_bundle.builder` (writer). Any drift
-between the two sides must be a single-file diff here.
+Single source of truth shared by the read-side store
+(:mod:`parsimony.stores.hf_bundle`) and the build/publish path
+(:mod:`parsimony.bundles.build` + :mod:`parsimony.bundles.targets.hf_bundle`).
+Any drift between the two sides must be a single-file diff here.
 
 The bundle layout (one HuggingFace repo per namespace) is::
 
@@ -14,8 +15,10 @@ The bundle layout (one HuggingFace repo per namespace) is::
 
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Final
 
 import pyarrow as pa
@@ -44,7 +47,6 @@ ENTRIES_PARQUET_SCHEMA: Final[pa.Schema] = pa.schema(
         pa.field("tags", pa.list_(pa.string()), nullable=False),
         pa.field("metadata", pa.string(), nullable=False),
         pa.field("properties", pa.string(), nullable=False),
-        pa.field("observable_id", pa.string(), nullable=True),
         pa.field("row_id", pa.int64(), nullable=False),
     ]
 )
@@ -65,9 +67,19 @@ FAISS_HNSW_EF_SEARCH_DEFAULT: Final[int] = 64
 
 HF_ORG: Final[str] = "parsimony-dev"
 
+# Defensive allowlist mirrored from CatalogSpec/CatalogPlan validation.
+# Keeps :func:`hf_repo_id` from emitting an org-bypass URL even if a caller
+# constructed a namespace string outside the spec validation path.
+_HF_NAMESPACE_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
 
 def hf_repo_id(namespace: str) -> str:
     """Canonical HF repo id for a catalog namespace bundle."""
+    if not _HF_NAMESPACE_RE.match(namespace):
+        raise ValueError(
+            f"namespace {namespace!r} contains characters outside the allowed set "
+            "(must match ^[a-z0-9][a-z0-9_-]{0,63}$)"
+        )
     return f"{HF_ORG}/{namespace}"
 
 
@@ -95,6 +107,27 @@ _SHA256_RE: Final[re.Pattern[str]] = re.compile(r"^[0-9a-f]{64}$")
 MAX_MANIFEST_BYTES: Final[int] = 64 * 1024  # 64 KiB
 MAX_PARQUET_BYTES: Final[int] = 512 * 1024 * 1024  # 512 MiB
 MAX_INDEX_BYTES: Final[int] = 1024 * 1024 * 1024  # 1 GiB
+
+
+# ---------------------------------------------------------------------------
+# Content hashing (produces the entries_sha256 / index_sha256 manifest fields)
+# ---------------------------------------------------------------------------
+
+
+def sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
+    """Stream a file through SHA-256, returning the lowercase hex digest.
+
+    Computed *after* the file is on disk (not from the in-memory object) so
+    the manifest reflects exactly what ships.
+    """
+    h = hashlib.sha256()
+    with path.open("rb") as fh:
+        while True:
+            buf = fh.read(chunk)
+            if not buf:
+                break
+            h.update(buf)
+    return h.hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -179,4 +212,5 @@ __all__ = [
     "MAX_MANIFEST_BYTES",
     "MAX_PARQUET_BYTES",
     "hf_repo_id",
+    "sha256_file",
 ]

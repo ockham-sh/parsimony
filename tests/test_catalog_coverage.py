@@ -286,7 +286,11 @@ class TestFindEnumerator:
         title_col = Column(name="name", role=ColumnRole.TITLE)
         conn = _FakeConnector(output_config=_FakeOutputConfig(columns=[col, title_col]))
         result = _find_enumerator([conn], "fred")
-        assert result is conn
+        # New signature: returns (enumerator, extracted_params) — static namespace → empty dict.
+        assert result is not None
+        found_conn, extracted = result
+        assert found_conn is conn
+        assert extracted == {}
 
     def test_skips_data_role_connector(self) -> None:
         col = Column(name="code", role=ColumnRole.KEY, namespace="fred")

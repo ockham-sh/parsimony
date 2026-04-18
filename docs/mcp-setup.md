@@ -66,7 +66,7 @@ The server reads API keys from environment variables. You can set them in the `e
 | `RIKSBANK_API_KEY` | Riksbank (Sweden) |
 | `FINANCIAL_REPORTS_API_KEY` | Financial Reports (global filings) |
 
-SDMX connectors (ECB, Eurostat, IMF, World Bank, BIS, OECD) and SEC Edgar require no API keys.
+SDMX connectors (ECB, Eurostat, IMF, World Bank — install `parsimony-sdmx`) and SEC Edgar require no API keys.
 
 ## What Gets Exposed
 
@@ -74,8 +74,8 @@ The MCP server exposes connectors tagged `"tool"` — these are search and disco
 
 Currently exposed tools (~18):
 
-- **FRED**: `fred_search`
-- **SDMX**: `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys`
+- **FRED**: `fred_search` (via `parsimony-fred` plugin)
+- **SDMX**: discovery moved to the generic `catalog_search` tool against the `sdmx_datasets` and `sdmx_series_{agency}_{dataset_id}` namespaces shipped by the `parsimony-sdmx` plugin.
 - **FMP**: `fmp_search`, `fmp_taxonomy`, `fmp_company_profile`, `fmp_peers`, `fmp_index_constituents`, `fmp_market_movers`, `fmp_screener`
 - **SEC Edgar**: `sec_edgar_find_company`, `sec_edgar_company_profile`, `sec_edgar_search_filings`
 - **Financial Reports**: `fr_companies_search`, `fr_isic_browse`, `fr_isin_lookup`

@@ -39,8 +39,8 @@ pip install parsimony-core[all]         # Everything
 
 | Source | Connectors | API Key |
 |--------|-----------|---------|
-| **FRED** (Federal Reserve Economic Data) | `fred_search`, `fred_fetch` | Free ([register](https://fred.stlouisfed.org/docs/api/api_key.html)) |
-| **SDMX** (ECB, Eurostat, IMF, World Bank, ...) | `sdmx_fetch`, `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys` | None |
+| **FRED** (Federal Reserve Economic Data, via `parsimony-fred` plugin) | `fred_search`, `fred_fetch` | Free ([register](https://fred.stlouisfed.org/docs/api/api_key.html)) |
+| **SDMX** (ECB, Eurostat, IMF, World Bank, via `parsimony-sdmx` plugin) | `sdmx_fetch` + `sdmx_datasets` / `sdmx_series_{agency}_{dataset_id}` catalog bundles | None |
 | **FMP** (Financial Modeling Prep) | `fmp_stock_quote`, `fmp_income_statements`, `fmp_balance_sheet_statements`, `fmp_historical_prices`, `fmp_company_profile` | Paid |
 | **SEC Edgar** | `sec_edgar_fetch` | None |
 | **Polymarket** | `polymarket_clob_fetch`, `polymarket_gamma_fetch` | None |

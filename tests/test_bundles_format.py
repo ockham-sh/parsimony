@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from parsimony.stores.hf_bundle.format import (
+from parsimony.bundles.format import (
     BUNDLE_FILENAMES,
     ENTRIES_FILENAME,
     ENTRIES_PARQUET_SCHEMA,

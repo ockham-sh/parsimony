@@ -36,8 +36,8 @@ _Fetch the same exchange rate from two sources and merge for comparison._
 ```python
 import asyncio
 import pandas as pd
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
-from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony_fred import fred_fetch, FredFetchParams
+from parsimony_sdmx.connectors.fetch import sdmx_fetch, SdmxFetchParams
 
 async def main():
     fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -168,8 +168,8 @@ _Combine FRED inflation and ECB interest rates into one DataFrame._
 ```python
 import asyncio
 import pandas as pd
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
-from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony_fred import fred_fetch, FredFetchParams
+from parsimony_sdmx.connectors.fetch import sdmx_fetch, SdmxFetchParams
 
 async def main():
     fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -247,35 +247,48 @@ asyncio.run(main())
 
 ### Recipe 10: Discover and Fetch SDMX Yield Curves
 
-_Full discovery workflow: list datasets, inspect DSD, find series keys, then fetch data._
+_Two-hop catalog flow: search published SDMX bundles for a dataset, then
+search that dataset's per-series bundle, then fetch the chosen series._
+
+Requires `pip install parsimony-sdmx`. Dataset metadata lives in the
+`sdmx_datasets` namespace; each dataset's series keys live in
+`sdmx_series_{agency}_{dataset_id}` (lowercased).
 
 ```python
 import asyncio
-from parsimony.connectors.sdmx import (
-    sdmx_list_datasets, sdmx_dsd, sdmx_series_keys, sdmx_fetch,
-    SdmxListDatasetsParams, SdmxDsdParams, SdmxSeriesKeysParams, SdmxFetchParams,
-)
+from parsimony import Catalog
+from parsimony.stores import HFBundleCatalogStore
+from parsimony_sdmx.connectors.fetch import sdmx_fetch, SdmxFetchParams
 
 async def main():
-    # Step 1: List ECB datasets to find yield curve
-    datasets = await sdmx_list_datasets(SdmxListDatasetsParams(agency="ECB"))
-    yc_rows = datasets.df[datasets.df["name"].str.contains("yield", case=False, na=False)]
-    print("Yield curve datasets:", yc_rows[["dataset_id", "name"]].to_string(index=False))
+    catalog = Catalog(store=HFBundleCatalogStore(...))
 
-    # Step 2: Inspect DSD to understand dimensions
-    dsd = await sdmx_dsd(SdmxDsdParams(dataset_key="ECB-YC"))
-    print("\nDimensions:\n", dsd.df.to_string(index=False))
+    # Hop 1: find the yield-curve dataset
+    ds_hits = await catalog.search(
+        "Euro area government bond yield curve",
+        limit=5,
+        namespaces=["sdmx_datasets"],
+    )
+    print("Dataset candidates:")
+    for m in ds_hits:
+        print(f"  [{m.code}] {m.title}")
+    # pick ECB|YC from the matches
+    agency, dataset_id = "ECB", "YC"
 
-    # Step 3: Find available series keys
-    keys = await sdmx_series_keys(SdmxSeriesKeysParams(
-        dataset_key="ECB-YC", key="B.U2.SR_1Y.*.*",
-    ))
-    print(f"\nAvailable keys: {len(keys.df)} series")
-    print(keys.df.head(5).to_string(index=False))
+    # Hop 2: search series inside that dataset
+    series_ns = f"sdmx_series_{agency.lower()}_{dataset_id.lower()}"
+    sk_hits = await catalog.search(
+        "10-year German government bond yield",
+        limit=5,
+        namespaces=[series_ns],
+    )
+    for m in sk_hits:
+        print(f"  [{m.namespace}:{m.code}] {m.title}")
 
-    # Step 4: Fetch one series
+    # Hop 3: fetch the chosen series
     result = await sdmx_fetch(SdmxFetchParams(
-        dataset_key="ECB-YC", series_key="B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y",
+        dataset_key=f"{agency}-{dataset_id}",
+        series_key="B.DE.EUR.4F.G_N_C.SV_C_YM.SR_10Y",
         start_period="2023-01",
     ))
     print(f"\nFetched {len(result.df)} observations")

@@ -17,6 +17,7 @@ import httpx
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from parsimony.bundles import CatalogSpec
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.errors import EmptyDataError
 from parsimony.result import (
@@ -229,7 +230,11 @@ async def bde_fetch(params: BdeFetchParams) -> Result:
     )
 
 
-@enumerator(output=BDE_ENUMERATE_OUTPUT, tags=["macro", "es"])
+@enumerator(
+    output=BDE_ENUMERATE_OUTPUT,
+    tags=["macro", "es"],
+    catalog=CatalogSpec.static(namespace="bde"),
+)
 async def enumerate_bde(params: BdeEnumerateParams) -> pd.DataFrame:
     """Enumerate BdE series by fetching well-known series codes and their metadata.
 

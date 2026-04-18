@@ -26,7 +26,6 @@ dependencies = [
     "pyarrow>=23.0.1",
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
-    "sdmx1>=2.26.0,<3",
     # Catalog bundle runtime (HF Parquet + FAISS distribution).
     "faiss-cpu>=1.8.0",
     "sentence-transformers>=3.0.0",
@@ -49,6 +48,9 @@ dev = [
     "mypy>=1.10",
     "types-requests>=2.31",
     "pip-audit>=2.7",
+    # Extracted plugins — included in dev so in-repo integration tests still
+    # exercise the full connector surface after Phase 2+ extractions.
+    "parsimony-fred",
 ]
 docs = ["mkdocs-material"]
 
@@ -56,6 +58,51 @@ docs = ["mkdocs-material"]
 Homepage = "https://parsimony.dev"
 Repository = "https://github.com/ockham-sh/parsimony"
 Documentation = "https://docs.parsimony.dev"
+
+[project.scripts]
+parsimony = "parsimony.cli:main"
+
+[tool.uv.sources]
+# Resolve extracted plugins from sibling checkouts during local dev. CI and
+# published installs use the PyPI versions (pinned in [project.optional-dependencies].dev).
+parsimony-fred = { path = "../parsimony-fred", editable = true }
+
+# ---------------------------------------------------------------------------
+# Bundled providers registered as entry points.
+#
+# Every connector currently shipped in this package is exposed via the
+# ``parsimony.providers`` entry-point group so that ``parsimony.plugins.discovery``
+# picks it up the same way it picks up external ``parsimony-<name>`` plugins.
+#
+# During the Phase 5 bulk extraction each entry listed below will be deleted
+# from this file as the corresponding connector moves to its own repo
+# (see ``PLAN-plugin-migration.md``).
+# ---------------------------------------------------------------------------
+[project.entry-points."parsimony.providers"]
+# fred — extracted to parsimony-fred (PyPI / ockham-sh/parsimony-fred) in Phase 2
+fmp = "parsimony.connectors.fmp"
+fmp_screener = "parsimony.connectors.fmp_screener"
+eodhd = "parsimony.connectors.eodhd"
+coingecko = "parsimony.connectors.coingecko"
+finnhub = "parsimony.connectors.finnhub"
+tiingo = "parsimony.connectors.tiingo"
+financial_reports = "parsimony.connectors.financial_reports"
+eia = "parsimony.connectors.eia"
+bdf = "parsimony.connectors.bdf"
+alpha_vantage = "parsimony.connectors.alpha_vantage"
+riksbank = "parsimony.connectors.riksbank"
+destatis = "parsimony.connectors.destatis"
+bls = "parsimony.connectors.bls"
+# sdmx — extracted to parsimony-sdmx (PyPI / ockham-sh/parsimony-sdmx).
+polymarket = "parsimony.connectors.polymarket"
+sec_edgar = "parsimony.connectors.sec_edgar"
+treasury = "parsimony.connectors.treasury"
+snb = "parsimony.connectors.snb"
+rba = "parsimony.connectors.rba"
+bde = "parsimony.connectors.bde"
+boc = "parsimony.connectors.boc"
+boj = "parsimony.connectors.boj"
+bdp = "parsimony.connectors.bdp"
 
 [tool.ruff]
 target-version = "py311"
@@ -109,11 +156,9 @@ omit = [
     "parsimony/connectors/finnhub.py",
     "parsimony/connectors/fmp.py",
     "parsimony/connectors/fmp_screener.py",
-    "parsimony/connectors/fred.py",
     "parsimony/connectors/polymarket.py",
     "parsimony/connectors/rba.py",
     "parsimony/connectors/riksbank.py",
-    "parsimony/connectors/sdmx.py",
     "parsimony/connectors/sec_edgar.py",
     "parsimony/connectors/snb.py",
     "parsimony/connectors/tiingo.py",

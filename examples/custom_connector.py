@@ -23,10 +23,10 @@ import asyncio
 import os
 
 import pandas as pd
+from parsimony_fred import fred_fetch
 from pydantic import BaseModel, Field
 
 from parsimony import Column, ColumnRole, Connectors, OutputConfig, connector
-from parsimony.connectors.fred import fred_fetch
 
 CUSTOM_OUTPUT = OutputConfig(
     columns=[

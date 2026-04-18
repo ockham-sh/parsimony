@@ -19,9 +19,11 @@ Typed, composable data connectors with searchable catalogs for Python.
 ## Install
 
 ```bash
-pip install parsimony-core           # FRED, ECB, Eurostat, IMF, World Bank + all httpx connectors
-pip install parsimony-core[sec]      # + SEC Edgar
-pip install parsimony-core[all]      # everything (adds legacy SQLite search path, MCP server)
+pip install parsimony-core              # kernel + httpx-native bundled connectors
+pip install parsimony-sdmx              # ECB, Eurostat, IMF, World Bank (SDMX plugin)
+pip install parsimony-fred              # FRED (US macro) plugin
+pip install parsimony-core[sec]         # + SEC Edgar
+pip install parsimony-core[all]         # everything (adds legacy SQLite search path, MCP server)
 ```
 
 > Installed from PyPI as **`parsimony-core`**; imports remain `from parsimony import ...`.
@@ -39,11 +41,11 @@ pip install parsimony-core[all]      # everything (adds legacy SQLite search pat
 
 ## 30-Second Example (No API Key)
 
-Fetch daily USD/EUR exchange rates from the ECB:
+Fetch daily USD/EUR exchange rates from the ECB via the SDMX plugin:
 
 ```python
 import asyncio
-from parsimony.connectors.sdmx import CONNECTORS as SDMX
+from parsimony_sdmx import CONNECTORS as SDMX
 
 async def main():
     result = await SDMX["sdmx_fetch"](
@@ -86,8 +88,8 @@ print(result.provenance)
 
 | Source | API Key | Category |
 |--------|---------|----------|
-| **FRED** (Federal Reserve Economic Data) | Free | Macro |
-| **SDMX** (ECB, Eurostat, IMF, World Bank, BIS) | None | Macro |
+| **FRED** (Federal Reserve Economic Data, via `parsimony-fred` plugin) | Free | Macro |
+| **SDMX** (ECB, Eurostat, IMF, World Bank, via `parsimony-sdmx` plugin) | None | Macro |
 | **FMP** (Financial Modeling Prep) | Paid | Equities |
 | **SEC Edgar** | None | Filings |
 | **EODHD** (End of Day Historical Data) | Paid | Multi-asset |

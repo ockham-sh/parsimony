@@ -1,7 +1,7 @@
 """Pure transforms between :class:`SeriesEntry` and the bundle Parquet schema.
 
 These functions are the single round-trip contract shared by the bundle
-builder (writer) and :class:`~parsimony.stores.hf_bundle.store.HFBundleCatalogStore`
+builder (writer) and :class:`~parsimony.stores.hf_bundle.HFBundleCatalogStore`
 (reader). The canonical invariant is that Parquet ``row_id`` is dense
 ``0..N-1`` and matches FAISS vector position ``i`` for every row ``i``.
 
@@ -22,9 +22,9 @@ from typing import Any
 
 import pyarrow as pa
 
+from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.format import ENTRIES_PARQUET_SCHEMA
 from parsimony.catalog.models import SeriesEntry
-from parsimony.stores.hf_bundle.errors import BundleIntegrityError
-from parsimony.stores.hf_bundle.format import ENTRIES_PARQUET_SCHEMA
 
 
 def entries_to_arrow_table(entries: list[SeriesEntry]) -> pa.Table:
@@ -44,7 +44,6 @@ def entries_to_arrow_table(entries: list[SeriesEntry]) -> pa.Table:
     tags: list[list[str]] = []
     metadata_json: list[str] = []
     properties_json: list[str] = []
-    observable_ids: list[str | None] = []
     row_ids: list[int] = []
 
     for i, e in enumerate(entries):
@@ -55,7 +54,6 @@ def entries_to_arrow_table(entries: list[SeriesEntry]) -> pa.Table:
         tags.append(list(e.tags))
         metadata_json.append(json.dumps(e.metadata, sort_keys=True, default=_json_default))
         properties_json.append(json.dumps(e.properties, sort_keys=True, default=_json_default))
-        observable_ids.append(e.observable_id)
         row_ids.append(i)
 
     return pa.table(
@@ -67,7 +65,6 @@ def entries_to_arrow_table(entries: list[SeriesEntry]) -> pa.Table:
             "tags": tags,
             "metadata": metadata_json,
             "properties": properties_json,
-            "observable_id": observable_ids,
             "row_id": row_ids,
         },
         schema=ENTRIES_PARQUET_SCHEMA,
@@ -128,7 +125,6 @@ def _hydrate_rows(table: pa.Table, *, namespace: str | None) -> list[SeriesEntry
     tags_col = table.column("tags").to_pylist()
     metadata_col = table.column("metadata").to_pylist()
     properties_col = table.column("properties").to_pylist()
-    observable_ids = table.column("observable_id").to_pylist()
 
     entries: list[SeriesEntry] = []
     for i in range(len(namespaces)):
@@ -141,7 +137,6 @@ def _hydrate_rows(table: pa.Table, *, namespace: str | None) -> list[SeriesEntry
                 tags=list(tags_col[i] or []),
                 metadata=json.loads(metadata_col[i] or "{}"),
                 properties=json.loads(properties_col[i] or "{}"),
-                observable_id=observable_ids[i],
             )
         )
     return entries

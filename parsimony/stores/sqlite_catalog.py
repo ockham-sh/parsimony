@@ -39,32 +39,31 @@ CREATE TABLE IF NOT EXISTS series_catalog (
     metadata  TEXT NOT NULL DEFAULT '{}',
     properties TEXT NOT NULL DEFAULT '{}',
     embedding BLOB,
-    observable_id TEXT,
     PRIMARY KEY (namespace, code)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS series_catalog_fts USING fts5(
-    title, code, tags, description, metadata,
+    title, code, tags, description,
     content='series_catalog',
     content_rowid='rowid'
 );
 
 -- Triggers to keep FTS in sync with content table.
 CREATE TRIGGER IF NOT EXISTS series_catalog_ai AFTER INSERT ON series_catalog BEGIN
-    INSERT INTO series_catalog_fts(rowid, title, code, tags, description, metadata)
-    VALUES (new.rowid, new.title, new.code, new.tags, new.description, new.metadata);
+    INSERT INTO series_catalog_fts(rowid, title, code, tags, description)
+    VALUES (new.rowid, new.title, new.code, new.tags, new.description);
 END;
 
 CREATE TRIGGER IF NOT EXISTS series_catalog_ad AFTER DELETE ON series_catalog BEGIN
-    INSERT INTO series_catalog_fts(series_catalog_fts, rowid, title, code, tags, description, metadata)
-    VALUES ('delete', old.rowid, old.title, old.code, old.tags, old.description, old.metadata);
+    INSERT INTO series_catalog_fts(series_catalog_fts, rowid, title, code, tags, description)
+    VALUES ('delete', old.rowid, old.title, old.code, old.tags, old.description);
 END;
 
 CREATE TRIGGER IF NOT EXISTS series_catalog_au AFTER UPDATE ON series_catalog BEGIN
-    INSERT INTO series_catalog_fts(series_catalog_fts, rowid, title, code, tags, description, metadata)
-    VALUES ('delete', old.rowid, old.title, old.code, old.tags, old.description, old.metadata);
-    INSERT INTO series_catalog_fts(rowid, title, code, tags, description, metadata)
-    VALUES (new.rowid, new.title, new.code, new.tags, new.description, new.metadata);
+    INSERT INTO series_catalog_fts(series_catalog_fts, rowid, title, code, tags, description)
+    VALUES ('delete', old.rowid, old.title, old.code, old.tags, old.description);
+    INSERT INTO series_catalog_fts(rowid, title, code, tags, description)
+    VALUES (new.rowid, new.title, new.code, new.tags, new.description);
 END;
 """
 
@@ -100,7 +99,6 @@ def _row_to_entry(row: sqlite3.Row) -> SeriesEntry:
         metadata=json.loads(row["metadata"]),
         properties=json.loads(row["properties"]),
         embedding=_decode_embedding(row["embedding"]) if row["embedding"] else None,
-        observable_id=row["observable_id"],
     )
 
 
@@ -190,16 +188,15 @@ class SQLiteCatalogStore(CatalogStore):
                 conn.executemany(
                     """
                     INSERT INTO series_catalog
-                        (namespace, code, title, tags, description, metadata, properties, embedding, observable_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        (namespace, code, title, tags, description, metadata, properties, embedding)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(namespace, code) DO UPDATE SET
                         title = excluded.title,
                         tags = excluded.tags,
                         description = excluded.description,
                         metadata = excluded.metadata,
                         properties = excluded.properties,
-                        embedding = COALESCE(excluded.embedding, series_catalog.embedding),
-                        observable_id = COALESCE(excluded.observable_id, series_catalog.observable_id)
+                        embedding = COALESCE(excluded.embedding, series_catalog.embedding)
                     """,
                     [
                         (
@@ -211,7 +208,6 @@ class SQLiteCatalogStore(CatalogStore):
                             json.dumps(e.metadata),
                             json.dumps(e.properties),
                             _encode_embedding(e.embedding) if e.embedding else None,
-                            e.observable_id,
                         )
                         for e in entries
                     ],

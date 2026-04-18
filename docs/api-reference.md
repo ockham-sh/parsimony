@@ -397,7 +397,6 @@ SeriesEntry(
     metadata: dict = {},
     properties: dict = {},
     embedding: list[float] | None = None,
-    observable_id: str | None = None,
 )
 ```
 
@@ -624,8 +623,8 @@ graph LR
     classDef nodep fill:#50C878,stroke:#2E7D50,color:#fff
 
     subgraph Modules["Connector Modules"]
-        FRED["fred.py\n3 functions"]:::module
-        SDMX["sdmx.py\n5 functions"]:::module
+        FRED["parsimony-fred plugin\n3 functions"]:::module
+        SDMX["parsimony-sdmx plugin\n3 functions"]:::module
         FMP["fmp.py\n18 functions"]:::module
         FMPS["fmp_screener.py\n1 function"]:::module
         SEC["sec_edgar.py"]:::module
@@ -715,93 +714,52 @@ Enumerate all series in a FRED release. Returns a `SemanticTableResult` with KEY
 
 ### SDMX Connectors
 
-**Module**: `parsimony.connectors.sdmx`  
-**Required dependency**: `sdmx1` package (included in base install)  
-**No API key required**
+**Package**: `parsimony-sdmx` (separate plugin — `pip install parsimony-sdmx`)
+**Module**: `parsimony_sdmx`
+**Required dependency**: none — SDMX endpoints are public.
+
+The plugin exposes three connectors via the `parsimony.providers` entry
+point; they are discovered automatically by
+`build_connectors_from_env()` when the plugin is installed.
+
+Dataset and series discovery is handled by the kernel's generic
+`Catalog.search` surface against two namespace families shipped as
+HuggingFace FAISS bundles:
+
+- `sdmx_datasets` — one entry per `(agency, dataset_id)` tuple across
+  all supported agencies (ECB, ESTAT, IMF_DATA, WB_WDI).
+- `sdmx_series_{agency}_{dataset_id}` — one per-dataset bundle of
+  series keys, selected by namespace template resolution.
 
 #### `sdmx_fetch`
 
 | Field | Value |
 |-------|-------|
 | Tags | `["sdmx"]` |
-| Decorator | `@loader` |
-
-**Params model** (`SdmxFetchParams`):
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `provider` | `str` | SDMX provider ID (e.g. `"ECB"`, `"IMF"`, `"ESTAT"`) |
-| `dataset_id` | `str` | Dataset identifier within the provider |
-| `key` | `str \| None` | SDMX dimension key filter (e.g. `"A.DE...."`) |
-| `start_period` | `str \| None` | Start period (e.g. `"2000"`, `"2000-Q1"`) |
-| `end_period` | `str \| None` | End period |
-
-Fetch observations for an SDMX dataset from any supported provider.
-
-#### `sdmx_list_datasets`
-
-| Field | Value |
-|-------|-------|
-| Tags | `["sdmx"]` |
 | Decorator | `@connector` |
 
-**Params model** (`SdmxListDatasetsParams`):
+**Params model** (`parsimony_sdmx.connectors.fetch.SdmxFetchParams`):
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `provider` | `str` | SDMX provider ID |
+| `dataset_key` | `str` | `{AGENCY}-{dataset_id}` (e.g. `"ECB-YC"`). Agency must be in the allowlist. |
+| `series_key` | `str` | Dot-separated SDMX series key. |
+| `start_period` | `str \| None` | Start period (e.g. `"2020-01"`). |
+| `end_period` | `str \| None` | End period. |
 
-List all available datasets from an SDMX provider.
+Fetch observations for an SDMX series from the upstream agency endpoint.
 
-#### `sdmx_dsd`
+#### `enumerate_sdmx_datasets`
 
-| Field | Value |
-|-------|-------|
-| Tags | `["sdmx"]` |
-| Decorator | `@connector` |
+Enumerator that populates the `sdmx_datasets` catalog namespace from
+each agency's flat `datasets.parquet` output. Emits KEY=`{AGENCY}|{dataset_id}`
++ TITLE + METADATA(`agency`, `dataset_id`).
 
-**Params model** (`SdmxDsdParams`):
+#### `enumerate_sdmx_series`
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `provider` | `str` | SDMX provider ID |
-| `dataset_id` | `str` | Dataset identifier |
-
-Retrieve the Data Structure Definition (DSD) for an SDMX dataset. Describes dimensions, attributes, and codelists.
-
-#### `sdmx_codelist`
-
-| Field | Value |
-|-------|-------|
-| Tags | `["sdmx"]` |
-| Decorator | `@connector` |
-
-**Params model** (`SdmxCodelistParams`):
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `provider` | `str` | SDMX provider ID |
-| `codelist_id` | `str` | Codelist identifier |
-
-Retrieve a single SDMX codelist. Returns a DataFrame of codes and their labels.
-
-#### `sdmx_series_keys`
-
-| Field | Value |
-|-------|-------|
-| Tags | `["sdmx"]` |
-| Decorator | `@enumerator` |
-
-**Params model** (`SdmxSeriesKeysParams`):
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `provider` | `str` | SDMX provider ID |
-| `dataset_id` | `Annotated[str, Namespace("sdmx")]` | Dataset identifier |
-
-Enumerate all series keys in an SDMX dataset. Returns KEY and TITLE columns. Suitable for bulk catalog indexing.
-
-> **Note**: `enumerate_sdmx_dataset_codelists()` is a non-connector helper function in `sdmx.py` that returns `list[SemanticTableResult]` but is not registered as a `Connector`. It is not part of the standard calling convention.
+Enumerator with template namespace
+`sdmx_series_{agency}_{dataset_id}`. Resolved per row, it populates
+one catalog namespace per dataset with the flat series table.
 
 ---
 

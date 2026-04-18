@@ -12,6 +12,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from parsimony.bundles import CatalogSpec
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.errors import EmptyDataError
 from parsimony.result import (
@@ -184,7 +185,11 @@ async def riksbank_fetch(params: RiksbankFetchParams, *, api_key: str = "") -> R
     )
 
 
-@enumerator(output=RIKSBANK_ENUMERATE_OUTPUT, tags=["macro", "se"])
+@enumerator(
+    output=RIKSBANK_ENUMERATE_OUTPUT,
+    tags=["macro", "se"],
+    catalog=CatalogSpec.static(namespace="riksbank"),
+)
 async def enumerate_riksbank(params: RiksbankEnumerateParams, *, api_key: str = "") -> pd.DataFrame:
     """Enumerate all Riksbank series via the Groups and Series endpoints."""
     http = _make_http(api_key)

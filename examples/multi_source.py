@@ -4,7 +4,7 @@ Demonstrates Connectors composition with the + operator to build a unified
 bundle spanning multiple data providers.
 
 Setup:
-    pip install parsimony-core
+    pip install parsimony-core parsimony-fred parsimony-sdmx
     export FRED_API_KEY="your-key-here"
 
 Expected output:
@@ -20,8 +20,8 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony.connectors.fred import CONNECTORS as FRED
-from parsimony.connectors.sdmx import CONNECTORS as SDMX
+from parsimony_fred import CONNECTORS as FRED
+from parsimony_sdmx import CONNECTORS as SDMX
 
 
 async def main() -> None:

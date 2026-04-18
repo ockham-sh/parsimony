@@ -22,7 +22,6 @@ async def test_search_text_calls_search_series_fts_and_maps_rank() -> None:
         "tags": ["macro"],
         "metadata": {},
         "embedding": None,
-        "observable_id": None,
     }
     rpc_result = MagicMock()
     rpc_result.data = [

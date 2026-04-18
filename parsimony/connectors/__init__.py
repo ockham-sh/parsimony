@@ -1,12 +1,23 @@
 """Data source connectors and env-var-based factory.
 
 Each connector module exports a ``CONNECTORS`` constant (the full surface:
-search, discovery, fetch, enumerators).  The unified :data:`PROVIDERS` registry
-lists every module once; :func:`build_connectors_from_env` drives off it.
+search, discovery, fetch, enumerators).  :func:`build_connectors_from_env`
+composes every discovered & every bundled provider into a single
+:class:`~parsimony.connector.Connectors` collection.
+
+Discovery paths (in order of precedence):
+
+1. **Plugins discovered via** ``parsimony.providers`` **entry points** —
+   the long-term path. External packages (``parsimony-fred``, ``parsimony-sdmx``,
+   third-party ``parsimony-*``) declare themselves here.
+   See :mod:`parsimony.plugins` and ``docs/plugin-contract.md``.
+2. **Bundled legacy** :data:`PROVIDERS` **tuple** — transitional path for
+   connector modules still living inside this package. Deduplicated against
+   the discovered set by module path (discovered wins). This tuple is
+   removed in Phase 7 of ``PLAN-plugin-migration.md``.
 
 Consumers that want a subset (e.g. only ``"tool"``-tagged connectors for MCP,
-or excluding enumerators) filter the returned :class:`~parsimony.connector.Connectors`
-collection themselves::
+or excluding enumerators) filter the returned collection themselves::
 
     all_connectors = build_connectors_from_env()
     tool_connectors = all_connectors.filter(tags=["tool"])
@@ -21,6 +32,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from parsimony.connector import Connectors
+from parsimony.plugins import discovery as _plugin_discovery
+from parsimony.plugins.errors import PluginError
 
 # ---------------------------------------------------------------------------
 # Provider registry
@@ -38,7 +51,7 @@ class ProviderSpec:
     """
 
     module: str
-    """Fully-qualified module path, e.g. ``"parsimony.connectors.fred"``."""
+    """Fully-qualified module path, e.g. ``"parsimony.connectors.treasury"``."""
 
     required: bool = False
     """If ``True``, :func:`build_connectors_from_env` raises when the
@@ -46,34 +59,43 @@ class ProviderSpec:
     skipped."""
 
 
-PROVIDERS: tuple[ProviderSpec, ...] = (
-    # --- Required providers (raise if env vars absent, unless lenient=True) ---
-    ProviderSpec("parsimony.connectors.fred", required=True),
-    # --- Optional providers with credentials ---
-    ProviderSpec("parsimony.connectors.fmp"),
-    ProviderSpec("parsimony.connectors.fmp_screener"),
-    ProviderSpec("parsimony.connectors.eodhd"),
-    ProviderSpec("parsimony.connectors.coingecko"),
-    ProviderSpec("parsimony.connectors.finnhub"),
-    ProviderSpec("parsimony.connectors.tiingo"),
-    ProviderSpec("parsimony.connectors.financial_reports"),
-    ProviderSpec("parsimony.connectors.eia"),
-    ProviderSpec("parsimony.connectors.bdf"),
-    ProviderSpec("parsimony.connectors.alpha_vantage"),
-    ProviderSpec("parsimony.connectors.riksbank"),
-    ProviderSpec("parsimony.connectors.destatis"),
-    ProviderSpec("parsimony.connectors.bls"),
-    # --- Public providers (no credentials) ---
-    ProviderSpec("parsimony.connectors.sdmx"),
-    ProviderSpec("parsimony.connectors.polymarket"),
-    ProviderSpec("parsimony.connectors.sec_edgar"),
-    ProviderSpec("parsimony.connectors.treasury"),
-    ProviderSpec("parsimony.connectors.snb"),
-    ProviderSpec("parsimony.connectors.rba"),
-    ProviderSpec("parsimony.connectors.bde"),
-    ProviderSpec("parsimony.connectors.boc"),
-    ProviderSpec("parsimony.connectors.boj"),
-    ProviderSpec("parsimony.connectors.bdp"),
+#: Legacy fallback registry — empty after Phase 1.6.
+#:
+#: Every bundled connector is now discovered via the ``parsimony.providers``
+#: entry-point group in :file:`pyproject.toml`. This tuple is retained as a
+#: type-stable fallback for out-of-tree consumers who may still import it;
+#: it is removed entirely in Phase 7 of ``PLAN-plugin-migration.md``.
+PROVIDERS: tuple[ProviderSpec, ...] = ()
+
+
+# Raw module listing kept for documentation / reference only. NOT iterated
+# by :func:`build_connectors_from_env` — discovery drives the real surface.
+# Delete as connectors move out to their own packages.
+_BUNDLED_MODULES: tuple[str, ...] = (
+    # fred — extracted to parsimony-fred in Phase 2
+    "parsimony.connectors.fmp",
+    "parsimony.connectors.fmp_screener",
+    "parsimony.connectors.eodhd",
+    "parsimony.connectors.coingecko",
+    "parsimony.connectors.finnhub",
+    "parsimony.connectors.tiingo",
+    "parsimony.connectors.financial_reports",
+    "parsimony.connectors.eia",
+    "parsimony.connectors.bdf",
+    "parsimony.connectors.alpha_vantage",
+    "parsimony.connectors.riksbank",
+    "parsimony.connectors.destatis",
+    "parsimony.connectors.bls",
+    # sdmx — extracted to parsimony-sdmx in Phase 5
+    "parsimony.connectors.polymarket",
+    "parsimony.connectors.sec_edgar",
+    "parsimony.connectors.treasury",
+    "parsimony.connectors.snb",
+    "parsimony.connectors.rba",
+    "parsimony.connectors.bde",
+    "parsimony.connectors.boc",
+    "parsimony.connectors.boj",
+    "parsimony.connectors.bdp",
 )
 
 
@@ -156,20 +178,33 @@ def build_connectors_from_env(
 ) -> Connectors:
     """Build the full connector surface from environment variables.
 
-    Iterates the :data:`PROVIDERS` registry.  Each module's ``CONNECTORS``
-    are composed after binding dependencies resolved from *env* (or
-    ``os.environ`` when *env* is ``None``).
+    Composes providers from two sources:
 
-    Set *lenient* to ``True`` to skip providers whose env vars are missing
-    even when they are marked ``required``.  This is useful for partial
-    environments such as catalog builds that may lack all API keys.
+    1. Entry-point plugins discovered via :mod:`parsimony.plugins.discovery`
+       (silently skipped when their env vars are absent — the design default
+       for installed plugins).
+    2. The legacy :data:`PROVIDERS` tuple (bundled modules still living in
+       this package; deduplicated against the discovered set by module path).
 
     Pass *env* to override ``os.environ`` (useful for testing).
+
+    Set *lenient* to ``True`` to skip bundled providers whose env vars are
+    missing even when they are marked ``required`` — useful for partial
+    environments such as catalog builds that lack some API keys. The flag
+    has no effect on discovered plugins (which are always optional).
     """
     _env = env if env is not None else dict(os.environ)
     result = Connectors([])
 
+    discovered_module_paths: set[str] = set()
+    for provider in _discovered_providers_safe():
+        discovered_module_paths.add(provider.module_path)
+        result = _bind_optional_deps(result, provider.connectors, provider.env_vars, _env)
+
     for spec in PROVIDERS:
+        if spec.module in discovered_module_paths:
+            # Already composed via entry-point discovery; avoid double-registration.
+            continue
         module = importlib.import_module(spec.module)
         connectors: Connectors = module.CONNECTORS
         env_vars: dict[str, str] = getattr(module, "ENV_VARS", {})
@@ -182,3 +217,16 @@ def build_connectors_from_env(
             result = _bind_optional_deps(result, connectors, env_vars, _env)
 
     return result
+
+
+def _discovered_providers_safe() -> tuple[Any, ...]:
+    """Return discovered providers; surface contract errors clearly.
+
+    A plugin that violates the contract is a hard error — silencing it would
+    mask bugs. Import errors are also re-raised so installs that partially
+    failed don't produce a mysteriously-smaller connector set.
+    """
+    try:
+        return _plugin_discovery.discovered_providers()
+    except PluginError:
+        raise

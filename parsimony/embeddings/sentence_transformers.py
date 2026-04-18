@@ -2,7 +2,7 @@
 
 The provider is lazy: the model is only loaded on first embed call, and
 the loaded model is cached **process-wide** keyed on ``(repo_id, revision)``
-so that multiple :class:`~parsimony.stores.hf_bundle.store.HFBundleCatalogStore`
+so that multiple :class:`~parsimony.stores.hf_bundle.HFBundleCatalogStore`
 instances share one set of model weights.
 
 Heavy imports (``torch``, ``sentence_transformers``) live inside method
@@ -19,9 +19,9 @@ import os
 import threading
 from typing import Any
 
+from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.format import ALLOWED_MODEL_ID_PREFIXES
 from parsimony.catalog.models import EmbeddingProvider
-from parsimony.stores.hf_bundle.errors import BundleIntegrityError
-from parsimony.stores.hf_bundle.format import ALLOWED_MODEL_ID_PREFIXES
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,11 @@ def _load_model_sync(repo_id: str, revision: str) -> Any:
             ) from exc
 
         try:
-            model = SentenceTransformer(repo_id, revision=revision)
+            # Explicit trust_remote_code=False (Hunt R7, Willison R1):
+            # sentence-transformers' current default is False, but a future
+            # release could flip it. Some HF model repos ship a custom
+            # ``modeling_*.py`` that runs at load — we never want that path.
+            model = SentenceTransformer(repo_id, revision=revision, trust_remote_code=False)
         except Exception as exc:  # broad catch: sentence-transformers raises various types
             raise BundleIntegrityError(
                 f"Failed to load embedding model {repo_id!r} at revision {revision!r}: {exc}",
@@ -107,7 +111,7 @@ class SentenceTransformersEmbeddingProvider(EmbeddingProvider):
     model_id:
         HuggingFace repo id of the sentence-transformers model. Must start
         with an allowlisted prefix from
-        :data:`~parsimony.stores.hf_bundle.format.ALLOWED_MODEL_ID_PREFIXES`.
+        :data:`~parsimony.bundles.format.ALLOWED_MODEL_ID_PREFIXES`.
     revision:
         Immutable 40-char commit SHA pinning the model weights.
     expected_dim:

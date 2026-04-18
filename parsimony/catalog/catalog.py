@@ -10,17 +10,19 @@ Search flow:
    (HF bundle stores know how); else fall back to a live
    ``@enumerator``-decorated connector.
 
-The old GitHub-SQLite distribution path has been replaced by
-:class:`~parsimony.stores.hf_bundle.store.HFBundleCatalogStore`. This
-module no longer performs any HTTP downloads itself.
+Catalog distribution is owned by
+:class:`~parsimony.stores.hf_bundle.HFBundleCatalogStore` (HF Hub bundles).
+This module no longer performs any HTTP downloads itself.
 """
 
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
+import numpy as np
 import pandas as pd
 
 from parsimony.catalog.models import (
@@ -32,7 +34,11 @@ from parsimony.catalog.models import (
     normalize_entity_code,
 )
 from parsimony.errors import ConnectorError
-from parsimony.result import ColumnRole, SemanticTableResult
+from parsimony.result import (
+    ColumnRole,
+    SemanticTableResult,
+    resolve_namespace_template,
+)
 from parsimony.stores.catalog_store import CatalogStore
 
 logger = logging.getLogger(__name__)
@@ -55,24 +61,57 @@ def build_embedding_text(entry: SeriesEntry) -> str:
     return " | ".join(parts)
 
 
+async def embed_entries_in_batches(
+    entries: list[SeriesEntry],
+    *,
+    provider: EmbeddingProvider,
+    batch_size: int = 64,
+) -> np.ndarray:
+    """Embed entries in fixed-size batches; returns ``(N, dim)`` float32 ndarray.
+
+    Embedding text is the entry's title plus metadata/tags via
+    :func:`build_embedding_text` — same function used at query time so build
+    and query see the same text shape. Each batch is converted to ndarray
+    immediately so the Python list-of-lists never co-exists with the entries
+    list and the FAISS index.
+    """
+    if not entries:
+        return np.empty((0, provider.dimension), dtype=np.float32)
+
+    texts = [build_embedding_text(e) for e in entries]
+    chunks: list[np.ndarray] = []
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start : start + batch_size]
+        vectors = await provider.embed_texts(batch)
+        if len(vectors) != len(batch):
+            raise ValueError(
+                f"embed_texts returned {len(vectors)} vectors for {len(batch)} texts; "
+                "provider contract violation"
+            )
+        chunks.append(np.asarray(vectors, dtype=np.float32))
+
+    arr = np.concatenate(chunks, axis=0)
+    if arr.shape != (len(entries), provider.dimension):
+        raise ValueError(
+            f"embedded ndarray shape {arr.shape} does not match "
+            f"(entries={len(entries)}, dim={provider.dimension})"
+        )
+    return arr
+
+
 async def _embed_batch(
     embeddings: EmbeddingProvider,
     entries: list[SeriesEntry],
 ) -> list[SeriesEntry]:
-    """Embed catalog entries; raises on batch size or dimension mismatch."""
-    texts = [build_embedding_text(e) for e in entries]
-    vectors = await embeddings.embed_texts(texts)
-    if len(vectors) != len(entries):
-        raise ValueError("Embedding batch size mismatch")
-    out: list[SeriesEntry] = []
-    for entry, vec in zip(entries, vectors, strict=False):
-        if len(vec) != embeddings.dimension:
-            raise ValueError(f"Embedding dimension {len(vec)} != expected {embeddings.dimension}")
-        out.append(entry.model_copy(update={"embedding": vec}))
-    return out
+    """Embed catalog entries and attach the vectors to each entry."""
+    arr = await embed_entries_in_batches(entries, provider=embeddings)
+    return [
+        entry.model_copy(update={"embedding": arr[i].tolist()})
+        for i, entry in enumerate(entries)
+    ]
 
 
-def _entries_from_table_result(
+def entries_from_table_result(
     table: SemanticTableResult,
     *,
     extra_tags: list[str] | None = None,
@@ -111,7 +150,11 @@ def _entries_from_table_result(
             raise ValueError(f"SemanticTableResult missing METADATA column {mn!r}. Available: {list(df.columns)}")
 
     raw_codes = df[key_name].dropna().unique()
-    ns = normalize_code(key_col.namespace)
+    # Templated namespaces resolve per row from other declared columns; static
+    # namespaces normalize once. All placeholders are guaranteed to be declared
+    # columns (validated at OutputConfig construction time).
+    template_placeholders = key_col.namespace_placeholders
+    static_ns = None if template_placeholders else normalize_code(key_col.namespace)
     tag_list = [table.provenance.source]
     if extra_tags:
         tag_list.extend(extra_tags)
@@ -135,6 +178,28 @@ def _entries_from_table_result(
                 v = vals.iloc[0]
                 meta[mn] = v.item() if hasattr(v, "item") else v
 
+        if static_ns is not None:
+            ns = static_ns
+        else:
+            # Per-row resolve: pull placeholder values from the row's metadata
+            # columns (OutputConfig validator guarantees they're declared).
+            # Values are stringified and lowercased so the resolved namespace
+            # passes normalize_code's lowercase-snake_case contract regardless
+            # of the source column's casing — the same lowercasing applies on
+            # the reverse-resolution path (_find_enumerator via Catalog.search).
+            first_row = sub.iloc[0]
+            values: dict[str, Any] = {}
+            for placeholder in template_placeholders:
+                cell = first_row[placeholder]
+                if pd.isna(cell):
+                    raise ValueError(
+                        f"namespace template {key_col.namespace!r} placeholder {placeholder!r} "
+                        f"is null for row with key {raw_code!r}; populate the column or drop the row"
+                    )
+                raw = cell.item() if hasattr(cell, "item") else cell
+                values[placeholder] = str(raw).lower()
+            ns = normalize_code(resolve_namespace_template(key_col.namespace, values))
+
         entries.append(
             SeriesEntry(
                 namespace=ns,
@@ -152,8 +217,35 @@ def _entries_from_table_result(
 # ---------------------------------------------------------------------------
 
 
-def _find_enumerator(connectors: Any, namespace: str) -> Any | None:
-    """Find an ``@enumerator`` whose KEY column declares *namespace*."""
+def _template_to_regex(template: str) -> re.Pattern[str]:
+    """Compile a namespace template into a reverse-resolution regex.
+
+    ``"sdmx-series-{agency}-{dataset_id}"`` → pattern matching
+    ``"sdmx-series-<agency>-<dataset_id>"`` with named groups. Literal
+    template segments are regex-escaped; placeholders become ``(?P<name>.+?)``
+    (non-greedy so adjacent placeholders don't merge).
+    """
+    # Split on {placeholder} while keeping the placeholder names.
+    parts = re.split(r"(\{[A-Za-z_][A-Za-z0-9_]*\})", template)
+    regex = ""
+    for part in parts:
+        if part.startswith("{") and part.endswith("}"):
+            name = part[1:-1]
+            regex += rf"(?P<{name}>.+?)"
+        else:
+            regex += re.escape(part)
+    return re.compile(f"^{regex}$")
+
+
+def _find_enumerator(connectors: Any, namespace: str) -> tuple[Any, dict[str, Any]] | None:
+    """Find an ``@enumerator`` whose KEY column declares *namespace*.
+
+    Returns ``(enumerator, extracted_params)`` or ``None``. For static namespaces
+    ``extracted_params`` is ``{}``. For template namespaces (e.g. declared as
+    ``"sdmx-series-{agency}-{dataset_id}"``), the resolved *namespace* is
+    reverse-matched against the template and the captured groups are returned
+    as params suitable for ``enumerator.param_type(**extracted)``.
+    """
     for conn in connectors:
         oc = conn.output_config
         if oc is None:
@@ -164,8 +256,15 @@ def _find_enumerator(connectors: Any, namespace: str) -> Any | None:
         if ColumnRole.TITLE not in roles:
             continue
         for col in oc.columns:
-            if col.role == ColumnRole.KEY and col.namespace == namespace:
-                return conn
+            if col.role != ColumnRole.KEY or col.namespace is None:
+                continue
+            if not col.namespace_is_template:
+                if col.namespace == namespace:
+                    return conn, {}
+                continue
+            match = _template_to_regex(col.namespace).match(namespace)
+            if match is not None:
+                return conn, dict(match.groupdict())
     return None
 
 
@@ -263,7 +362,7 @@ class Catalog:
         force: bool = False,
     ) -> IndexResult:
         """Extract catalog rows from *table* and :meth:`ingest` them."""
-        entries = _entries_from_table_result(table, extra_tags=extra_tags)
+        entries = entries_from_table_result(table, extra_tags=extra_tags)
         if dry_run:
             return await self._preview_ingest(entries, batch_size=batch_size, force=force)
         return await self.ingest(entries, embed=embed, batch_size=batch_size, force=force)
@@ -395,7 +494,7 @@ class Catalog:
         """Force a store-side refresh of *namespace* (stores that support it).
 
         Returns whatever the store's ``refresh`` returned (e.g.,
-        :class:`~parsimony.stores.hf_bundle.store.RefreshResult`). Raises
+        :class:`~parsimony.stores.hf_bundle.RefreshResult`). Raises
         ``NotImplementedError`` for stores that do not support refresh.
         """
         refresh = getattr(self._store, "refresh", None)
@@ -438,17 +537,27 @@ class Catalog:
         logger.debug("Namespace %r not available from remote or enumerator", ns)
 
     async def _try_enumerate(self, namespace: str) -> bool:
-        """Find and run the enumerator for *namespace* from the connectors."""
+        """Find and run the enumerator for *namespace* from the connectors.
+
+        For template-namespace enumerators, placeholder values extracted from
+        the resolved *namespace* are passed as constructor kwargs to the
+        enumerator's ``param_type``, so a lookup on ``sdmx-series-ECB-YC``
+        invokes the enumerator with ``agency='ECB', dataset_id='YC'``.
+        """
         if self._connectors is None:
             return False
-        enumerator = _find_enumerator(self._connectors, namespace)
-        if enumerator is None:
+        match = _find_enumerator(self._connectors, namespace)
+        if match is None:
             return False
+        enumerator, extracted = match
 
         try:
-            params = enumerator.param_type() if enumerator.param_type else None
+            if enumerator.param_type:
+                params = enumerator.param_type(**extracted) if extracted else enumerator.param_type()
+            else:
+                params = None
             result = await enumerator(params)
-            entries = _entries_from_table_result(result)
+            entries = entries_from_table_result(result)
             if not entries:
                 return False
             idx = await self.ingest(entries, embed=False, force=True)

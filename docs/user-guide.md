@@ -220,21 +220,20 @@ async def enumerate_release():
 
 ## Querying SDMX Providers
 
-SDMX connectors are included in the base install.
+SDMX connectors are shipped in the separate `parsimony-sdmx` plugin:
 
-No API key is required. SDMX providers include ECB, Eurostat (ESTAT), IMF, World Bank (WB_WDI), BIS, and others.
+```bash
+pip install parsimony-sdmx
+```
+
+Once installed the plugin registers itself via the `parsimony.providers`
+entry point and `build_connectors_from_env()` picks up `sdmx_fetch`
+automatically. No API key is required. Supported agencies are ECB,
+Eurostat (ESTAT), IMF (IMF_DATA), and the World Bank (WB_WDI).
 
 ```python
 async def sdmx_examples():
     connectors = build_connectors_from_env()
-
-    # List all ECB datasets
-    datasets = await connectors["sdmx_list_datasets"](agency="ECB")
-    print(datasets.data.head(10))
-
-    # Get the Data Structure Definition for the ECB exchange rate dataset
-    dsd = await connectors["sdmx_dsd"](dataset_key="ECB-EXR")
-    print(dsd.data)
 
     # Fetch daily USD/EUR spot rate observations
     rates = await connectors["sdmx_fetch"](
@@ -244,15 +243,18 @@ async def sdmx_examples():
         end_period="2024-12-31",
     )
     print(rates.data.tail())
-
-    # List available series keys (filterable for catalog ingestion)
-    keys = await connectors["sdmx_series_keys"](
-        dataset_key="ESTAT-namq_10_gdp",
-    )
-    print(f"Found {len(keys.data)} series keys")
 ```
 
-The `dataset_key` format is always `AGENCY-DATASET_ID` (e.g., `ECB-EXR`, `ESTAT-namq_10_gdp`, `IMF_DATA-IFS`).
+Dataset and series discovery moved to the generic catalog search
+surface. The plugin ships two HuggingFace FAISS bundle families —
+`sdmx_datasets` for `(agency, dataset_id)` pairs and
+`sdmx_series_{agency}_{dataset_id}` per-dataset — so `catalog.search`
+replaces the old `sdmx_list_datasets` / `sdmx_dsd` / `sdmx_series_keys`
+tool surface. See the [Quickstart](quickstart.md#step-3-explore-available-series)
+for the two-hop flow.
+
+The `dataset_key` format passed to `sdmx_fetch` is always
+`AGENCY-DATASET_ID` (e.g., `ECB-EXR`, `ESTAT-namq_10_gdp`, `IMF_DATA-IFS`).
 
 ---
 

@@ -49,8 +49,7 @@ parsimony/
 ├── catalog/
 │   ├── catalog.py            # Catalog orchestration layer
 │   ├── models.py             # SeriesEntry, SeriesMatch, IndexResult, EmbeddingProvider ABC
-│   ├── arrow_adapters.py     # Pure SeriesEntry <-> Arrow table transforms (build+load contract)
-│   └── identity_from_params.py  # Namespace field extraction utilities
+│   └── arrow_adapters.py     # Pure SeriesEntry <-> Arrow table transforms (build+load contract)
 ├── stores/
 │   ├── __init__.py           # Lazy __getattr__ for HFBundleCatalogStore, SQLiteCatalogStore
 │   ├── catalog_store.py      # CatalogStore ABC
@@ -70,8 +69,6 @@ parsimony/
 │   └── json_helpers.py       # json_to_df(), interpolate_path()
 └── connectors/
     ├── __init__.py           # build_connectors_from_env(), PROVIDERS registry
-    ├── fred.py               # 3 connectors: fred_search, fred_fetch, enumerate_fred_release
-    ├── sdmx.py               # 5 connectors + enumerate_sdmx_dataset_codelists()
     ├── fmp.py                # 18 connectors
     ├── fmp_screener.py       # 1 connector: fmp_screener (fan-out pattern)
     ├── sec_edgar.py          # SEC filing connectors
@@ -359,20 +356,6 @@ Three exception classes rooted at `BundleError`:
   revision unavailable. The message discriminates.
 - `BundleError` — base; catch this to handle any bundle failure.
 
-### Identity resolution for indexing
-
-The `Namespace` annotation on a Pydantic field bridges connector params
-and catalog identity:
-
-```python
-class FredFetchParams(BaseModel):
-    series_id: Annotated[str, Namespace("fred")]
-```
-
-`identity_from_params()` inspects the params model, finds the field
-annotated with `Namespace`, and returns `(namespace, code)`. Exactly one
-`Namespace`-annotated field may exist per params model.
-
 ### Indexing pipeline (custom / local catalogs only)
 
 For users running `SQLiteCatalogStore` locally (not published bundles),
@@ -443,8 +426,8 @@ Each data-source module in `connectors/` follows the same structure:
 
 | Module | Category | Key dependency |
 |--------|----------|---------------|
-| `fred.py` | Public (macro) | `FRED_API_KEY` + httpx |
-| `sdmx.py` | Public (multi-agency) | `sdmx1` package |
+| `parsimony-fred` plugin | Public (macro) | `FRED_API_KEY` + httpx |
+| `parsimony-sdmx` plugin | Public (multi-agency) | `sdmx1` package |
 | `treasury.py` | Public (US fiscal) | httpx only |
 | `bls.py`, `eia.py`, `destatis.py` | Public (government stats) | httpx (keys optional/varied) |
 | `boe.py`, `riksbank.py`, `snb.py`, `rba.py` | Public (central banks) | httpx only |
@@ -462,8 +445,8 @@ Each data-source module in `connectors/` follows the same structure:
 
 ### Async transport strategies per module
 
-- **FRED, FMP, EODHD, Polymarket, Finnhub, CoinGecko, Tiingo, Alpha Vantage, central banks**: use `HttpClient` (httpx-based async).
-- **SDMX**: uses the `sdmx1` library's own async transport; `sdmx_fetch` yields a `pandasdmx` DataMessage.
+- **FRED, FMP, EODHD, Polymarket, Finnhub, CoinGecko, Tiingo, Alpha Vantage, central banks**: use `HttpClient` (httpx-based async). (FRED is distributed as the `parsimony-fred` plugin.)
+- **SDMX** (`parsimony-sdmx` plugin): uses the `sdmx1` library's own async transport; `sdmx_fetch` yields a `pandasdmx` DataMessage.
 - **SEC Edgar**: uses `edgartools`, a synchronous library. The connector wraps it in `_SecEdgarEngine`, a dispatch class that runs synchronous calls.
 - **Financial Reports**: uses the `financial-reports-generated-client` SDK, which provides its own async client.
 
@@ -497,7 +480,7 @@ connectors/__init__.py
 
 `FRED_API_KEY` is required by default; pass `lenient=True` to skip it when missing. All other credentialed providers are optional — if their env vars are absent, they are silently excluded. Consumers needing only the MCP/search surface filter with `connectors.filter(tags=["tool"])`.
 
-Connectors for SDMX (no key needed), SEC Edgar (no key needed), and Polymarket (no key needed) are always included in `build_connectors_from_env()` when their respective package dependencies are installed.
+Connectors for SEC Edgar (no key needed) and Polymarket (no key needed) are always included in `build_connectors_from_env()` when their respective package dependencies are installed. SDMX connectors follow the same no-credentials pattern but ship as the separate `parsimony-sdmx` plugin, discovered via the `parsimony.providers` entry point.
 
 ---
 
@@ -687,7 +670,7 @@ parsimony draws a hard line between two access paths to the same data sources:
 | **Caller** | Agent via MCP protocol | Agent-written Python code |
 | **Result size** | Small — fits comfortably in a context window | Large — full datasets, thousands of rows |
 | **Purpose** | Figure out *what* to fetch | Fetch the actual data |
-| **Examples** | `fred_search`, `sdmx_dsd`, `fmp_screener` | `fred_fetch`, `sdmx_fetch`, `eodhd_fetch` |
+| **Examples** | `fred_search`, `fmp_screener`, `catalog_search` | `fred_fetch`, `sdmx_fetch`, `eodhd_fetch` |
 
 **The core problem is context window economics.** When an agent calls an MCP tool, the result is injected into its context window alongside the system prompt, conversation history, and reasoning. A 10,000-row DataFrame returned as an MCP tool response would consume most of the context budget and crowd out the agent's ability to reason about the data. Worse, the agent doesn't need all that data in its context — it needs it in a variable it can manipulate with code.
 

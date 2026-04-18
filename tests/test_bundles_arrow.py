@@ -5,14 +5,14 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
+from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.format import ENTRIES_PARQUET_SCHEMA
 from parsimony.catalog.arrow_adapters import (
     arrow_rows_to_entries,
     arrow_table_to_entries,
     entries_to_arrow_table,
 )
 from parsimony.catalog.models import SeriesEntry
-from parsimony.stores.hf_bundle.errors import BundleIntegrityError
-from parsimony.stores.hf_bundle.format import ENTRIES_PARQUET_SCHEMA
 
 
 def _entries(n: int) -> list[SeriesEntry]:

@@ -45,13 +45,13 @@ class TestConnectorsExecution:
 
 class TestPreboundComposition:
     def test_fred_bind_names(self) -> None:
-        from parsimony.connectors.fred import CONNECTORS as FRED
+        from parsimony_fred import CONNECTORS as FRED
 
         wired = FRED.bind_deps(api_key="test-key")
         assert "fred_fetch" in wired.names()
 
     def test_fred_connectors(self) -> None:
-        from parsimony.connectors.fred import CONNECTORS as FRED
+        from parsimony_fred import CONNECTORS as FRED
 
         c = FRED.bind_deps(api_key="test-key")
         names = set(c.names())

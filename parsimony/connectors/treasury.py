@@ -11,6 +11,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field
 
+from parsimony.bundles import CatalogSpec
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.errors import EmptyDataError
 from parsimony.result import (
@@ -147,7 +148,11 @@ async def treasury_fetch(params: TreasuryFetchParams) -> Result:
     )
 
 
-@enumerator(output=TREASURY_ENUMERATE_OUTPUT, tags=["macro", "us"])
+@enumerator(
+    output=TREASURY_ENUMERATE_OUTPUT,
+    tags=["macro", "us"],
+    catalog=CatalogSpec.static(namespace="treasury"),
+)
 async def enumerate_treasury(params: TreasuryEnumerateParams) -> pd.DataFrame:
     """Enumerate all US Treasury Fiscal Data API endpoints for catalog indexing."""
     import httpx

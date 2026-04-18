@@ -13,6 +13,8 @@ __all__ = [
 
 import json
 import logging
+import re
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -26,6 +28,45 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 logger = logging.getLogger(__name__)
 
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
+
+#: Regex matching ``{placeholder}`` segments in a namespace template.
+#: Placeholders must be valid Python identifiers (letters, digits, underscore;
+#: cannot start with a digit) — this matches the column-name contract and
+#: ensures the reverse-resolution regex in ``_find_enumerator`` stays
+#: unambiguous (no nested braces, no empty placeholders).
+_NAMESPACE_PLACEHOLDER_RE: re.Pattern[str] = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def namespace_placeholders(template: str) -> list[str]:
+    """Return ordered, de-duplicated placeholder names in *template*.
+
+    ``"sdmx-series-{agency}-{dataset_id}"`` → ``["agency", "dataset_id"]``.
+    A static namespace with no ``{...}`` segments returns ``[]``.
+    """
+    seen: dict[str, None] = {}
+    for match in _NAMESPACE_PLACEHOLDER_RE.finditer(template):
+        seen.setdefault(match.group(1), None)
+    return list(seen)
+
+
+def resolve_namespace_template(template: str, values: Mapping[str, Any]) -> str:
+    """Substitute ``{placeholder}`` segments in *template* with *values*.
+
+    Missing keys raise :class:`KeyError` with an actionable message — the
+    caller is expected to have validated placeholder columns upstream at
+    :class:`OutputConfig` construction time.
+    """
+
+    def _sub(match: re.Match[str]) -> str:
+        name = match.group(1)
+        if name not in values:
+            raise KeyError(
+                f"namespace template {template!r} references placeholder {name!r} "
+                f"not present in row values (available: {sorted(values)})"
+            )
+        return str(values[name])
+
+    return _NAMESPACE_PLACEHOLDER_RE.sub(_sub, template)
 
 
 class ColumnRole(StrEnum):
@@ -52,6 +93,13 @@ class Column(BaseModel):
     exclude_from_llm_view: bool = False
     #: Catalog namespace for the entity code when ``role`` is :attr:`ColumnRole.KEY`.
     #: Set when using :meth:`~parsimony.catalog.Catalog.index_result` so the table is self-describing.
+    #:
+    #: May be a **static** string (``"sdmx-datasets"``) or a **template**
+    #: containing ``{placeholder}`` segments that reference sibling columns
+    #: in the same :class:`OutputConfig` (``"sdmx-series-{agency}-{dataset_id}"``).
+    #: Templates are resolved per row during catalog indexing and reverse-resolved
+    #: by :func:`~parsimony.catalog.catalog._find_enumerator` when Catalog.search
+    #: needs to locate a live-fallback enumerator for a fully-resolved namespace.
     namespace: str | None = None
 
     @model_validator(mode="after")
@@ -65,7 +113,26 @@ class Column(BaseModel):
                 raise ValueError("namespace is only allowed on KEY columns")
             if not str(self.namespace).strip():
                 raise ValueError("namespace must be non-empty when set")
+            # Reject unbalanced braces early — `namespace_placeholders` tolerates
+            # malformed input silently, so we check here.
+            open_braces = self.namespace.count("{")
+            close_braces = self.namespace.count("}")
+            if open_braces != close_braces:
+                raise ValueError(
+                    f"namespace template {self.namespace!r} has unbalanced braces "
+                    f"({open_braces} '{{' vs {close_braces} '}}')"
+                )
         return self
+
+    @property
+    def namespace_placeholders(self) -> list[str]:
+        """Placeholder names in :attr:`namespace` (empty when static or unset)."""
+        return namespace_placeholders(self.namespace) if self.namespace else []
+
+    @property
+    def namespace_is_template(self) -> bool:
+        """True iff :attr:`namespace` is set and contains at least one placeholder."""
+        return bool(self.namespace_placeholders)
 
 
 def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
@@ -270,6 +337,18 @@ class OutputConfig(BaseModel):
             raise ValueError(f"Output config must have at most one TITLE column, found {len(titles)}: {titles}")
         if not any(c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE) for c in self.columns):
             raise ValueError("Output config must define at least one data, key, or title column")
+        # Validate namespace-template placeholders reference sibling columns so that
+        # per-row resolution in Catalog.index_result can never KeyError at runtime.
+        column_names = {c.name for c in self.columns}
+        for col in self.columns:
+            if col.namespace_is_template:
+                missing = [p for p in col.namespace_placeholders if p not in column_names]
+                if missing:
+                    raise ValueError(
+                        f"namespace template {col.namespace!r} on column {col.name!r} references "
+                        f"placeholders not declared as columns in the same OutputConfig: {missing}. "
+                        f"Declared columns: {sorted(column_names)}."
+                    )
         return self
 
     def validate_columns(self, df: pd.DataFrame) -> list[str]:

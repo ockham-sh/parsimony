@@ -24,6 +24,7 @@ from typing import Annotated, Any
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from parsimony.bundles import CatalogSpec
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.errors import EmptyDataError
 from parsimony.result import (
@@ -332,7 +333,11 @@ async def rba_fetch(params: RbaFetchParams) -> Result:
     )
 
 
-@enumerator(output=RBA_ENUMERATE_OUTPUT, tags=["macro", "au"])
+@enumerator(
+    output=RBA_ENUMERATE_OUTPUT,
+    tags=["macro", "au"],
+    catalog=CatalogSpec.static(namespace="rba"),
+)
 async def enumerate_rba(params: RbaEnumerateParams) -> pd.DataFrame:
     """Discover RBA series by scraping the tables page for CSV links,
     then parsing each CSV's metadata header rows.

@@ -1,3 +1,22 @@
+"""Hosted-API embedding provider via LiteLLM.
+
+**Compatibility.** This provider works with :class:`~parsimony.catalog.catalog.Catalog`
+and :class:`~parsimony.stores.sqlite_catalog.SQLiteCatalogStore`. It does
+**NOT** work with :class:`~parsimony.stores.hf_bundle.HFBundleCatalogStore`:
+HF bundle manifests pin ``embedding_model`` to a HuggingFace identity
+(model id + commit SHA) so any consumer can recompute query vectors with
+the same weights. Hosted-API embedding endpoints lack a stable
+recomputable identity, so they cannot pass the bundle's integrity check.
+
+Use this when you embed locally into SQLite-backed catalogs and need
+hosted models (OpenAI, Cohere, Voyage). Use
+:class:`~parsimony.embeddings.sentence_transformers.SentenceTransformersEmbeddingProvider`
+when you publish or consume HF bundles.
+
+Optional dependency: install via the ``[search]`` extra
+(``pip install parsimony-core[search]``).
+"""
+
 from __future__ import annotations
 
 import logging

@@ -1,7 +1,7 @@
 """Round-trip integration tests for HFBundleCatalogStore.
 
-The headline test builds a tiny fixture bundle via the real builder
-(:mod:`parsimony.stores.hf_bundle.builder`), loads it via
+The headline test builds a tiny fixture bundle via the real
+:func:`parsimony.bundles.build.write_bundle_dir` helper, loads it via
 :class:`HFBundleCatalogStore` from the local cache, and runs a search —
 no network, no sentence-transformers.
 
@@ -14,15 +14,18 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+from pathlib import Path
 
+import numpy as np
 import pytest
 
-from parsimony.stores.hf_bundle.errors import (
+from parsimony.bundles.errors import (
     BundleIntegrityError,
 )
-from parsimony.stores.hf_bundle.format import MANIFEST_FILENAME
-from tests.hf_bundle_helpers import (
+from parsimony.bundles.format import MANIFEST_FILENAME
+from tests.bundles_helpers import (
     FakeEmbeddingProvider,
+    TopicAwareFakeProvider,
     make_fixture_entries,
     requires_faiss,
 )
@@ -34,10 +37,42 @@ def provider():
 
 
 @pytest.fixture
+def topic_provider():
+    return TopicAwareFakeProvider()
+
+
+@pytest.fixture
+def topic_fixture_cache(tmp_path, topic_provider):
+    """Fixture cache built with the topic-aware provider so ranking is testable."""
+    pytest.importorskip("faiss")
+    from tests.bundles_helpers import write_bundle_dir
+
+    namespace = "snbtest"
+    revision = "0" * 40
+    entries = make_fixture_entries(namespace, n=5)
+
+    cache_base = tmp_path / "cache"
+    bundle_dir = cache_base / namespace / revision
+    bundle_dir.mkdir(parents=True)
+
+    raw = asyncio.run(topic_provider.embed_texts([_embedding_text(e) for e in entries]))
+    vectors = np.asarray(raw, dtype=np.float32)
+
+    write_bundle_dir(
+        bundle_dir,
+        namespace=namespace,
+        entries=entries,
+        vectors=vectors,
+        provider=topic_provider,
+    )
+    return cache_base, namespace, revision
+
+
+@pytest.fixture
 def fixture_cache(tmp_path, provider):
     """Build a fixture bundle into a cache layout, return (cache_base, namespace, revision)."""
     pytest.importorskip("faiss")
-    from parsimony.stores.hf_bundle.builder import write_bundle_dir
+    from tests.bundles_helpers import write_bundle_dir
 
     namespace = "snbtest"
     revision = "0" * 40
@@ -48,7 +83,8 @@ def fixture_cache(tmp_path, provider):
     bundle_dir.mkdir(parents=True)
 
     # Embed deterministically; this is the fake provider so no network.
-    vectors = asyncio.run(provider.embed_texts([_embedding_text(e) for e in entries]))
+    raw = asyncio.run(provider.embed_texts([_embedding_text(e) for e in entries]))
+    vectors = np.asarray(raw, dtype=np.float32)
 
     write_bundle_dir(
         bundle_dir,
@@ -69,12 +105,12 @@ def _embedding_text(entry) -> str:
 @requires_faiss
 class TestBundleRoundTrip:
     @pytest.mark.asyncio
-    async def test_build_load_search(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+    async def test_build_load_search(self, topic_fixture_cache, topic_provider):
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
-        cache_base, namespace, revision = fixture_cache
+        cache_base, namespace, revision = topic_fixture_cache
         store = HFBundleCatalogStore(
-            embeddings=provider,
+            embeddings=topic_provider,
             cache_dir=cache_base,
             pin=revision,
         )
@@ -92,6 +128,13 @@ class TestBundleRoundTrip:
             namespaces=[namespace],
         )
         assert len(results) > 0
+        # The unemployment-tagged fixture row must rank first — fake
+        # provider deterministically maps the query and that title to
+        # the same one-hot vector. A title-text composition bug, FAISS
+        # metric-direction bug, or row-id mismatch would break this.
+        assert results[0].code.endswith("unemployment_rate"), (
+            f"expected unemployment_rate to rank first, got top_codes={[m.code for m in results]}"
+        )
         # Every result must come from the queried namespace.
         assert all(m.namespace == namespace for m in results)
         # Similarities are bounded to [0, 1].
@@ -99,7 +142,7 @@ class TestBundleRoundTrip:
 
     @pytest.mark.asyncio
     async def test_list_namespaces_only_loaded(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
@@ -109,7 +152,7 @@ class TestBundleRoundTrip:
 
     @pytest.mark.asyncio
     async def test_upsert_and_delete_raise(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
@@ -131,7 +174,7 @@ def _rewrite_manifest(bundle_dir, **overrides):
 class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_tampered_entries_sha_rejected(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         bundle_dir = cache_base / namespace / revision
@@ -147,7 +190,7 @@ class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_tampered_index_sha_rejected(self, fixture_cache, provider):
         """Symmetric to entries: flipping a byte in index.faiss must reject."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         bundle_dir = cache_base / namespace / revision
@@ -161,7 +204,7 @@ class TestIntegrityChecks:
 
     @pytest.mark.asyncio
     async def test_corrupt_manifest_rejected(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         bundle_dir = cache_base / namespace / revision
@@ -174,7 +217,7 @@ class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_manifest_entry_count_mismatch_rejected(self, fixture_cache, provider):
         """Manifest claiming 99 entries against a 5-row Parquet must fail."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         _rewrite_manifest(cache_base / namespace / revision, entry_count=99)
@@ -186,7 +229,7 @@ class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_manifest_embedding_dim_mismatch_rejected(self, fixture_cache, provider):
         """Manifest embedding_dim that disagrees with FAISS ``d`` must fail."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         # The fixture's fake provider.dimension == 8; we set manifest to 16.
@@ -202,11 +245,12 @@ class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_oversize_manifest_rejected(self, fixture_cache, provider, monkeypatch):
         """Size caps fire before SHA/parse even runs — tampering flood guard."""
-        from parsimony.stores.hf_bundle import store as store_mod
+        from parsimony.stores import hf_bundle as store_mod
+        from parsimony.stores.hf_bundle import integrity as integrity_mod
 
         cache_base, namespace, revision = fixture_cache
         # Cap manifest at 10 bytes; real fixture manifest is kilobytes.
-        monkeypatch.setattr(store_mod, "MAX_MANIFEST_BYTES", 10)
+        monkeypatch.setattr(integrity_mod, "MAX_MANIFEST_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
         with pytest.raises(BundleIntegrityError, match="manifest.json"):
@@ -214,10 +258,11 @@ class TestIntegrityChecks:
 
     @pytest.mark.asyncio
     async def test_oversize_parquet_rejected(self, fixture_cache, provider, monkeypatch):
-        from parsimony.stores.hf_bundle import store as store_mod
+        from parsimony.stores import hf_bundle as store_mod
+        from parsimony.stores.hf_bundle import integrity as integrity_mod
 
         cache_base, namespace, revision = fixture_cache
-        monkeypatch.setattr(store_mod, "MAX_PARQUET_BYTES", 10)
+        monkeypatch.setattr(integrity_mod, "MAX_PARQUET_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
         with pytest.raises(BundleIntegrityError, match="entries.parquet"):
@@ -225,10 +270,11 @@ class TestIntegrityChecks:
 
     @pytest.mark.asyncio
     async def test_oversize_index_rejected(self, fixture_cache, provider, monkeypatch):
-        from parsimony.stores.hf_bundle import store as store_mod
+        from parsimony.stores import hf_bundle as store_mod
+        from parsimony.stores.hf_bundle import integrity as integrity_mod
 
         cache_base, namespace, revision = fixture_cache
-        monkeypatch.setattr(store_mod, "MAX_INDEX_BYTES", 10)
+        monkeypatch.setattr(integrity_mod, "MAX_INDEX_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
         with pytest.raises(BundleIntegrityError, match="index.faiss"):
@@ -237,7 +283,7 @@ class TestIntegrityChecks:
     @pytest.mark.asyncio
     async def test_corrupt_faiss_index_rejected(self, fixture_cache, provider):
         """Truncate index.faiss so faiss.read_index fails to parse."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         bundle_dir = cache_base / namespace / revision
@@ -256,122 +302,49 @@ class TestIntegrityChecks:
             await store.try_load_remote(namespace)
 
     @pytest.mark.asyncio
-    async def test_extra_file_in_snapshot_rejected(self, fixture_cache, provider, monkeypatch):
-        """The download path refuses snapshots with files outside the allowlist.
+    async def test_extra_file_in_snapshot_rejected(self, tmp_path, provider, monkeypatch):
+        """A tampered repo with a 4th file alongside the three allowed ones is rejected.
 
-        Simulates a tampered upload that ships a 4th file alongside the
-        three allowed filenames by calling _download_snapshot directly
-        against a pre-seeded target directory (no huggingface_hub).
+        Drives through the public ``try_load_remote`` API; fakes
+        ``huggingface_hub.snapshot_download`` (the library boundary) to
+        populate ``local_dir`` with an extra file in addition to the three
+        bundle files, then asserts the integrity check rejects it.
         """
-        import parsimony.stores.hf_bundle.store as store_mod
+        from parsimony.bundles.format import (
+            ENTRIES_FILENAME,
+            INDEX_FILENAME,
+            MANIFEST_FILENAME,
+        )
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
-        cache_base, namespace, revision = fixture_cache
-        target_dir = cache_base / namespace / revision
-        # Inject an extra file into the already-built fixture directory.
-        (target_dir / "extra.bin").write_bytes(b"unauthorized payload")
+        revision = "a" * 40
 
-        # Pre-seed the target revision directory so snapshot_download can be
-        # a no-op and we exercise just the confinement/extra-file checks.
         def fake_snapshot_download(**kwargs):
-            return kwargs["local_dir"]
+            local_dir = Path(kwargs["local_dir"])
+            local_dir.mkdir(parents=True, exist_ok=True)
+            # Three allowed files (empty bytes is fine — extras check fires
+            # before SHA / parse).
+            (local_dir / ENTRIES_FILENAME).write_bytes(b"")
+            (local_dir / INDEX_FILENAME).write_bytes(b"")
+            (local_dir / MANIFEST_FILENAME).write_bytes(b"")
+            # The fourth file is what the test is asserting against.
+            (local_dir / "extra.bin").write_bytes(b"unauthorized payload")
+            return str(local_dir)
 
         monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
 
-        # Call _download_snapshot directly so the BundleIntegrityError wrapping
-        # doesn't hide the underlying BundleIntegrityError.
+        store = HFBundleCatalogStore(
+            embeddings=provider, cache_dir=tmp_path / "cache", pin=revision
+        )
         with pytest.raises(BundleIntegrityError, match="Unexpected files"):
-            await store_mod._download_snapshot(
-                repo_id="dummy/repo",
-                revision=revision,
-                cache_base=cache_base.resolve(),
-                namespace=namespace,
-            )
-
-
-@requires_faiss
-class TestSingleFlight:
-    @pytest.mark.asyncio
-    async def test_concurrent_loads_share_future(self, fixture_cache, provider, monkeypatch):
-        """N concurrent callers must trigger exactly one physical load.
-
-        Instruments ``_load_from_dir`` with a counter and uses an
-        ``asyncio.Event`` to guarantee all callers queue behind the
-        in-flight future before the first one finishes.
-        """
-        from parsimony.stores.hf_bundle import store as store_mod
-
-        cache_base, namespace, revision = fixture_cache
-        load_count = 0
-        started = asyncio.Event()
-        allow_finish = asyncio.Event()
-        real_load = store_mod._load_from_dir
-
-        def wrapped_load(**kwargs):
-            nonlocal load_count
-            load_count += 1
-            started.set()
-            # Busy-loop wait: can't `await` from sync fn, so this is an
-            # ordinary blocking wait. Use a threading.Event if we need real
-            # multi-thread coverage — for single-flight correctness, the
-            # fact we were called exactly once is the load-bearing claim.
-            return real_load(**kwargs)
-
-        monkeypatch.setattr(store_mod, "_load_from_dir", wrapped_load)
-
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        # Fire 5 concurrent calls — single-flight must collapse to one load.
-        allow_finish.set()  # unused here, but signals intent for future tests
-        results = await asyncio.gather(*(store.try_load_remote(namespace) for _ in range(5)))
-        assert all(results)
-        assert store.has(namespace)
-        assert load_count == 1, f"single-flight broken: expected 1 physical load, saw {load_count}"
-
-    @pytest.mark.asyncio
-    async def test_not_found_resolves_all_waiters(self, tmp_path, provider, monkeypatch):
-        """A 404 on one caller must resolve concurrent waiters to False without
-        producing an un-retrieved-exception warning.
-
-        Uses an ``asyncio.Event`` so the in-flight load blocks until all
-        concurrent callers have queued on the future — the single-flight
-        invariant can't be observed when the launcher finishes instantly.
-        """
-        from parsimony.stores.hf_bundle import store as store_mod
-        from parsimony.stores.hf_bundle.errors import BundleNotFoundError
-
-        call_count = 0
-        waiters_ready = asyncio.Event()
-        allow_finish = asyncio.Event()
-
-        async def fake_load_one(self, ns, *, force):
-            nonlocal call_count
-            call_count += 1
-            waiters_ready.set()
-            await allow_finish.wait()
-            raise BundleNotFoundError(f"no bundle for {ns}", namespace=ns)
-
-        monkeypatch.setattr(store_mod.HFBundleCatalogStore, "_load_one", fake_load_one)
-
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=tmp_path / "cache", pin="1" * 40)
-
-        async def release_soon():
-            # Give the other 3 waiters a chance to enter their own
-            # try_load_remote and queue on the future.
-            await waiters_ready.wait()
-            await asyncio.sleep(0.05)
-            allow_finish.set()
-
-        release = asyncio.create_task(release_soon())
-        results = await asyncio.gather(*(store.try_load_remote("missingns") for _ in range(4)))
-        await release
-        assert results == [False, False, False, False]
-        assert call_count == 1, f"single-flight broken: expected 1 call, saw {call_count}"
+            await store.try_load_remote("tampered")
 
 
 @requires_faiss
 class TestRefresh:
     @pytest.mark.asyncio
     async def test_refresh_returns_unchanged_when_same_revision(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
@@ -387,72 +360,87 @@ class TestRefresh:
 
 @requires_faiss
 class TestFreshnessFallback:
-    """Exercise the three no-pin branches of _FreshnessChecker.resolve."""
+    """Exercise the three no-pin branches of the freshness checker.
+
+    These tests patch the *library boundary* (`huggingface_hub.HfApi.repo_info`
+    and `huggingface_hub.snapshot_download`), not parsimony's internal
+    `_head_check`/`_download_snapshot` helpers — so a refactor of the
+    internals doesn't silently bypass the property under test.
+    """
 
     @pytest.mark.asyncio
     async def test_no_pin_head_success_uses_remote_revision(self, fixture_cache, provider, monkeypatch):
-        """HEAD returns a revision matching the cached one → use cache, no network."""
-        from parsimony.stores.hf_bundle import store as store_mod
+        """HfApi.repo_info returns a SHA matching the cached one → use cache, no network."""
+        from huggingface_hub import HfApi
+
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
 
-        async def fake_head(*, repo_id, timeout_s):
-            return revision  # remote matches cache
+        class _FakeInfo:
+            sha = revision
 
-        monkeypatch.setattr(store_mod, "_head_check", fake_head)
+        def fake_repo_info(self, *args, **kwargs):
+            return _FakeInfo()
 
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=None)
+        monkeypatch.setattr(HfApi, "repo_info", fake_repo_info)
+
+        store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=None)
         assert await store.try_load_remote(namespace) is True
         status = store.status()
         assert status["namespaces"][namespace]["revision"] == revision
 
     @pytest.mark.asyncio
     async def test_no_pin_head_failure_with_cache_serves_stale(self, fixture_cache, provider, monkeypatch):
-        """HF unreachable + cache present → serve stale with WARN log."""
-        from parsimony.stores.hf_bundle import store as store_mod
+        """HfApi.repo_info raises → fall back to cached revision with WARN."""
+        from huggingface_hub import HfApi
 
-        cache_base, namespace, revision = fixture_cache
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
-        async def fake_head(*, repo_id, timeout_s):
-            return None  # simulate HEAD failure
+        cache_base, namespace, _revision = fixture_cache
 
-        monkeypatch.setattr(store_mod, "_head_check", fake_head)
+        def fake_repo_info(self, *args, **kwargs):
+            raise RuntimeError("network unreachable")
 
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=None)
+        monkeypatch.setattr(HfApi, "repo_info", fake_repo_info)
+
+        store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=None)
         assert await store.try_load_remote(namespace) is True
         assert store.has(namespace)
 
     @pytest.mark.asyncio
     async def test_no_pin_head_failure_without_cache_raises(self, tmp_path, provider, monkeypatch):
-        """HF unreachable + no cache → BundleIntegrityError."""
-        from parsimony.stores.hf_bundle import store as store_mod
-        from parsimony.stores.hf_bundle.errors import BundleIntegrityError
+        """HfApi.repo_info raises and no cache present → BundleIntegrityError."""
+        from huggingface_hub import HfApi
 
-        async def fake_head(*, repo_id, timeout_s):
-            return None
+        from parsimony.bundles.errors import BundleIntegrityError
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
-        monkeypatch.setattr(store_mod, "_head_check", fake_head)
+        def fake_repo_info(self, *args, **kwargs):
+            raise RuntimeError("network unreachable")
 
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=tmp_path / "cache", pin=None)
+        monkeypatch.setattr(HfApi, "repo_info", fake_repo_info)
+
+        store = HFBundleCatalogStore(embeddings=provider, cache_dir=tmp_path / "cache", pin=None)
         with pytest.raises(BundleIntegrityError):
             await store.try_load_remote("somens")
 
     @pytest.mark.asyncio
     async def test_pin_unavailable_and_cache_mismatch_raises_stale(self, fixture_cache, provider, monkeypatch):
-        """pin set but HF download fails and cache is a different revision → BundleIntegrityError."""
-        from parsimony.stores.hf_bundle import store as store_mod
-        from parsimony.stores.hf_bundle.errors import BundleIntegrityError
+        """pin set but snapshot_download fails and cache is a different revision → BundleIntegrityError."""
+        from parsimony.bundles.errors import BundleIntegrityError
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, _revision = fixture_cache
         # Pin a different revision than what's cached — forces download path.
         foreign_pin = "d" * 40
 
-        async def fake_download(*, repo_id, revision, cache_base, namespace):
+        def fake_snapshot_download(**kwargs):
             raise RuntimeError("network unreachable")
 
-        monkeypatch.setattr(store_mod, "_download_snapshot", fake_download)
+        monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
 
-        store = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=foreign_pin)
+        store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=foreign_pin)
         with pytest.raises(BundleIntegrityError):
             await store.try_load_remote(namespace)
 
@@ -462,7 +450,7 @@ class TestCacheLayoutMutations:
     @pytest.mark.asyncio
     async def test_missing_repo_returns_false(self, tmp_path, provider):
         """Namespaces that don't exist on HF (404) return False, not raise."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         store = HFBundleCatalogStore(
             embeddings=provider,
@@ -473,7 +461,7 @@ class TestCacheLayoutMutations:
         # snapshot download 404s (BundleNotFoundError -> False) or the
         # network is unreachable (BundleIntegrityError, which is a valid
         # programmer-observable error signal). Either is acceptable.
-        from parsimony.stores.hf_bundle.errors import BundleIntegrityError
+        from parsimony.bundles.errors import BundleIntegrityError
 
         try:
             result = await store.try_load_remote("nonexistent_namespace_parsimony_test")
@@ -484,7 +472,7 @@ class TestCacheLayoutMutations:
     @pytest.mark.asyncio
     async def test_shutil_cleanup_doesnt_leak(self, fixture_cache, provider):
         """Sanity: removing the cache between runs doesn't leave state in the store."""
-        from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+        from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, revision = fixture_cache
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)

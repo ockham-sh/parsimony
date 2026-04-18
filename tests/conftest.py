@@ -8,6 +8,18 @@ from parsimony.catalog.models import EmbeddingProvider, SeriesEntry
 from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 
+@pytest.fixture(autouse=True)
+def _reset_plugin_discovery_cache() -> None:
+    """Clear the plugin discovery cache before every test.
+
+    Monkeypatched entry-points in some tests can otherwise leak cached
+    mock results into subsequent tests that expect the real registry.
+    """
+    from parsimony.plugins import discovery as _discovery
+
+    _discovery._clear_cache()
+
+
 class MockEmbeddingProvider(EmbeddingProvider):
     """In-memory embedding provider for tests."""
 

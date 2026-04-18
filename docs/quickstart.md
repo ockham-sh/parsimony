@@ -5,22 +5,26 @@ Get from zero to fetching macroeconomic data in under five minutes -- no API key
 ## Install
 
 ```bash
-pip install parsimony-core
+pip install parsimony-core parsimony-sdmx
 ```
 
-> **Python 3.11+** required. SDMX providers (ECB, Eurostat, IMF, World Bank) are included in the base install.
+> **Python 3.11+** required. SDMX providers (ECB, Eurostat, IMF, World Bank)
+> ship as the separate `parsimony-sdmx` plugin — install it alongside the
+> kernel to get `sdmx_fetch` and catalog bundles for SDMX namespaces.
 
 ---
 
 ## Step 1: Fetch ECB Exchange Rates (No API Key)
 
-SDMX connectors work out of the box. Fetch the daily USD/EUR spot rate from the ECB:
+Once `parsimony-sdmx` is installed, the SDMX connectors are discovered
+automatically via the `parsimony.providers` entry point. Fetch the daily
+USD/EUR spot rate from the ECB:
 
 **Script**
 
 ```python
 import asyncio
-from parsimony.connectors.sdmx import CONNECTORS as SDMX
+from parsimony_sdmx import CONNECTORS as SDMX
 
 async def main():
     result = await SDMX["sdmx_fetch"](
@@ -37,7 +41,7 @@ asyncio.run(main())
 **Jupyter notebook**
 
 ```python
-from parsimony.connectors.sdmx import CONNECTORS as SDMX
+from parsimony_sdmx import CONNECTORS as SDMX
 
 result = await SDMX["sdmx_fetch"](
     dataset_key="ECB-EXR",
@@ -80,42 +84,36 @@ result.metadata_columns # [Column(name="...", role=METADATA)]
 
 ## Step 3: Explore Available Series
 
-Discover what data is available before fetching:
+The `parsimony-sdmx` plugin ships pre-built FAISS catalog bundles on
+HuggingFace — one for datasets across every supported agency and one
+per dataset for series. Discover what's available through the generic
+`Catalog.search` surface instead of calling one-off discovery tools:
 
 ```python
-# List all ECB datasets
-datasets = await SDMX["sdmx_list_datasets"](agency="ECB")
-print(datasets.data.head(10))
+from parsimony import Catalog
+from parsimony.stores import HFBundleCatalogStore
+
+catalog = Catalog(store=HFBundleCatalogStore(...))
+
+# Find datasets semantically
+datasets = await catalog.search(
+    "euro area exchange rates",
+    limit=10,
+    namespaces=["sdmx_datasets"],
+)
+for m in datasets:
+    print(f"  [{m.namespace}:{m.code}] {m.title}")
+
+# Drill into a specific dataset's series bundle once you have dataset_key
+series = await catalog.search(
+    "daily USD EUR",
+    limit=10,
+    namespaces=["sdmx_series_ecb_exr"],
+)
 ```
 
-```
-       dataset_id                                       name
-0             AME  AMECO - Annual macro-economic database ...
-1             BKN                   Banknote statistics (BKN)
-2             BLS               Bank Lending Survey (BLS)
-...
-```
-
-```python
-# Inspect the exchange rate dataset structure
-dsd = await SDMX["sdmx_dsd"](dataset_key="ECB-EXR")
-print(dsd.data)
-```
-
-```
-   position dimension_id   concept_name  codelist_size
-0         0         FREQ      Frequency              9
-1         1     CURRENCY       Currency            350
-2         2  CURRENCY_DE  Currency deno            350
-3         3     EXR_TYPE  Exchange rate             33
-4         4   EXR_SUFFIX  Series varia             15
-```
-
-```python
-# See valid codes for a dimension
-codes = await SDMX["sdmx_codelist"](dataset_key="ECB-EXR", dimension="CURRENCY")
-print(codes.data.head(5))
-```
+Each dataset has its own per-dataset series namespace following the
+template `sdmx_series_{agency}_{dataset_id}` (lowercased).
 
 ---
 
@@ -213,6 +211,8 @@ summary = await catalog.index_result(ecb_result, embed=False)
 print(f"Indexed: {summary.indexed}, Skipped: {summary.skipped}")
 ```
 
+(`SDMX` here still refers to `parsimony_sdmx.CONNECTORS` from Step 1.)
+
 ---
 
 ## Common Patterns
@@ -230,16 +230,15 @@ Connectors accept keyword arguments or a typed Pydantic model:
 await SDMX["sdmx_fetch"](dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A")
 
 # Pydantic model (for programmatic use)
-from parsimony.connectors.sdmx import SdmxFetchParams
+from parsimony_sdmx.connectors.fetch import SdmxFetchParams
 await SDMX["sdmx_fetch"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A"))
 ```
 
 ### Composing multiple sources
 
 ```python
-from parsimony import Connectors
-from parsimony.connectors.fred import CONNECTORS as FRED
-from parsimony.connectors.sdmx import CONNECTORS as SDMX
+from parsimony_fred import CONNECTORS as FRED
+from parsimony_sdmx import CONNECTORS as SDMX
 
 all_connectors = FRED.bind_deps(api_key="your-key") + SDMX
 result = await all_connectors["fred_fetch"](series_id="GDP")

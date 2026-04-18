@@ -127,7 +127,9 @@ show. Techniques:
   - `/v2/`, `/v3/` -- newer API versions that may not be documented yet
 - **SDMX discovery.** Even if the provider doesn't mention SDMX, try:
   `{base_url}/sdmx/v2.1/dataflow/all/all/latest`. If it responds with XML,
-  you've found an SDMX endpoint and can use the existing `sdmx.py` infrastructure.
+  you've found an SDMX endpoint and can hand the agency off to the
+  `parsimony-sdmx` plugin (install `parsimony-sdmx`; add the agency to its
+  `ALL_AGENCIES` enum if not already supported).
 - **robots.txt and sitemap.** `{base_url}/robots.txt` sometimes reveals API paths.
 
 **Verify documented endpoints actually work:**
@@ -278,7 +280,7 @@ Reference implementations:
 | `bls.py` | Optional API key, POST-based auth |
 | `fmp.py` | HTTP status → typed exception mapping |
 | `fmp_screener.py` | Concurrent enrichment with asyncio.Semaphore |
-| `sdmx.py` | Multi-step discovery (list → DSD → codelist → keys → fetch) |
+| `parsimony-sdmx` plugin | Multi-hop discovery via pre-built catalog bundles |
 | `sec_edgar.py` | Third-party SDK integration, duck-typed DataFrame coercion |
 | `alpha_vantage.py` | 200-with-errors, unified Literal-param connectors, mixed JSON/CSV, response key normalization |
 
@@ -1081,7 +1083,7 @@ agencies.
 
 **What makes a good Tier 2 source:**
 - A `/series`, `/datasets`, `/catalog`, or `/list` endpoint that returns IDs + titles
-- SDMX agencies (use `sdmx_list_datasets` + `sdmx_series_keys` -- already built)
+- SDMX agencies (install `parsimony-sdmx` and reuse the published `sdmx_datasets` + per-dataset series catalog bundles instead of rewriting discovery)
 - REST APIs with a bulk metadata endpoint
 
 **Implementation:** Write an `@enumerator` that calls the list endpoint and
@@ -1153,8 +1155,8 @@ series. Common with smaller central banks and national statistics offices.
 
 2. **SDMX discovery.** Some agencies support SDMX but don't advertise it.
    Try `https://{host}/sdmx/v2.1/dataflow/all/all/latest` -- if it responds,
-   you can use the existing `sdmx.py` infrastructure instead of building a
-   new connector.
+   install `parsimony-sdmx` and register the agency with its `ALL_AGENCIES`
+   enum instead of building a new connector module.
 
 3. **Scrape the catalog.** Write an `@enumerator` that fetches the HTML
    catalog pages, parses series IDs and titles. Use `httpx` + a lightweight
@@ -1303,8 +1305,10 @@ import sdmx
 print(sdmx.list_sources())
 ```
 
-If it is, the existing `parsimony/connectors/sdmx.py` handles it. If not,
-you may need to add the agency to `sdmx1` or implement SDMX XML parsing directly.
+If it is, install the `parsimony-sdmx` plugin and reuse its `sdmx_fetch`
+connector plus catalog bundles (register the agency in the plugin's
+`ALL_AGENCIES` enum if it isn't already). If not, you may need to add the
+agency to `sdmx1` or implement SDMX XML parsing directly.
 
 ### Bulk Files (CSV, Excel, ZIP)
 

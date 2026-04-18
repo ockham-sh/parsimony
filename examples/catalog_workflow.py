@@ -23,8 +23,9 @@ from __future__ import annotations
 import asyncio
 import os
 
+from parsimony_fred import enumerate_fred_release
+
 from parsimony import Catalog, SQLiteCatalogStore
-from parsimony.connectors.fred import enumerate_fred_release
 
 
 async def main() -> None:

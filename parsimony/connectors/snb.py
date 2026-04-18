@@ -15,6 +15,7 @@ from typing import Annotated
 import pandas as pd
 from pydantic import BaseModel, Field, field_validator
 
+from parsimony.bundles import CatalogSpec
 from parsimony.connector import Connectors, Namespace, connector, enumerator
 from parsimony.errors import EmptyDataError
 from parsimony.result import (
@@ -251,7 +252,11 @@ async def snb_fetch(params: SnbFetchParams) -> Result:
     )
 
 
-@enumerator(output=SNB_ENUMERATE_OUTPUT, tags=["macro", "ch"])
+@enumerator(
+    output=SNB_ENUMERATE_OUTPUT,
+    tags=["macro", "ch"],
+    catalog=CatalogSpec.static(namespace="snb"),
+)
 async def enumerate_snb(params: SnbEnumerateParams) -> pd.DataFrame:
     """Enumerate well-known SNB data cubes for catalog indexing.
 

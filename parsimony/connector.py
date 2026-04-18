@@ -21,7 +21,7 @@ __all__ = [
 import functools
 import inspect
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import Any, Union, get_type_hints
@@ -398,6 +398,7 @@ def connector(
     result_type: str = "dataframe",
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    catalog: Any = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate an async data connector.
 
@@ -420,7 +421,20 @@ def connector(
 
     The wrapped function must be ``async``. Dependencies (HTTP clients, API keys) are
     keyword-only after ``*`` and bound with :meth:`Connector.bind_deps`.
+
+    The ``catalog=`` kwarg is rejected here — only :func:`enumerator` may declare a
+    bundle catalog spec, since the wire format requires KEY+TITLE+METADATA shape.
     """
+    if catalog is not None:
+        # Encode the invariant in the type system (Dodds R3): only @enumerator
+        # accepts catalog=. @connector raises immediately so plugin authors
+        # don't drift toward "catalog on a fetch connector" patterns.
+        from parsimony.bundles.errors import BundleSpecError
+
+        raise BundleSpecError(
+            "catalog= is only valid on @enumerator, not @connector. "
+            "Move the spec onto the enumerator that produces the catalog rows.",
+        )
 
     def decorator(fn: Callable[..., Any]) -> Connector:
         if not inspect.iscoroutinefunction(fn):
@@ -536,6 +550,7 @@ def enumerator(
     params: type[BaseModel] | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    catalog: Any = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate an async **enumerator** — same as :func:`connector`, with a stricter ``output`` contract.
 
@@ -547,17 +562,47 @@ def enumerator(
     exactly one :attr:`~parsimony.result.ColumnRole.KEY` column, exactly one
     :attr:`~parsimony.result.ColumnRole.TITLE` column, and that KEY must set
     ``namespace=...`` for :meth:`~parsimony.catalog.catalog.Catalog.index_result`.
+
+    **Catalog publishing.** Pass ``catalog=`` to declare that this enumerator's output
+    should be packaged and published as an HF bundle. Accepts a typed
+    :class:`~parsimony.bundles.spec.CatalogSpec` instance::
+
+        @enumerator(
+            output=TREASURY_ENUMERATE_OUTPUT,
+            catalog=CatalogSpec.static(namespace="treasury"),
+        )
+        async def enumerate_treasury(params): ...
+
+    For dynamic plans (multiple namespaces), construct
+    ``CatalogSpec(plan=async_generator)`` directly. The spec is validated at
+    decorator import time (so plugin authors get fast feedback on malformed
+    declarations) and stored in ``properties["catalog"]`` for discovery by
+    ``parsimony.bundles``.
     """
 
     _validate_enumerator_output(output)
     merged_tags = ["enumerator", *(tags or [])]
+    merged_properties: dict[str, Any] = dict(properties or {})
+    if catalog is not None:
+        from parsimony.bundles.spec import from_decorator_kwargs
+
+        # The connector's __module__ — needed for the plan-provenance check
+        # (rejects cross-plugin plan substitution). Frame inspection: caller
+        # is the @enumerator(...) call site, which lives in the plugin's
+        # connector module.
+        frame = inspect.currentframe()
+        connector_module = frame.f_back.f_globals.get("__name__", "") if frame and frame.f_back else ""
+        merged_properties["catalog"] = from_decorator_kwargs(catalog, connector_module=connector_module)
+
+    # Bypass the @connector catalog= guard by calling its decorator factory directly
+    # without forwarding catalog= (we've already validated and inlined it into properties).
     return connector(
         name=name,
         description=description,
         params=params,
         output=output,
         tags=merged_tags,
-        properties=properties,
+        properties=merged_properties,
     )
 
 
@@ -608,7 +653,7 @@ class Connectors:
         """Pre-apply ``deps`` to every connector (same keys for each)."""
         return Connectors([c.bind_deps(**deps) for c in self._items])
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[Connector]:
         return iter(self._items)
 
     def __len__(self) -> int:

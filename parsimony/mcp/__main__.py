@@ -9,7 +9,7 @@ import asyncio
 
 import mcp.server.stdio
 
-from parsimony.connectors import build_connectors_from_env
+from parsimony.discovery import build_connectors_from_env
 from parsimony.mcp.server import create_server
 
 

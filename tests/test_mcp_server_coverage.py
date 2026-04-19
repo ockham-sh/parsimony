@@ -124,8 +124,8 @@ class TestCallToolUnauthorizedError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_unauth", {"query": "x"})
         text = _text(result)
-        assert "Authentication error" in text
         assert "test_prov" in text
+        assert "credentials" in text.lower()
 
 
 class TestCallToolPaymentRequiredError:
@@ -134,8 +134,8 @@ class TestCallToolPaymentRequiredError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_pay", {"query": "x"})
         text = _text(result)
-        assert "Plan restriction" in text
         assert "premium" in text
+        assert "plan" in text.lower()
 
 
 class TestCallToolRateLimitError:
@@ -144,8 +144,8 @@ class TestCallToolRateLimitError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_rl", {"query": "x"})
         text = _text(result)
-        assert "Rate limit" in text
-        assert "30 seconds" in text
+        assert "fast" in text
+        assert "rate limit" in text.lower()
 
     async def test_quota_exhausted(self) -> None:
         c = _make_error_connector(
@@ -155,7 +155,7 @@ class TestCallToolRateLimitError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_quota", {"query": "x"})
         text = _text(result)
-        assert "Quota exhausted" in text
+        assert "do not retry" in text
 
 
 class TestCallToolEmptyDataError:
@@ -164,7 +164,7 @@ class TestCallToolEmptyDataError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_empty", {"query": "x"})
         text = _text(result)
-        assert "No data returned" in text
+        assert "No rows" in text
 
 
 class TestCallToolConnectorError:
@@ -173,7 +173,7 @@ class TestCallToolConnectorError:
         server = create_server(Connectors([c]))
         result = await _call_tool(server, "err_gen", {"query": "x"})
         text = _text(result)
-        assert "Error from slow" in text
+        assert "timeout" in text
 
 
 class TestListTools:

@@ -1,7 +1,7 @@
 [project]
 name = "parsimony-core"
 version = "0.1.0a1"
-description = "Connector framework for financial data — search, fetch, and catalog series from FRED, SDMX, FMP, SEC Edgar, and more"
+description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
 readme = "README.md"
@@ -21,9 +21,8 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    # Mandatory kernel footprint — the freeze (DESIGN-distribution-model.md §5)
-    # restricts this list to: validation, data carriers, async HTTP, cache
-    # directory resolution. Heavy catalog deps live under [catalog].
+    # Mandatory kernel footprint — validation, data carriers, async HTTP,
+    # cache directory resolution. Heavy catalog deps live under [standard].
     "pydantic>=2.11.1,<3",
     "pandas>=2.3.0,<3",
     "pyarrow>=23.0.1",
@@ -33,20 +32,22 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# HF Parquet + FAISS catalog bundle runtime — moved out of mandatory deps so
-# `pip install parsimony-core` stays small. All callsites import these
-# lazily, so absence does not break kernel import.
-catalog = [
+# Canonical Catalog runtime: Parquet rows + FAISS vectors + BM25 keywords
+# with the sentence-transformers default embedder, plus the hf:// loader.
+# Stays optional so `pip install parsimony-core` never pulls torch.
+standard = [
     "faiss-cpu>=1.8.0",
     "rank-bm25>=0.2",
     "sentence-transformers>=3.0.0",
     "huggingface_hub>=0.25.0",
 ]
-# Legacy SQLite-vec + hosted embedding API path. Retained as an extra for
-# users who want local SQLite-based indexing instead of HF bundles.
-search = ["litellm>=1.59.0,<2", "sqlite-vec>=0.1.6"]
-# MCP server lives in the separate parsimony-mcp distribution.
-all = ["parsimony-core[catalog,search]"]
+# Hosted-API embedder via the litellm unified API (OpenAI, Gemini, Cohere,
+# Voyage, Bedrock).
+litellm = ["litellm>=1.59.0,<2"]
+# s3:// catalog URL support (read/write). Source handler is still a stub —
+# adding this extra does not yet enable the scheme.
+s3 = ["s3fs>=2024.0"]
+all = ["parsimony-core[standard,litellm,s3]"]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
@@ -55,9 +56,9 @@ dev = [
     "mypy>=1.10",
     "types-requests>=2.31",
     "pip-audit>=2.7",
-    # Dev pulls in the catalog extra so the full test suite exercises the HF
-    # bundle + FAISS + sentence-transformers code paths.
-    "parsimony-core[catalog]",
+    # Dev pulls in the standard extra so the full test suite exercises the
+    # FAISS + BM25 + sentence-transformers paths.
+    "parsimony-core[standard,litellm]",
 ]
 docs = ["mkdocs-material"]
 
@@ -111,11 +112,12 @@ markers = [
 
 [tool.coverage.run]
 omit = [
-    "parsimony/embeddings/__init__.py",
     # Requires a real HuggingFace-hosted model (torch + sentence-transformers)
-    # to exercise; tests use FakeEmbeddingProvider (tests/hf_bundle_helpers.py).
-    # Loading logic is covered by the live publish pipeline, not unit tests.
-    "parsimony/embeddings/sentence_transformers.py",
-    # Litellm path is an optional extra — integration-tested elsewhere.
-    "parsimony/embeddings/litellm.py",
+    # to exercise; unit tests use fake embedders. Loading logic is covered by
+    # the live publish pipeline, not unit tests.
+    "parsimony/_standard/embedder.py",
+    # s3 handler is a stub pending [s3] extra wiring.
+    "parsimony/_standard/sources/s3.py",
+    # hf handler hits Hugging Face Hub; covered by integration tests.
+    "parsimony/_standard/sources/hf.py",
 ]

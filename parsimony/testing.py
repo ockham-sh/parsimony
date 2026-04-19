@@ -8,17 +8,34 @@ blocking. The checks implemented here encode the contract documented in
 Each check is an independent callable registered in :data:`_CHECKS`. An
 author can opt out of a specific check by name via ``skip=[...]`` — useful
 for pragmatic edge cases, but every skip should be justified inline.
+
+Two entry points cover every caller:
+
+* :func:`assert_plugin_valid` — procedural. Used by the ``parsimony
+  conformance verify`` CLI and by scripts that want a single raising call.
+  Does not import :mod:`pytest`.
+* :class:`ProviderTestSuite` — pytest-native base class. Plugin test files
+  inherit it, set :attr:`~ProviderTestSuite.module` or
+  :attr:`~ProviderTestSuite.module_path`, and pytest discovers the inherited
+  ``test_*`` methods. :mod:`pytest` is imported lazily inside the methods
+  that need it so ``from parsimony.testing import ProviderTestSuite`` is
+  free from outside a test context.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from types import ModuleType
-from typing import Any
+from typing import Any, ClassVar
 
 from parsimony.connector import Connector, Connectors
 
-__all__ = ["ConformanceError", "assert_plugin_valid"]
+__all__ = [
+    "ConformanceError",
+    "ProviderTestSuite",
+    "assert_plugin_valid",
+    "iter_check_names",
+]
 
 
 # Tool-tagged connectors are exposed directly to LLMs via MCP; a short,
@@ -256,3 +273,117 @@ def iter_connectors(module: ModuleType) -> Iterable[Connector]:
     if not isinstance(connectors, Connectors):
         return iter(())
     return iter(connectors)
+
+
+# ---------------------------------------------------------------------------
+# ProviderTestSuite — pytest-native entry point
+# ---------------------------------------------------------------------------
+
+
+class ProviderTestSuite:
+    """Pytest base class for plugin conformance.
+
+    Subclass in a plugin's test file and set one of:
+
+    * :attr:`module` — the already-imported plugin module.
+    * :attr:`module_path` — the dotted import path of the plugin's
+      CONNECTORS-exporting module (resolved at test-collection time).
+
+    Pytest discovers the inherited ``test_*`` methods. Each method runs one
+    named check from :data:`_CHECKS`, so a failure pinpoints the specific
+    contract clause violated.
+
+    Optionally set :attr:`entry_point_name` to additionally verify the
+    plugin is installed under the ``parsimony.providers`` entry-point
+    group and resolves to the same module.
+
+    Example::
+
+        from parsimony.testing import ProviderTestSuite
+        import parsimony_fred
+
+        class TestFredConformance(ProviderTestSuite):
+            module = parsimony_fred
+            entry_point_name = "fred"
+
+    :mod:`pytest` is imported lazily inside methods that need it, so
+    ``from parsimony.testing import ProviderTestSuite`` never requires
+    pytest in production code.
+    """
+
+    #: The plugin module exporting ``CONNECTORS``. Set this OR :attr:`module_path`.
+    module: ClassVar[ModuleType | None] = None
+
+    #: Dotted import path to the plugin module. Set this OR :attr:`module`.
+    module_path: ClassVar[str | None] = None
+
+    #: Optional entry-point name. When set, :meth:`test_entry_point_resolves`
+    #: additionally verifies installation.
+    entry_point_name: ClassVar[str | None] = None
+
+    @classmethod
+    def _resolve_module(cls) -> ModuleType:
+        if cls.module is not None:
+            return cls.module
+        if cls.module_path is not None:
+            import importlib
+
+            return importlib.import_module(cls.module_path)
+        raise TypeError(
+            f"{cls.__name__} must set either `module = <module>` "
+            "or `module_path = 'package.submodule'`"
+        )
+
+    def test_connectors_exported(self) -> None:
+        _check_connectors_exported(self._resolve_module())
+
+    def test_descriptions_non_empty(self) -> None:
+        _check_descriptions_non_empty(self._resolve_module())
+
+    def test_tool_tag_description_length(self) -> None:
+        _check_tool_tag_description_length(self._resolve_module())
+
+    def test_env_vars_shape(self) -> None:
+        _check_env_vars_shape(self._resolve_module())
+
+    def test_env_vars_map_to_deps(self) -> None:
+        _check_env_vars_map_to_deps(self._resolve_module())
+
+    def test_name_env_var_collisions(self) -> None:
+        _check_name_env_var_collisions(self._resolve_module())
+
+    def test_provider_metadata_shape(self) -> None:
+        _check_provider_metadata_shape(self._resolve_module())
+
+    def test_entry_point_resolves(self) -> None:
+        """Verify the plugin is installed under ``parsimony.providers`` and
+        its entry point resolves to the module under test.
+
+        Skipped when :attr:`entry_point_name` is not set.
+        """
+        if self.entry_point_name is None:
+            import pytest
+
+            pytest.skip("entry_point_name not set; skipping installation check")
+        from parsimony.discovery import discovered_providers
+
+        expected = self._resolve_module()
+        providers = {p.name: p for p in discovered_providers()}
+        if self.entry_point_name not in providers:
+            raise ConformanceError(
+                "check_entry_point_registered",
+                (
+                    f"entry point {self.entry_point_name!r} not installed under "
+                    "the 'parsimony.providers' group; check your plugin's pyproject.toml"
+                ),
+            )
+        provider = providers[self.entry_point_name]
+        if provider.module is not expected:
+            raise ConformanceError(
+                "check_entry_point_matches",
+                (
+                    f"entry point {self.entry_point_name!r} resolves to "
+                    f"{provider.module_path!r}, but the suite is configured against "
+                    f"{expected.__name__!r}"
+                ),
+            )

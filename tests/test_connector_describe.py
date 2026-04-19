@@ -340,14 +340,13 @@ class TestConnectorsToLlm:
 
     def test_empty_collection_message(self) -> None:
         coll = Connectors([])
-        text = coll.to_llm()
-        assert "No connectors available." in text
+        assert coll.to_llm() == ""
 
     def test_empty_collection_with_header(self) -> None:
         coll = Connectors([])
         text = coll.to_llm(header="# HEADER", heading="Tools")
-        assert "No connectors available." in text
         assert "# HEADER" in text
+        assert "## Tools" not in text
 
     def test_connector_details_included(self) -> None:
         coll = Connectors([fred_search, bare_connector])

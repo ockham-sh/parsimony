@@ -753,13 +753,13 @@ class Connectors:
             Section heading for the list (``"Tools"`` for MCP,
             ``"Connectors"`` for a code-execution host, …).
         """
+        if not self._items and not header:
+            return ""
+
         parts: list[str] = []
         if header:
             parts.append(header)
-
-        if not self._items:
-            parts.append("No connectors available.\n")
-        else:
+        if self._items:
             parts.append(f"## {heading} ({len(self._items)})\n")
             for c in self._items:
                 parts.append(c.to_llm())

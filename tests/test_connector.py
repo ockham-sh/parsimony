@@ -611,8 +611,7 @@ class TestConnectorsToLlm:
 
     def test_empty_collection(self) -> None:
         c = Connectors([])
-        text = c.to_llm()
-        assert "No connectors available" in text
+        assert c.to_llm() == ""
 
     def test_single_connector_to_llm_in_output(self) -> None:
         c = _fake_connectors()

@@ -22,7 +22,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.errors import BundleError
 from parsimony.bundles.format import ENTRIES_PARQUET_SCHEMA
 from parsimony.catalog.models import SeriesEntry
 
@@ -87,7 +87,7 @@ def arrow_table_to_entries(
     row_ids = table.column("row_id").to_pylist()
     for i, rid in enumerate(row_ids):
         if rid != i:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"row_id at position {i} is {rid}, expected {i}; "
                 f"Parquet row_id must be dense 0..{len(row_ids) - 1} and match FAISS positions",
                 namespace=namespace,
@@ -114,7 +114,7 @@ def _hydrate_rows(table: pa.Table, *, namespace: str | None) -> list[SeriesEntry
     if namespace is not None:
         for i, ns in enumerate(namespaces):
             if ns != namespace:
-                raise BundleIntegrityError(
+                raise BundleError(
                     f"Row {i} has namespace={ns!r} but bundle namespace is {namespace!r}",
                     namespace=namespace,
                 )
@@ -147,10 +147,10 @@ def _validate_schema(table: pa.Table) -> None:
     actual = {f.name: f.type for f in table.schema}
     missing = set(expected) - set(actual)
     if missing:
-        raise BundleIntegrityError(f"Parquet table is missing required columns: {sorted(missing)}")
+        raise BundleError(f"Parquet table is missing required columns: {sorted(missing)}")
     for name, expected_type in expected.items():
         if actual[name] != expected_type:
-            raise BundleIntegrityError(f"Parquet column {name!r} has type {actual[name]!s}, expected {expected_type!s}")
+            raise BundleError(f"Parquet column {name!r} has type {actual[name]!s}, expected {expected_type!s}")
 
 
 def _json_default(value: Any) -> Any:

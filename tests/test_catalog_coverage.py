@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -79,19 +78,22 @@ def _make_entries(namespace: str = "fred", count: int = 3) -> list[SeriesEntry]:
 # ---------------------------------------------------------------------------
 
 
-class TestCRUDPassthroughs:
+class TestStorePassthroughs:
+    """The Catalog class no longer re-exports these store CRUD methods; callers use
+    ``catalog.store.*`` directly. These tests cover the store interface via that path."""
+
     @pytest.mark.asyncio
     async def test_list_namespaces(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
         await store.upsert(_make_entries("fred", 1))
         await store.upsert(_make_entries("fmp", 1))
-        ns = await catalog.list_namespaces()
+        ns = await catalog.store.list_namespaces()
         assert set(ns) == {"fred", "fmp"}
 
     @pytest.mark.asyncio
     async def test_list_entries(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
         entries = _make_entries("fred", 5)
         await store.upsert(entries)
-        results, total = await catalog.list_entries(namespace="fred", limit=3)
+        results, total = await catalog.store.list(namespace="fred", limit=3)
         assert len(results) <= 3
         assert total >= 3
 
@@ -99,27 +101,27 @@ class TestCRUDPassthroughs:
     async def test_get_entry(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
         entries = _make_entries("fred", 1)
         await store.upsert(entries)
-        entry = await catalog.get_entry("fred", "SER0")
+        entry = await catalog.store.get("fred", "SER0")
         assert entry is not None
         assert entry.code == "SER0"
 
     @pytest.mark.asyncio
     async def test_get_entry_missing(self, catalog: Catalog) -> None:
-        entry = await catalog.get_entry("fred", "NONEXISTENT")
+        entry = await catalog.store.get("fred", "NONEXISTENT")
         assert entry is None
 
     @pytest.mark.asyncio
     async def test_delete_entry(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
         await store.upsert(_make_entries("fred", 1))
-        await catalog.delete_entry("fred", "SER0")
-        entry = await catalog.get_entry("fred", "SER0")
+        await catalog.store.delete("fred", "SER0")
+        entry = await catalog.store.get("fred", "SER0")
         assert entry is None
 
     @pytest.mark.asyncio
     async def test_upsert_entries(self, catalog: Catalog) -> None:
         entries = _make_entries("fred", 2)
-        await catalog.upsert_entries(entries)
-        result = await catalog.get_entry("fred", "SER0")
+        await catalog.store.upsert(entries)
+        result = await catalog.store.get("fred", "SER0")
         assert result is not None
 
 
@@ -159,35 +161,64 @@ class TestSearchWithEmbeddings:
 
 
 class TestEnsureNamespace:
-    @pytest.mark.asyncio
-    async def test_already_populated_skips(self, catalog: Catalog) -> None:
-        catalog._populated.add("fred")
-        await catalog._ensure_namespace("fred")  # no-op, no error
+    """The dispatcher caches resolution outcomes (success AND confirmed miss)
+    so a cold namespace is not re-probed on every query. These tests assert
+    that behaviour via the observable side-effect (store calls), not via the
+    private cache attribute name."""
 
     @pytest.mark.asyncio
-    async def test_existing_namespace_marks_populated(self, catalog: Catalog, store: SQLiteCatalogStore) -> None:
+    async def test_resolved_namespace_not_reprobed(
+        self, catalog: Catalog, store: SQLiteCatalogStore, monkeypatch: Any
+    ) -> None:
         await store.upsert(_make_entries("fred", 1))
+        calls: list[None] = []
+        original = store.list_namespaces
+
+        async def counting_list_namespaces() -> list[str]:
+            calls.append(None)
+            return await original()
+
+        monkeypatch.setattr(store, "list_namespaces", counting_list_namespaces)
         await catalog._ensure_namespace("fred")
-        assert "fred" in catalog._populated
+        await catalog._ensure_namespace("fred")
+        await catalog._ensure_namespace("fred")
+        assert len(calls) == 1
 
     @pytest.mark.asyncio
-    async def test_falls_through_to_remote_then_enumerate(self, catalog: Catalog) -> None:
-        """When namespace not in store, tries store.try_load_remote, then enumerator."""
-        catalog._store.try_load_remote = AsyncMock(return_value=False)  # type: ignore[method-assign]
-        catalog._try_enumerate = AsyncMock(return_value=False)  # type: ignore[method-assign]
+    async def test_unknown_namespace_not_reprobed(
+        self, catalog: Catalog, store: SQLiteCatalogStore, monkeypatch: Any
+    ) -> None:
+        """Confirmed miss is cached — cold queries for the same namespace
+        don't re-probe the store on every call."""
+        calls: list[None] = []
+        original = store.list_namespaces
+
+        async def counting_list_namespaces() -> list[str]:
+            calls.append(None)
+            return await original()
+
+        monkeypatch.setattr(store, "list_namespaces", counting_list_namespaces)
         await catalog._ensure_namespace("unknown_ns")
-        catalog._store.try_load_remote.assert_awaited_once_with("unknown_ns")
-        catalog._try_enumerate.assert_awaited_once_with("unknown_ns")
-        assert "unknown_ns" in catalog._populated
+        await catalog._ensure_namespace("unknown_ns")
+        assert len(calls) == 1
 
     @pytest.mark.asyncio
-    async def test_remote_success_stops_early(self, catalog: Catalog) -> None:
-        catalog._store.try_load_remote = AsyncMock(return_value=True)  # type: ignore[method-assign]
-        catalog._try_enumerate = AsyncMock(return_value=False)  # type: ignore[method-assign]
-        await catalog._ensure_namespace("new_ns")
-        catalog._store.try_load_remote.assert_awaited_once()
-        catalog._try_enumerate.assert_not_awaited()
-        assert "new_ns" in catalog._populated
+    async def test_invalidate_forces_reprobe(
+        self, catalog: Catalog, store: SQLiteCatalogStore, monkeypatch: Any
+    ) -> None:
+        await store.upsert(_make_entries("fred", 1))
+        calls: list[None] = []
+        original = store.list_namespaces
+
+        async def counting_list_namespaces() -> list[str]:
+            calls.append(None)
+            return await original()
+
+        monkeypatch.setattr(store, "list_namespaces", counting_list_namespaces)
+        await catalog._ensure_namespace("fred")
+        catalog.invalidate("fred")
+        await catalog._ensure_namespace("fred")
+        assert len(calls) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -212,17 +243,21 @@ class _FakeConnector:
 
 class TestTryEnumerate:
     @pytest.mark.asyncio
-    async def test_no_connectors_returns_false(self, catalog: Catalog) -> None:
-        catalog._connectors = None
+    async def test_no_connectors_returns_false(
+        self, store: SQLiteCatalogStore, embeddings: MockEmbeddingProvider
+    ) -> None:
+        catalog = Catalog(store, embeddings=embeddings, connectors=None)
         result = await catalog._try_enumerate("fred")
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_no_matching_enumerator(self, catalog: Catalog) -> None:
+    async def test_no_matching_enumerator(
+        self, store: SQLiteCatalogStore, embeddings: MockEmbeddingProvider
+    ) -> None:
         col = Column(name="ticker", role=ColumnRole.KEY, namespace="fmp")
         title_col = Column(name="name", role=ColumnRole.TITLE)
         connector = _FakeConnector(output_config=_FakeOutputConfig(columns=[col, title_col]))
-        catalog._connectors = [connector]
+        catalog = Catalog(store, embeddings=embeddings, connectors=[connector])
         result = await catalog._try_enumerate("fred")
         assert result is False
 
@@ -258,20 +293,26 @@ class TestTryEnumerate:
         assert "fmp" in ns
 
     @pytest.mark.asyncio
-    async def test_enumerator_connector_error(self, catalog: Catalog) -> None:
-        async def _failing_call(params: Any) -> Any:
-            raise ConnectorError("boom", provider="test_provider")
+    async def test_enumerator_connector_error(
+        self, store: SQLiteCatalogStore, embeddings: MockEmbeddingProvider, caplog: Any
+    ) -> None:
+        """A connector raising a ConnectorError returns False and logs the provider name."""
+
+        @dataclass
+        class _FailingConnector:
+            output_config: _FakeOutputConfig
+            param_type: Any = None
+
+            async def __call__(self, params: Any) -> Any:
+                raise ConnectorError("boom", provider="test_provider")
 
         col = Column(name="code", role=ColumnRole.KEY, namespace="fred")
         title_col = Column(name="name", role=ColumnRole.TITLE)
-        connector = MagicMock()
-        connector.output_config = _FakeOutputConfig(columns=[col, title_col])
-        connector.param_type = None
-        connector.side_effect = _failing_call
-        connector.__call__ = _failing_call
+        connector = _FailingConnector(output_config=_FakeOutputConfig(columns=[col, title_col]))
+        catalog = Catalog(store, embeddings=embeddings, connectors=[connector])
 
-        catalog._connectors = [connector]
-        result = await catalog._try_enumerate("fred")
+        with caplog.at_level("WARNING"):
+            result = await catalog._try_enumerate("fred")
         assert result is False
 
 
@@ -365,15 +406,27 @@ class TestEmbedPending:
 
 class TestClose:
     @pytest.mark.asyncio
-    async def test_close_calls_store_close(self) -> None:
-        mock_store = AsyncMock(spec=SQLiteCatalogStore)
-        catalog = Catalog(mock_store)
+    async def test_close_invokes_store_close_when_available(self) -> None:
+        """Integration test: when the store exposes close(), Catalog.close forwards to it."""
+        store = SQLiteCatalogStore(":memory:", embedding_dim=3)
+        closed = {"count": 0}
+        original = store.close
+
+        async def counting_close() -> None:
+            closed["count"] += 1
+            await original()
+
+        store.close = counting_close  # type: ignore[method-assign]
+        catalog = Catalog(store)
         await catalog.close()
-        mock_store.close.assert_awaited_once()
+        assert closed["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_close_no_close_method(self) -> None:
-        store_without_close = MagicMock()
-        del store_without_close.close
-        catalog = Catalog(store_without_close)
-        await catalog.close()
+    async def test_close_without_store_close_method_is_noop(self) -> None:
+        """A store that doesn't implement close() must not crash Catalog.close."""
+
+        class _NoCloseStore:
+            pass
+
+        catalog = Catalog(_NoCloseStore())  # type: ignore[arg-type]
+        await catalog.close()  # no raise

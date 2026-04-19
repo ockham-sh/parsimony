@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import builtins
-from typing import Any
 
 import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from parsimony.catalog.catalog import Catalog, entries_from_table_result
+from parsimony.catalog.catalog import Catalog
 from parsimony.catalog.models import (
     EmbeddingProvider,
     IndexResult,
@@ -101,14 +100,6 @@ class _RecordingStore(CatalogStore):
         offset: int = 0,
     ) -> tuple[builtins.list[SeriesEntry], int]:
         return [], 0
-
-
-@pytest.mark.asyncio
-async def test_fred_enumerate_requires_bound_api_key() -> None:
-    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
-
-    with pytest.raises(TypeError, match="unbound dependencies"):
-        await enumerate_fred_release(FredEnumerateParams(release_id=1))
 
 
 @pytest.mark.asyncio
@@ -295,70 +286,6 @@ async def test_index_result_as_callback() -> None:
     assert len(by_code["A"].embedding) == 4
 
 
-@pytest.mark.asyncio
-async def test_fred_enumerate_connector_produces_entries(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_enumerate(http: Any, release_id: int, *, page_size: int):
-        assert release_id == 51
-        return [
-            {"id": "GDPC1", "title": "Real GDP", "notes": "Billions"},
-            {"id": "UNRATE", "title": "Unemployment Rate", "notes": None},
-        ]
-
-    monkeypatch.setattr(
-        "parsimony_fred._enumerate_release_series",
-        _fake_enumerate,
-    )
-
-    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
-
-    conn = enumerate_fred_release.bind_deps(api_key="dummy")
-    res = await conn(FredEnumerateParams(release_id=51))
-    entries = entries_from_table_result(res, extra_tags=["release_51"])
-
-    assert len(entries) == 2
-    ids = sorted(e.code for e in entries)
-    assert ids == ["GDPC1", "UNRATE"]
-    assert entries[0].title == "Real GDP"
-
-
-@pytest.mark.asyncio
-async def test_fred_enumerate_entries_have_metadata(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """METADATA columns must survive build_table_result and populate SeriesEntry.metadata."""
-
-    async def _fake_enumerate(http: Any, release_id: int, *, page_size: int) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": "GDPC1",
-                "title": "Real GDP",
-                "frequency_short": "Q",
-                "units_short": "Bil. of $",
-                "seasonal_adjustment_short": "SA",
-            },
-            {
-                "id": "UNRATE",
-                "title": "Unemployment Rate",
-                "frequency_short": "M",
-                "units_short": "%",
-                "seasonal_adjustment_short": "SA",
-            },
-        ]
-
-    monkeypatch.setattr(
-        "parsimony_fred._enumerate_release_series",
-        _fake_enumerate,
-    )
-
-    from parsimony_fred import FredEnumerateParams, enumerate_fred_release
-
-    conn = enumerate_fred_release.bind_deps(api_key="dummy")
-    res = await conn(FredEnumerateParams(release_id=51))
-    entries = entries_from_table_result(res)
-
-    by_code = {e.code: e for e in entries}
-    assert by_code["GDPC1"].metadata["frequency_short"] == "Q"
-    assert by_code["GDPC1"].metadata["units_short"] == "Bil. of $"
-    assert by_code["GDPC1"].metadata["release_id"] == 51
-    assert by_code["UNRATE"].metadata["frequency_short"] == "M"
-    assert by_code["UNRATE"].metadata["units_short"] == "%"
+# fred-specific enumerate tests moved to packages/fred/tests/ in the
+# parsimony-connectors monorepo; the kernel no longer depends on any
+# connector module and the tests would fail to import here.

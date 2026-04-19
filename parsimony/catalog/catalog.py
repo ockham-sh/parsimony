@@ -304,7 +304,11 @@ class Catalog:
         self._store = store
         self._embeddings = embeddings
         self._connectors = connectors
-        self._populated: set[str] = set()
+        # Namespaces we've already resolved (success OR confirmed miss).
+        # Confirmed misses are cached so a cold lookup doesn't re-probe on
+        # every search — but callers can clear an entry with invalidate()
+        # after publishing a new bundle or registering a new enumerator.
+        self._attempted: set[str] = set()
 
     @property
     def store(self) -> CatalogStore:
@@ -363,9 +367,9 @@ class Catalog:
     ) -> IndexResult:
         """Extract catalog rows from *table* and :meth:`ingest` them."""
         entries = entries_from_table_result(table, extra_tags=extra_tags)
-        if dry_run:
-            return await self._preview_ingest(entries, batch_size=batch_size, force=force)
-        return await self.ingest(entries, embed=embed, batch_size=batch_size, force=force)
+        return await self.ingest(
+            entries, embed=embed, batch_size=batch_size, force=force, dry_run=dry_run
+        )
 
     async def ingest(
         self,
@@ -374,9 +378,13 @@ class Catalog:
         embed: bool = True,
         batch_size: int = 100,
         force: bool = False,
+        dry_run: bool = False,
     ) -> IndexResult:
-        """Dedupe, optionally embed, and upsert entries in batches."""
-        if embed and self._embeddings is None:
+        """Dedupe, optionally embed, and upsert entries in batches.
+
+        With ``dry_run=True``, report counts without embedding or writing.
+        """
+        if embed and not dry_run and self._embeddings is None:
             raise RuntimeError(
                 "ingest(embed=True) requires an EmbeddingProvider; pass embeddings=... to Catalog, or use embed=False."
             )
@@ -396,15 +404,15 @@ class Catalog:
                 result.skipped += len(batch) - len(to_insert)
             if not to_insert:
                 continue
+            if dry_run:
+                result.indexed += len(to_insert)
+                continue
             if embed:
                 if self._embeddings is None:
                     raise RuntimeError("embed=True requires an EmbeddingProvider, but none was configured")
                 try:
                     out = await _embed_batch(self._embeddings, to_insert)
                 except httpx.TransportError as exc:
-                    # Retryable network blip — keep going, count as errors.
-                    # Programmer bugs (dim mismatch, misconfigured provider)
-                    # raise RuntimeError / ValueError and must propagate.
                     logger.warning("ingest embed network error: %s", exc)
                     result.errors += len(to_insert)
                     continue
@@ -416,30 +424,6 @@ class Catalog:
             except httpx.TransportError as exc:
                 logger.warning("ingest upsert network error: %s", exc)
                 result.errors += len(to_insert)
-        return result
-
-    async def _preview_ingest(
-        self,
-        entries: list[SeriesEntry],
-        *,
-        batch_size: int,
-        force: bool = False,
-    ) -> IndexResult:
-        """Count rows that would be inserted vs skipped (no writes, no embedding)."""
-        result = IndexResult()
-        result.total = len(entries)
-        if not entries:
-            return result
-        for start in range(0, len(entries), batch_size):
-            batch = entries[start : start + batch_size]
-            if force:
-                result.indexed += len(batch)
-                continue
-            keys = [(e.namespace, e.code) for e in batch]
-            existing = await self._store.exists(keys)
-            to_insert = [e for e in batch if (e.namespace, e.code) not in existing]
-            result.skipped += len(batch) - len(to_insert)
-            result.indexed += len(to_insert)
         return result
 
     # ------------------------------------------------------------------
@@ -465,76 +449,52 @@ class Catalog:
         return len(embedded)
 
     # ------------------------------------------------------------------
-    # CRUD pass-throughs
-    # ------------------------------------------------------------------
-
-    async def list_namespaces(self) -> list[str]:
-        return await self._store.list_namespaces()
-
-    async def list_entries(
-        self,
-        *,
-        namespace: str | None = None,
-        q: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> tuple[list[SeriesEntry], int]:
-        return await self._store.list(namespace=namespace, q=q, limit=limit, offset=offset)
-
-    async def get_entry(self, namespace: str, code: str) -> SeriesEntry | None:
-        return await self._store.get(namespace, code)
-
-    async def delete_entry(self, namespace: str, code: str) -> None:
-        await self._store.delete(namespace, code)
-
-    async def upsert_entries(self, entries: list[SeriesEntry]) -> None:
-        await self._store.upsert(entries)
-
-    async def refresh(self, namespace: str) -> Any:
-        """Force a store-side refresh of *namespace* (stores that support it).
-
-        Returns whatever the store's ``refresh`` returned (e.g.,
-        :class:`~parsimony.stores.hf_bundle.RefreshResult`). Raises
-        ``NotImplementedError`` for stores that do not support refresh.
-        """
-        refresh = getattr(self._store, "refresh", None)
-        if refresh is None:
-            raise NotImplementedError(f"{type(self._store).__name__} does not support refresh")
-        result = await refresh(normalize_code(namespace))
-        self._populated.discard(normalize_code(namespace))
-        return result
-
-    # ------------------------------------------------------------------
-    # Lazy namespace population (Task 10 — thin dispatcher)
+    # Lazy namespace population (thin dispatcher)
     # ------------------------------------------------------------------
 
     async def _ensure_namespace(self, namespace: str) -> None:
-        """Populate *namespace* if not already known to the store.
+        """Populate *namespace* if not already resolved.
 
-        Three-step dispatcher: already-populated guard, store remote load,
+        Three-step dispatcher: already-attempted guard, store remote load,
         live-enumerator fallback. All remote-fetch logic lives inside the
         store — this method only sequences the fallbacks.
+
+        Confirmed misses are cached so the same cold namespace is not
+        re-probed on every query. Use :meth:`invalidate` to drop the cache
+        entry after publishing a new bundle or registering a new enumerator.
         """
         ns = normalize_code(namespace)
-        if ns in self._populated:
+        if ns in self._attempted:
             return
 
         existing = await self._store.list_namespaces()
         if ns in existing:
-            self._populated.add(ns)
+            self._attempted.add(ns)
             return
 
         if await self._store.try_load_remote(ns):
-            self._populated.add(ns)
+            self._attempted.add(ns)
             return
 
         if await self._try_enumerate(ns):
-            self._populated.add(ns)
+            self._attempted.add(ns)
             return
 
-        # Mark as attempted even on miss so we don't retry every call.
-        self._populated.add(ns)
+        # Confirmed miss — cache so cold queries don't re-probe.
+        self._attempted.add(ns)
         logger.debug("Namespace %r not available from remote or enumerator", ns)
+
+    def invalidate(self, namespace: str | None = None) -> None:
+        """Drop cached resolution(s) so the next lookup re-probes.
+
+        Pass ``None`` to clear the full cache (e.g. after bulk publishing),
+        or a namespace string to clear only that entry. Normalisation matches
+        :meth:`_ensure_namespace`'s lookup key.
+        """
+        if namespace is None:
+            self._attempted.clear()
+            return
+        self._attempted.discard(normalize_code(namespace))
 
     async def _try_enumerate(self, namespace: str) -> bool:
         """Find and run the enumerator for *namespace* from the connectors.

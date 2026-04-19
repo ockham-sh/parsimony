@@ -1,4 +1,4 @@
-"""Tests for DataStore, load_result, and InMemoryDataStore."""
+"""Tests for DataStore and load_result."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from parsimony.result import (
     SemanticTableResult,
 )
 from parsimony.stores.data_store import DataStore, LoadResult, _data_from_table_result
-from parsimony.stores.memory_data import InMemoryDataStore
 
 
 class _Params(BaseModel):
@@ -87,7 +86,7 @@ def test_data_from_table_result_requires_key_namespace() -> None:
 
 @pytest.mark.asyncio
 async def test_load_result_skips_existing_keys() -> None:
-    store = InMemoryDataStore()
+    store = DataStore()
     await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = SemanticTableResult(
@@ -107,7 +106,7 @@ async def test_load_result_skips_existing_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_load_result_force_upserts_existing() -> None:
-    store = InMemoryDataStore()
+    store = DataStore()
     await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = SemanticTableResult(
@@ -125,7 +124,7 @@ async def test_load_result_force_upserts_existing() -> None:
 
 @pytest.mark.asyncio
 async def test_load_result_as_callback() -> None:
-    store = InMemoryDataStore()
+    store = DataStore()
     wired = demo_loader.with_callback(store.load_result)
     await wired(q="x")
     df = await store.get("test_ns", "A")
@@ -136,7 +135,7 @@ async def test_load_result_as_callback() -> None:
 
 @pytest.mark.asyncio
 async def test_load_result_via_connectors_with_callback() -> None:
-    store = InMemoryDataStore()
+    store = DataStore()
     c = Connectors([demo_loader.with_callback(store.load_result)])
     await c["demo_loader"](q="x")
     df = await store.get("test_ns", "A")
@@ -144,8 +143,8 @@ async def test_load_result_via_connectors_with_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_in_memory_data_store_crud() -> None:
-    store = InMemoryDataStore()
+async def test_data_store_crud() -> None:
+    store = DataStore()
     df = pd.DataFrame({"x": [1, 2]})
     await store.upsert("ns", "c1", df)
     assert await store.exists([("ns", "c1")]) == {("ns", "c1")}
@@ -154,11 +153,6 @@ async def test_in_memory_data_store_crud() -> None:
     pd.testing.assert_frame_equal(got.reset_index(drop=True), df.reset_index(drop=True))
     await store.delete("ns", "c1")
     assert await store.get("ns", "c1") is None
-
-
-def test_in_memory_data_store_is_data_store() -> None:
-    store = InMemoryDataStore()
-    assert isinstance(store, DataStore)
 
 
 def test_load_result_model() -> None:

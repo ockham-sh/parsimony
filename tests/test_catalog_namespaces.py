@@ -63,4 +63,4 @@ async def test_catalog_list_namespaces() -> None:
     store = SQLiteCatalogStore(":memory:")
     await store.upsert([SeriesEntry(namespace="m", code="x", title="t")])
     cat = Catalog(store, embeddings=None)
-    assert await cat.list_namespaces() == ["m"]
+    assert await cat.store.list_namespaces() == ["m"]

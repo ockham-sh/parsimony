@@ -1,14 +1,22 @@
-"""DataStore: persistence for observation tables keyed by (namespace, code)."""
+"""InMemoryDataStore: observation tables keyed by (namespace, code).
+
+Single concrete implementation today, hence the explicit name. When a
+second implementation lands (SQLite, Parquet, …), extract a ``DataStore``
+Protocol from the public method set — Python's structural typing keeps
+that cheap and lets the Protocol reclaim the generic name.
+
+The ``DataStore`` alias below is kept for one cleanup cycle so downstream
+plugins importing ``from parsimony import DataStore`` keep working.
+"""
 
 from __future__ import annotations
 
 import logging
-from abc import ABC, abstractmethod
 
 import pandas as pd
 from pydantic import BaseModel
 
-from parsimony.catalog.models import normalize_code, normalize_entity_code
+from parsimony.catalog.models import catalog_key, normalize_code, normalize_entity_code
 from parsimony.result import ColumnRole, SemanticTableResult
 
 logger = logging.getLogger(__name__)
@@ -67,24 +75,38 @@ def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, 
     return out
 
 
-class DataStore(ABC):
-    """Persistence for observation data, keyed by (namespace, code)."""
+class InMemoryDataStore:
+    """Process-local observation store: dict-backed (namespace, code) → DataFrame."""
 
-    @abstractmethod
+    def __init__(self) -> None:
+        self._rows: dict[tuple[str, str], pd.DataFrame] = {}
+
     async def upsert(self, namespace: str, code: str, df: pd.DataFrame) -> None:
         """Insert or replace observation data for one entity."""
+        k = catalog_key(namespace, code)
+        self._rows[k] = df.copy()
 
-    @abstractmethod
     async def get(self, namespace: str, code: str) -> pd.DataFrame | None:
         """Retrieve stored observations, or None if not loaded."""
+        k = catalog_key(namespace, code)
+        stored = self._rows.get(k)
+        if stored is None:
+            return None
+        return stored.copy()
 
-    @abstractmethod
     async def delete(self, namespace: str, code: str) -> None:
         """Remove stored observations for one entity."""
+        k = catalog_key(namespace, code)
+        self._rows.pop(k, None)
 
-    @abstractmethod
     async def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
         """Return the subset of (namespace, code) pairs that have stored data."""
+        out: set[tuple[str, str]] = set()
+        for ns, c in keys:
+            k = catalog_key(ns, c)
+            if k in self._rows:
+                out.add(k)
+        return out
 
     async def load_result(
         self,
@@ -118,6 +140,12 @@ class DataStore(ABC):
                 await self.upsert(ns, code, sub_df)
                 result.loaded += 1
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
-                logger.warning("DataStore upsert failed for (%s, %s): %s", ns, code, exc)
+                logger.warning("InMemoryDataStore upsert failed for (%s, %s): %s", ns, code, exc)
                 result.errors += 1
         return result
+
+
+# Transitional alias. When a second implementation arrives, replace this
+# line with a `DataStore` Protocol extracted from `InMemoryDataStore`'s
+# public methods.
+DataStore = InMemoryDataStore

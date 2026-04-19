@@ -12,11 +12,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from parsimony.bundles.errors import (
-    BundleIntegrityError,
-    BundleNotFoundError,
-    BundleTooLargeError,
-)
+from parsimony.bundles.errors import BundleError, BundleNotFoundError
 from parsimony.bundles.format import (
     BUNDLE_FILENAMES,
     ENTRIES_FILENAME,
@@ -53,7 +49,7 @@ async def _remote_size_check(
 
     Calls ``HfApi.repo_info(files_metadata=True)`` and inspects each bundle
     file's reported size. A file over the cap raises
-    :class:`BundleTooLargeError` so :func:`_download_snapshot` is never
+    :class:`BundleError` so :func:`_download_snapshot` is never
     invoked. This is the **only** place that can stop a 10 TB-index DoS —
     the post-download check inside ``_load_from_dir`` runs after disk write.
     """
@@ -72,16 +68,13 @@ async def _remote_size_check(
         except HfHubHTTPError as exc:
             logger.debug("remote_size_check http_error repo=%s exc=%s", repo_id, exc)
             return None
-        except Exception as exc:
-            logger.debug("remote_size_check error repo=%s exc=%s", repo_id, exc)
-            return None
 
     try:
         async with asyncio.timeout(timeout_s):
             info = await asyncio.to_thread(_call)
     except TimeoutError:
-        # Soft-fail on the metadata probe: the post-write SHA + size checks
-        # in _load_from_dir are still authoritative.
+        # The post-write size checks in _load_from_dir remain authoritative,
+        # so a soft-fail here is acceptable for a pre-flight probe only.
         logger.warning("remote_size_check timeout repo=%s revision=%s", repo_id, revision)
         return
 
@@ -95,12 +88,10 @@ async def _remote_size_check(
         if name in _BUNDLE_FILE_CAPS and isinstance(size, int):
             cap = _BUNDLE_FILE_CAPS[name]
             if size > cap:
-                raise BundleTooLargeError(
+                raise BundleError(
                     f"remote {name} reports size {size} bytes, exceeds cap {cap} bytes",
                     namespace=namespace,
                     resource=f"{repo_id}@{revision}",
-                    actual_bytes=size,
-                    cap_bytes=cap,
                 )
 
 
@@ -115,9 +106,6 @@ async def _head_check(*, repo_id: str, timeout_s: float) -> str | None:
             info = api.repo_info(repo_id=repo_id, repo_type="dataset", files_metadata=False)
         except HfHubHTTPError as exc:
             logger.debug("head_check http_error repo=%s exc=%s", repo_id, exc)
-            return None
-        except Exception as exc:
-            logger.debug("head_check error repo=%s exc=%s", repo_id, exc)
             return None
         sha = getattr(info, "sha", None)
         if not isinstance(sha, str) or not _SHA40_RE.match(sha):
@@ -178,7 +166,7 @@ async def _download_snapshot(
         async with asyncio.timeout(_SNAPSHOT_TIMEOUT_S):
             downloaded = await asyncio.to_thread(_call)
     except TimeoutError as exc:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Snapshot download exceeded {_SNAPSHOT_TIMEOUT_S}s",
             namespace=namespace,
             resource=repo_id,
@@ -202,7 +190,7 @@ async def _download_snapshot(
             resource=repo_id,
         ) from exc
     except Exception as exc:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"snapshot_download failed for {repo_id!r}@{revision}: {exc}",
             namespace=namespace,
             resource=repo_id,
@@ -224,13 +212,13 @@ async def _download_snapshot(
         try:
             path.relative_to(cache_base_resolved)
         except ValueError as exc:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"Downloaded file {name!r} resolved outside cache dir: {path}",
                 namespace=namespace,
                 resource=str(path),
             ) from exc
         if not path.is_file():
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"Required file {name!r} missing from snapshot",
                 namespace=namespace,
                 resource=repo_id,
@@ -239,7 +227,7 @@ async def _download_snapshot(
     # Reject any extra files.
     extras = [p.name for p in target_dir.iterdir() if p.is_file() and p.name not in BUNDLE_FILENAMES]
     if extras:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Unexpected files in snapshot: {extras}",
             namespace=namespace,
             resource=repo_id,

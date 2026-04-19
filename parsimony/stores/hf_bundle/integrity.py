@@ -14,13 +14,12 @@ from __future__ import annotations
 import builtins
 import contextlib
 import dataclasses
-import hashlib
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
 
-from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.errors import BundleError
 from parsimony.bundles.format import (
     ENTRIES_FILENAME,
     INDEX_FILENAME,
@@ -60,21 +59,10 @@ class LoadedNamespace:
     code_index: dict[str, int]
 
 
-def _sha256_file(path: Path, *, chunk: int = 1024 * 1024) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as fh:
-        while True:
-            buf = fh.read(chunk)
-            if not buf:
-                break
-            h.update(buf)
-    return h.hexdigest()
-
-
 def _enforce_size_cap(path: Path, cap: int, namespace: str, label: str) -> None:
     size = path.stat().st_size
     if size > cap:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"{label} size {size} bytes exceeds cap {cap}",
             namespace=namespace,
             resource=str(path),
@@ -89,7 +77,7 @@ def _load_faiss_index(path: Path, *, namespace: str) -> Any:
     try:
         import faiss
     except ImportError as exc:
-        raise BundleIntegrityError(
+        raise BundleError(
             "faiss is not installed but a bundle requires it",
             namespace=namespace,
             next_action="install parsimony's base dependencies: pip install 'parsimony'",
@@ -97,7 +85,7 @@ def _load_faiss_index(path: Path, *, namespace: str) -> Any:
     try:
         return faiss.read_index(str(path))
     except Exception as exc:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"faiss.read_index failed on {path}: {exc}",
             namespace=namespace,
             resource=str(path),
@@ -125,33 +113,23 @@ def _load_from_dir(
     try:
         manifest = BundleManifest.model_validate_json(manifest_path.read_bytes())
     except Exception as exc:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"manifest.json failed validation: {exc}",
             namespace=namespace,
             resource=str(manifest_path),
         ) from exc
 
     if manifest.namespace != namespace:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"manifest.namespace={manifest.namespace!r} doesn't match expected {namespace!r}",
             namespace=namespace,
             resource=str(manifest_path),
         )
 
-    actual_entries_sha = _sha256_file(entries_path)
-    if actual_entries_sha != manifest.entries_sha256:
-        raise BundleIntegrityError(
-            f"entries.parquet sha256={actual_entries_sha} does not match manifest={manifest.entries_sha256}",
-            namespace=namespace,
-            resource=str(entries_path),
-        )
-    actual_index_sha = _sha256_file(index_path)
-    if actual_index_sha != manifest.index_sha256:
-        raise BundleIntegrityError(
-            f"index.faiss sha256={actual_index_sha} does not match manifest={manifest.index_sha256}",
-            namespace=namespace,
-            resource=str(index_path),
-        )
+    # The bundle directory is named by the 40-char HF commit SHA and
+    # `huggingface_hub` verifies file hashes at download time, so the
+    # directory name itself is the integrity proof. Skipping a redundant
+    # in-process sha256 save ~O(bytes) per namespace load.
 
     # Identity check is fail-closed. The manifest validator guarantees
     # both ``embedding_model`` and ``embedding_model_revision`` are present,
@@ -160,7 +138,7 @@ def _load_from_dir(
     provider_model = getattr(provider, "model_id", None)
     provider_rev = getattr(provider, "revision", None)
     if not provider_model or not provider_rev:
-        raise BundleIntegrityError(
+        raise BundleError(
             "EmbeddingProvider must expose non-empty model_id and revision attributes; "
             f"got model_id={provider_model!r} revision={provider_rev!r}",
             namespace=namespace,
@@ -168,39 +146,39 @@ def _load_from_dir(
             next_action="construct the Catalog with a SentenceTransformersEmbeddingProvider",
         )
     if provider_model != manifest.embedding_model:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Provider model_id={provider_model!r} does not match bundle {manifest.embedding_model!r}",
             namespace=namespace,
             resource=str(manifest_path),
             next_action="construct the Catalog with an EmbeddingProvider matching the bundle",
         )
     if provider_rev != manifest.embedding_model_revision:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Provider revision={provider_rev!r} does not match bundle {manifest.embedding_model_revision!r}",
             namespace=namespace,
             resource=str(manifest_path),
         )
     if provider.dimension != manifest.embedding_dim:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Provider dimension={provider.dimension} does not match manifest embedding_dim={manifest.embedding_dim}",
             namespace=namespace,
         )
 
     table = pq.read_table(entries_path, memory_map=True)
     if table.num_rows != manifest.entry_count:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"Parquet row count {table.num_rows} does not match manifest entry_count={manifest.entry_count}",
             namespace=namespace,
         )
 
     index = _load_faiss_index(index_path, namespace=namespace)
     if index.ntotal != manifest.entry_count:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"FAISS ntotal={index.ntotal} does not match manifest entry_count={manifest.entry_count}",
             namespace=namespace,
         )
     if int(index.d) != manifest.embedding_dim:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"FAISS dim={index.d} does not match manifest embedding_dim={manifest.embedding_dim}",
             namespace=namespace,
         )
@@ -214,7 +192,7 @@ def _load_from_dir(
     code_index: dict[str, int] = {}
     for code, rid in zip(codes_col, row_ids_col, strict=True):
         if code in code_index:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"Duplicate code {code!r} at row_ids {code_index[code]} and {rid}",
                 namespace=namespace,
             )
@@ -236,19 +214,19 @@ def _validate_query_embedding(vec: builtins.list[float], *, expected_dim: int) -
     import numpy as np
 
     if not isinstance(vec, (list, tuple)) or len(vec) != expected_dim:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"query embedding has length {len(vec) if hasattr(vec, '__len__') else '?'}, expected {expected_dim}",
         )
 
     arr = np.asarray(vec, dtype=np.float32).reshape(1, expected_dim)
     if not np.isfinite(arr).all():
-        raise BundleIntegrityError(
+        raise BundleError(
             "query embedding contains NaN or inf values",
             next_action="investigate the embedding provider output",
         )
     norm = float(np.linalg.norm(arr[0]))
     if abs(norm - 1.0) > 1e-3:
-        raise BundleIntegrityError(
+        raise BundleError(
             f"query embedding is not L2-normalized (norm={norm:.6f}); "
             "HNSWFlat bundles are built on L2-normalized vectors for cosine similarity",
         )

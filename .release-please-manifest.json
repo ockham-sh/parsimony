@@ -1,0 +1,9 @@
+{
+  "packages/parsimony": "0.1.0a1",
+  "packages/parsimony-sdmx": "0.1.0a1",
+  "packages/parsimony-edgar": "0.1.0a1",
+  "packages/parsimony-financial-reports": "0.1.0a1",
+  "packages/parsimony-mcp": "0.1.0a1",
+  "packages/parsimony-plugin-tests": "0.1.0a1",
+  "packages/parsimony-starter": "0.1.0a1"
+}

@@ -70,9 +70,9 @@ connectors = build_connectors_from_env()
 You can also bind keys manually on individual connectors:
 
 ```python
-from parsimony.connectors.fred import fred_fetch
+from parsimony.connectors.fred import fred
 
-bound = fred_fetch.bind_deps(api_key="your-key")
+bound = fred.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")
 ```
 
@@ -100,7 +100,7 @@ Wrap your async code in `asyncio.run()`:
 import asyncio
 
 async def main():
-    result = await connectors["fred_fetch"](series_id="GDP")
+    result = await connectors["fred"](series_id="GDP")
     print(result.df.tail())
 
 asyncio.run(main())
@@ -111,7 +111,7 @@ asyncio.run(main())
 Jupyter notebooks already run an event loop. Use `await` directly in a cell:
 
 ```python
-result = await connectors["fred_fetch"](series_id="GDP")
+result = await connectors["fred"](series_id="GDP")
 result.df.tail()
 ```
 
@@ -134,14 +134,14 @@ nest_asyncio.apply()
 
 ## Common Errors
 
-### `TypeError: Connector 'fred_fetch' has unbound dependencies`
+### `TypeError: Connector 'fred' has unbound dependencies`
 
 You called a connector that requires API keys without binding them first. Call `bind_deps()`:
 
 ```python
-from parsimony.connectors.fred import fred_fetch
+from parsimony.connectors.fred import fred
 
-bound = fred_fetch.bind_deps(api_key="your-key")
+bound = fred.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")
 ```
 

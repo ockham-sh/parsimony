@@ -126,7 +126,7 @@ async def main():
     connectors = build_connectors_from_env()
 
     # Fetch US GDP data from FRED using keyword arguments
-    result = await connectors["fred_fetch"](series_id="GDP")
+    result = await connectors["fred"](series_id="GDP")
 
     print(result.data.tail())
     print(result.provenance)
@@ -157,7 +157,7 @@ A `Connector` is an async function wrapped with metadata: a name, description, P
 
 ### Connectors (the collection)
 
-`Connectors` is an immutable collection of `Connector` instances. Look up by name with `connectors["fred_fetch"]`, compose with `+`, filter with `.filter(tags=["macro"])`, and attach hooks with `.with_callback()`.
+`Connectors` is an immutable collection of `Connector` instances. Look up by name with `connectors["fred"]`, compose with `+`, filter with `.filter(tags=["macro"])`, and attach hooks with `.with_callback()`.
 
 ### Results
 
@@ -192,7 +192,7 @@ asyncio.run(search_fred())
 async def fetch_unemployment():
     connectors = build_connectors_from_env()
 
-    result = await connectors["fred_fetch"](
+    result = await connectors["fred"](
         series_id="UNRATE",
         observation_start="2020-01-01",
         observation_end="2024-12-31",
@@ -237,7 +237,7 @@ async def sdmx_examples():
     print(dsd.data)
 
     # Fetch daily USD/EUR spot rate observations
-    rates = await connectors["sdmx_fetch"](
+    rates = await connectors["sdmx"](
         dataset_key="ECB-EXR",
         series_key="D.USD.EUR.SP00.A",
         start_period="2023-01-01",
@@ -306,16 +306,16 @@ The catalog lets you index discovered series and search them by text or semantic
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 from parsimony.connectors import build_connectors_from_env
 
 async def catalog_example():
     connectors = build_connectors_from_env()
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    catalog = Catalog("fred")
 
     # Enumerate all series in a FRED release and index them
     result = await connectors["enumerate_fred_release"](release_id=10)
-    index_summary = await catalog.index_result(result, embed=False)
+    index_summary = await catalog.index_result(result)
 
     print(f"Indexed {index_summary.indexed} series, skipped {index_summary.skipped}")
 
@@ -330,33 +330,22 @@ asyncio.run(catalog_example())
 ### Using the `dry_run` option
 
 ```python
-# Preview what would be indexed without writing to the store
-summary = await catalog.index_result(result, embed=False, dry_run=True)
+# Preview what would be indexed without writing
+summary = await catalog.index_result(result, dry_run=True)
 print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 ```
 
-### Semantic search with embeddings
+### Hybrid search (BM25 + FAISS + RRF)
 
-Semantic search requires the `[search]` extra and a LiteLLM-compatible embedding model.
+`parsimony.Catalog` always runs hybrid retrieval — BM25 over titles/metadata, vector search via FAISS, fused with Reciprocal Rank Fusion. The embedder is owned by the catalog (default: `BAAI/bge-small-en-v1.5`), so index-time and query-time embeddings always match.
 
 ```python
-from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
+from parsimony import Catalog
+from parsimony import SentenceTransformerEmbedder
 
-async def semantic_search():
-    provider = LiteLLMEmbeddingProvider(
-        model="gemini/text-embedding-004",
-        dimension=768,
-    )
-    catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
-
-    # Index some results (embeddings are computed during indexing)
-    result = await connectors["enumerate_fred_release"](release_id=10)
-    await catalog.index_result(result, embed=True)
-
-    # Search using semantic similarity
-    matches = await catalog.search("jobs market labor", limit=5)
-    for match in matches:
-        print(f"  {match.title}")
+# Override the default embedder
+catalog = Catalog("fred", embedder=SentenceTransformerEmbedder(model="BAAI/bge-base-en-v1.5"))
+matches = await catalog.search("jobs market labor", limit=5)
 ```
 
 ### Listing and retrieving catalog entries
@@ -366,12 +355,29 @@ async def semantic_search():
 namespaces = await catalog.list_namespaces()
 
 # Paginate through entries in a namespace
-entries, total = await catalog.list_entries(namespace="fred", limit=50, offset=0)
+entries, total = await catalog.list(namespace="fred", limit=50, offset=0)
 
 # Retrieve a specific entry
-entry = await catalog.get_entry(namespace="fred", code="UNRATE")
+entry = await catalog.get(namespace="fred", code="UNRATE")
 if entry:
     print(entry.title)
+```
+
+### Distributing a catalog
+
+The standard catalog serializes to a three-file directory snapshot
+(`meta.json`, `entries.parquet`, `embeddings.faiss`) and supports
+URL-based load/push:
+
+```python
+# Save locally
+await catalog.push("file:///data/catalogs/fred")
+
+# Publish to Hugging Face Hub (requires HF_TOKEN)
+await catalog.push("hf://my-org/fred-catalog")
+
+# Pull a published catalog elsewhere
+catalog = await Catalog.from_url("hf://my-org/fred-catalog")
 ```
 
 ---
@@ -460,16 +466,16 @@ all_connectors = build_connectors_from_env() + Connectors([bound])
 Callbacks let you react to every result produced by a connector, for example to index into a catalog or emit a metric:
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore, SemanticTableResult
+from parsimony import Catalog, SemanticTableResult
 
-catalog = Catalog(SQLiteCatalogStore(":memory:"))
+catalog = Catalog("fred")
 
 async def auto_index(result):
     if isinstance(result, SemanticTableResult):
         await catalog.index_result(result, embed=False)
 
 # Attach callback to a single connector
-logged_connector = connectors["fred_fetch"].with_callback(auto_index)
+logged_connector = connectors["fred"].with_callback(auto_index)
 
 # Attach callback to all connectors in a bundle
 logged_bundle = connectors.with_callback(auto_index)
@@ -482,7 +488,7 @@ logged_bundle = connectors.with_callback(auto_index)
 ### Accessing the DataFrame and provenance
 
 ```python
-result = await connectors["fred_fetch"](series_id="GDP")
+result = await connectors["fred"](series_id="GDP")
 
 df = result.data           # pandas DataFrame
 prov = result.provenance   # Provenance(source, params, fetched_at, ...)
@@ -582,7 +588,7 @@ from parsimony.connectors import build_connectors_from_env
 
 async def main():
     connectors = build_connectors_from_env()
-    result = await connectors["fred_fetch"](series_id="CPIAUCSL")
+    result = await connectors["fred"](series_id="CPIAUCSL")
     print(result.data.tail())
 
 asyncio.run(main())
@@ -592,7 +598,7 @@ In a Jupyter notebook, use `await` directly (notebooks run an event loop):
 
 ```python
 connectors = build_connectors_from_env()
-result = await connectors["fred_fetch"](series_id="CPIAUCSL")
+result = await connectors["fred"](series_id="CPIAUCSL")
 result.data.tail()
 ```
 
@@ -602,11 +608,11 @@ Both forms are accepted:
 
 ```python
 # Keyword arguments (validated internally by Pydantic)
-result = await connectors["fred_fetch"](series_id="GDP")
+result = await connectors["fred"](series_id="GDP")
 
 # Pre-built Pydantic model
 from parsimony.connectors.fred import FredFetchParams
-result = await connectors["fred_fetch"](FredFetchParams(series_id="GDP"))
+result = await connectors["fred"](FredFetchParams(series_id="GDP"))
 ```
 
 Note: raw `dict` is **not** accepted. Use keyword arguments or a typed model.
@@ -614,13 +620,13 @@ Note: raw `dict` is **not** accepted. Use keyword arguments or a typed model.
 ### Pattern 3: Bulk catalog indexing from an enumerator
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 
-catalog = Catalog(SQLiteCatalogStore(":memory:"))
+catalog = Catalog("fred")
 
 # Enumerate and index
 result = await connectors["enumerate_fred_release"](release_id=10)
-summary = await catalog.index_result(result, embed=False)
+summary = await catalog.index_result(result)
 print(f"Catalog now has {summary.indexed} entries")
 ```
 

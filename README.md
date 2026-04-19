@@ -37,7 +37,7 @@ import asyncio
 from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 async def main():
-    result = await SDMX["sdmx_fetch"](
+    result = await SDMX["sdmx"](
         dataset_key="ECB-EXR",
         series_key="D.USD.EUR.SP00.A",
         start_period="2024-01",
@@ -68,7 +68,7 @@ search = await fred["fred_search"](search_text="US unemployment rate")
 print(search.data[["id", "title"]].head())
 
 # Fetch
-result = await fred["fred_fetch"](series_id="UNRATE", observation_start="2020-01-01")
+result = await fred["fred"](series_id="UNRATE", observation_start="2020-01-01")
 print(result.data.tail())
 print(result.provenance)
 ```
@@ -100,7 +100,7 @@ print(result.provenance)
 - `@enumerator` -- catalog population (KEY + TITLE + METADATA, no DATA); requires `output=`.
 - `@loader` -- observation persistence (KEY + DATA only); requires `output=` and a `DataStore`.
 
-**Catalog** -- `Catalog` indexes entities by `(namespace, code)` from any connector result. Supports text search out of the box and semantic search with optional `LiteLLMEmbeddingProvider`.
+**Catalog** -- `BaseCatalog` is the ABC; the standard `parsimony.Catalog` (Parquet + FAISS + BM25 + RRF, `pip install 'parsimony-core[standard]'`) indexes entities by `(namespace, code)` from any connector result and persists as a three-file snapshot loadable from `file://`, `hf://`, and `s3://` (planned) URLs. Two embedders ship: `SentenceTransformerEmbedder` (local) and `LiteLLMEmbeddingProvider` (hosted APIs via `parsimony-core[litellm]`).
 
 **Provenance** -- every result tracks source, parameters, and fetch timestamp. Serialize to Arrow/Parquet for reproducible pipelines.
 

@@ -292,67 +292,66 @@ All `Result` serialization methods (`to_arrow`, `to_parquet`, `from_arrow`, `fro
 
 ```python
 from parsimony import (
-    CatalogStore, Catalog, SeriesEntry, SeriesMatch,
-    IndexResult, EmbeddingProvider,
+    BaseCatalog, Catalog, EmbedderInfo,
+    SeriesEntry, SeriesMatch, IndexResult,
 )
 ```
 
-### `CatalogStore`
+### `BaseCatalog`
 
-Abstract base class for catalog persistence backends. Implement this to add a custom backend (e.g. PostgreSQL, Supabase).
+Abstract base class for all catalogs. Implementations own both the storage layout *and* the embedder, because index-time and query-time embeddings must come from the same model.
 
-**Abstract methods**:
+**Abstract methods** (override in subclasses):
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `upsert` | `async (entries: list[SeriesEntry]) -> None` | Insert or update entries |
+| `upsert` | `async (entries: list[SeriesEntry]) -> None` | Insert or update entries; the catalog computes embeddings as needed |
 | `get` | `async (namespace: str, code: str) -> SeriesEntry \| None` | Retrieve a single entry |
 | `delete` | `async (namespace: str, code: str) -> None` | Remove an entry |
-| `exists` | `async (namespace: str, code: str) -> bool` | Check existence |
-| `search` | `async (query: str, limit: int, namespace: str \| None) -> list[SeriesMatch]` | Token-based search |
-| `vector_search` | `async (embedding: list[float], limit: int, namespace: str \| None) -> list[SeriesMatch]` | Semantic search |
-| `list` | `async (namespace: str \| None, limit: int, offset: int) -> list[SeriesEntry]` | Paginated listing |
-| `list_namespaces` | `async () -> list[str]` | Return all distinct namespaces |
-| `codes_missing_embedding` | `async (namespace: str \| None, limit: int) -> list[tuple[str, str]]` | Entries without embeddings |
+| `exists` | `async (keys: list[tuple[str, str]]) -> set[tuple[str, str]]` | Subset of keys that already exist |
+| `search` | `async (query: str, limit: int, *, namespaces: list[str] \| None = None) -> list[SeriesMatch]` | Hybrid retrieval; ranking strategy is up to the implementation |
+| `list` | `async (*, namespace=None, q=None, limit=50, offset=0) -> tuple[list[SeriesEntry], int]` | Paginated browse; returns `(entries, total)` |
+| `list_namespaces` | `async () -> list[str]` | Distinct namespaces, sorted |
 
-### `Catalog`
+**Concrete orchestration** (inherited):
+
+| Method | Description |
+|--------|-------------|
+| `index_result(table, *, batch_size=100, extra_tags=None, dry_run=False, force=False)` | Extract `SeriesEntry` rows from a `SemanticTableResult` and `ingest` them |
+| `ingest(entries, *, batch_size=100, dry_run=False, force=False)` | Dedupe and upsert in batches; returns an `IndexResult` |
+| `embedder_info` (property) | Identity of the embedder, if any (override in subclasses that own one) |
+| `from_url(url)` (classmethod) | Default raises `NotImplementedError`; the standard `Catalog` overrides this |
+| `push(url)` | Default raises `NotImplementedError`; the standard `Catalog` overrides this |
+
+> **Warning**: `force=True` bypasses dedupe. Use only for bulk re-indexing where the caller guarantees idempotency.
+
+### `Catalog` (the standard implementation)
 
 ```python
-Catalog(
-    store: CatalogStore,
-    *,
-    embeddings: EmbeddingProvider | None = None,
-)
+from parsimony import Catalog, SentenceTransformerEmbedder, LiteLLMEmbeddingProvider
+
+catalog = Catalog("fred")                                                   # default: BAAI/bge-small-en-v1.5
+catalog = Catalog("fred", embedder=SentenceTransformerEmbedder("..."))      # different local model
+catalog = Catalog("fred", embedder=LiteLLMEmbeddingProvider(                # hosted-API embedder
+    model="openai/text-embedding-3-small",
+    dimension=1536,
+))
 ```
 
-High-level catalog interface. Orchestrates indexing, deduplication, embedding, and search on top of any `CatalogStore` backend.
+Every `Catalog` requires a `name` (lowercase snake_case). The name is the catalog's identity: it is persisted in `meta.json`, conventionally matches the HF dataset repo suffix (e.g. `"fred"` for `hf://ockham/catalog-fred`), and is round-tripped by `Catalog.load` / `Catalog.from_url`. A catalog is to `SeriesEntry` what `Connectors` is to `Connector` — a named collection. Two catalogs are combined by upsert (`await big.upsert(small.entries)` or, equivalently, `await big.extend(small)`).
 
-**Methods**:
+`parsimony.Catalog` is the canonical `BaseCatalog`: Parquet rows + FAISS vectors + BM25 keywords + Reciprocal Rank Fusion. Requires `pip install 'parsimony-core[standard]'` (and `parsimony-core[litellm]` for the hosted embedder) and is loaded lazily on first access so `import parsimony` stays cheap.
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `index_result` | `async (result: SemanticTableResult, *, dry_run=False, force=False, embed=True, extra_tags=None) -> IndexResult` | Index a connector result into the catalog |
-| `ingest` | `async (entries: list[SeriesEntry], *, dry_run=False, force=False, embed=True) -> IndexResult` | Index pre-built entries |
-| `search` | `async (query: str, limit=10, namespace=None, semantic=False) -> list[SeriesMatch]` | Search by text or embedding |
-| `list_namespaces` | `async () -> list[str]` | All namespaces in the catalog |
-| `list_entries` | `async (namespace=None, limit=100, offset=0) -> list[SeriesEntry]` | Paginated entry listing |
-| `get_entry` | `async (namespace: str, code: str) -> SeriesEntry \| None` | Retrieve one entry |
-| `delete_entry` | `async (namespace: str, code: str) -> None` | Delete one entry |
-| `upsert_entries` | `async (entries: list[SeriesEntry]) -> None` | Directly upsert entries |
-| `codes_missing_embedding` | `async (namespace=None, limit=1000) -> list[tuple[str, str]]` | Entries needing embeddings |
-| `embed_pending` | `async (namespace=None, batch_size=100) -> int` | Compute and store embeddings for pending entries; returns count |
+Adds these methods on top of the ABC:
 
-**`index_result` parameters**:
+| Method | Description |
+|--------|-------------|
+| `save(path, *, builder=None)` | Atomically write the three-file directory snapshot (`meta.json`, `entries.parquet`, `embeddings.faiss`) to *path* |
+| `load(path, *, embedder=None)` (classmethod) | Read a snapshot from *path*; the embedder must match the snapshot's recorded `dim` and `normalize` |
+| `from_url(url)` (classmethod) | Load a snapshot via URL scheme: `file://`, `hf://`, `s3://` (planned) |
+| `push(url)` | Publish via URL scheme |
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `result` | `SemanticTableResult` | required | The result to index |
-| `dry_run` | `bool` | `False` | If `True`, compute what would be indexed but do **not** write to the store |
-| `force` | `bool` | `False` | If `True`, skip deduplication check and upsert every entry unconditionally |
-| `embed` | `bool` | `True` | If `True` and an `EmbeddingProvider` is configured, compute embeddings during indexing |
-| `extra_tags` | `list[str] \| None` | `None` | Additional tags to merge into every `SeriesEntry` produced |
-
-> **Warning**: `force=True` bypasses duplicate detection. Use only for bulk re-indexing where idempotency is ensured by the caller.
+The embedder is owned by the catalog; there is no separate `embeddings=` parameter on search. Hybrid retrieval is the only mode.
 
 ### `SeriesEntry`
 
@@ -364,13 +363,11 @@ SeriesEntry(
     tags: list[str] = [],
     description: str | None = None,
     metadata: dict = {},
-    properties: dict = {},
     embedding: list[float] | None = None,
-    observable_id: str | None = None,
 )
 ```
 
-A catalog record representing a discoverable data series.
+A catalog record representing a discoverable data series. Use `entry.embedding_text()` to compose the text the catalog should index/query for this entry (default: title + metadata + tags joined with `" | "`).
 
 ### `SeriesMatch`
 
@@ -383,11 +380,10 @@ SeriesMatch(
     tags: list[str] = [],
     description: str | None = None,
     metadata: dict = {},
-    properties: dict = {},
 )
 ```
 
-A search result returned by `Catalog.search()`. `similarity` is a float in [0, 1]; higher is more relevant.
+A search result returned by `Catalog.search()`. `similarity` is the fused RRF score; higher is more relevant.
 
 ### `IndexResult`
 
@@ -400,17 +396,20 @@ IndexResult(
 )
 ```
 
-Summary returned by `Catalog.index_result()` and `ingest()`.
+Summary returned by `index_result()` and `ingest()`.
 
-### `EmbeddingProvider`
+### `EmbedderInfo`
 
-Abstract base class for text-to-vector embedding backends.
+```python
+EmbedderInfo(
+    model: str,
+    dim: int,
+    normalize: bool = True,
+    package: str | None = None,
+)
+```
 
-**Abstract methods**:
-
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `embed` | `async (texts: list[str]) -> list[list[float]]` | Return L2-normalized embedding vectors |
+Persisted identity of the embedder a catalog uses. Written into `meta.json` by `Catalog.save` and validated by `Catalog.load`. `package` is an optional install hint (e.g. `"parsimony-core[standard]"`) surfaced in error messages.
 
 ---
 
@@ -452,16 +451,7 @@ Summary returned by `DataStore.load_result()`.
 ## In-Memory Implementations
 
 ```python
-from parsimony import SQLiteCatalogStore, InMemoryDataStore
-```
-
-### `SQLiteCatalogStore`
-
-Dict-backed implementation of `CatalogStore`. Suitable for development, testing, and notebooks. Data is lost when the process exits.
-
-```python
-store = SQLiteCatalogStore(":memory:")
-catalog = Catalog(store)
+from parsimony import InMemoryDataStore
 ```
 
 ### `InMemoryDataStore`
@@ -474,32 +464,51 @@ data_store = InMemoryDataStore()
 
 ---
 
-## Embedding Providers
+## Embedders
+
+Two implementations of the embedder contract ship with the standard catalog. Both are exposed at the top level and lazy-loaded.
 
 ```python
-from parsimony import LiteLLMEmbeddingProvider
+from parsimony import EmbeddingProvider, SentenceTransformerEmbedder, LiteLLMEmbeddingProvider
 ```
+
+### `SentenceTransformerEmbedder`
+
+```python
+SentenceTransformerEmbedder(
+    *,
+    model: str = "BAAI/bge-small-en-v1.5",
+    normalize: bool = True,
+    device: str | None = None,
+    batch_size: int = 64,
+)
+```
+
+Local embedder backed by `sentence-transformers`. Default model is `BAAI/bge-small-en-v1.5` (384 dim). Requires `parsimony-core[standard]`.
 
 ### `LiteLLMEmbeddingProvider`
 
 ```python
 LiteLLMEmbeddingProvider(
+    *,
     model: str,
     dimension: int,
+    batch_size: int = 100,
 )
 ```
 
-Concrete `EmbeddingProvider` using `litellm.aembedding()`. Requires `pip install parsimony-core[search]`.
+Hosted-API embedder backed by [litellm](https://github.com/BerriAI/litellm). Use `model` strings like `"openai/text-embedding-3-small"`, `"gemini/text-embedding-004"`, `"cohere/embed-english-v3.0"`, `"voyage/voyage-3"`, or any other litellm-supported provider; `dimension` must match what the API returns. Outputs are L2-normalized so they round-trip cleanly with the FAISS inner-product index. Requires `parsimony-core[litellm]` and the relevant provider credentials in the environment.
 
-- Batches embedding requests at 100 texts per call (`_EMBED_BATCH_SIZE = 100`; hardcoded).
-- Applies L2 normalization to all returned vectors.
+### `EmbeddingProvider`
 
-```python
-from parsimony import LiteLLMEmbeddingProvider, Catalog, SQLiteCatalogStore
+The contract every embedder satisfies. Subclass it to plug in a custom backend:
 
-provider = LiteLLMEmbeddingProvider(model="gemini/text-embedding-004", dimension=768)
-catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
-```
+| Member | Description |
+|--------|-------------|
+| `async embed_texts(texts: list[str]) -> list[list[float]]` | Embed a batch of corpus documents |
+| `async embed_query(query: str) -> list[float]` | Embed a single query |
+| `dimension: int` (property) | Output vector dimension |
+| `info() -> EmbedderInfo` | Identity persisted into `meta.json` |
 
 ---
 
@@ -507,21 +516,19 @@ catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 
 ```python
 from parsimony import (
-    build_embedding_text,
     code_token,
     normalize_code,
-    normalize_series_catalog_row,
     series_match_from_entry,
 )
 ```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `build_embedding_text` | `(entry: SeriesEntry) -> str` | Compose a plain-text string from entry fields for embedding; format affects search quality |
 | `code_token` | `(code: str) -> str` | Normalize a code string to a single slug token (removes separators) |
 | `normalize_code` | `(code: str) -> str` | Lowercase normalization of namespace/code identifiers |
-| `normalize_series_catalog_row` | `(row: dict) -> SeriesEntry` | Convert a raw dict (e.g. from a database row) to a `SeriesEntry` |
 | `series_match_from_entry` | `(entry: SeriesEntry, similarity: float) -> SeriesMatch` | Construct a `SeriesMatch` from an existing `SeriesEntry` |
+
+`SeriesEntry.embedding_text()` (instance method) composes the text the standard catalog indexes/queries for an entry.
 
 ---
 
@@ -624,7 +631,7 @@ graph LR
 
 Search FRED for macroeconomic series matching a text query. Returns a DataFrame of matching series identifiers and titles.
 
-#### `fred_fetch`
+#### `fred`
 
 | Field | Value |
 |-------|-------|
@@ -666,7 +673,7 @@ Enumerate all series in a FRED release. Returns a `SemanticTableResult` with KEY
 **Required dependency**: `sdmx1` package (included in base install)  
 **No API key required**
 
-#### `sdmx_fetch`
+#### `sdmx`
 
 | Field | Value |
 |-------|-------|
@@ -959,8 +966,8 @@ Screens companies using FMP's screener endpoint, then concurrently fetches key m
 
 ### SEC Edgar Connector
 
-**Module**: `parsimony.connectors.sec_edgar`  
-**Required dependency**: `edgartools` package (install separately: `pip install edgartools`)  
+**Module**: `parsimony_edgar` (install: `pip install parsimony-edgar`)  
+**Required dependency**: `edgartools` (pulled in automatically)  
 **No API key required** (optional `SEC_EDGAR_USER_AGENT` / `EDGAR_IDENTITY` for request identification)
 
 #### `sec_edgar_fetch`
@@ -1014,7 +1021,7 @@ Fetch historical end-of-day price data from EODHD.
 **Module**: `parsimony.connectors.polymarket`  
 **No API key or additional dependencies required**
 
-#### `polymarket_gamma_fetch`
+#### `polymarket_gamma`
 
 | Field | Value |
 |-------|-------|
@@ -1031,7 +1038,7 @@ Fetch historical end-of-day price data from EODHD.
 
 Fetch prediction market data from Polymarket's Gamma API.
 
-#### `polymarket_clob_fetch`
+#### `polymarket_clob`
 
 | Field | Value |
 |-------|-------|
@@ -1050,8 +1057,8 @@ Fetch order book and trade data from Polymarket's Central Limit Order Book (CLOB
 
 ### Financial Reports Connector
 
-**Module**: `parsimony.connectors.financial_reports`  
-**Required dependencies**: `FINANCIAL_REPORTS_API_KEY` environment variable + `financial-reports-generated-client` SDK (install separately)
+**Module**: `parsimony_financial_reports` (install: `pip install parsimony-financial-reports`)  
+**Required dependencies**: `FINANCIAL_REPORTS_API_KEY` environment variable + `financial-reports-generated-client` SDK (pulled in automatically)
 
 #### `financial_reports_fetch`
 

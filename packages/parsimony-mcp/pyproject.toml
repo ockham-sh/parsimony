@@ -1,0 +1,51 @@
+[project]
+name = "parsimony-mcp"
+version = "0.1.0a1"
+description = "MCP (Model Context Protocol) server adapter for parsimony — exposes a Connectors collection as MCP tools."
+authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
+license = "Apache-2.0"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["parsimony", "mcp", "model-context-protocol", "agents", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = [
+    "parsimony-core>=0.1.0a1",
+    "mcp>=1.0.0",
+    "tabulate>=0.9.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+]
+
+[project.urls]
+Homepage = "https://parsimony.dev"
+Repository = "https://github.com/ockham-sh/parsimony"
+
+[project.scripts]
+# Run an MCP server over stdio with all env-configured connectors.
+parsimony-mcp = "parsimony_mcp.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.sources]
+parsimony-core = { workspace = true }
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+asyncio_mode = "auto"
+testpaths = ["tests"]

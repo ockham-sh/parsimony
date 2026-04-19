@@ -1,0 +1,49 @@
+[project]
+name = "parsimony-starter"
+# Curated meta-package: zero source code, pinned set of common parsimony plugins.
+# Install with `pip install parsimony-starter` to get the typical batteries-included
+# experience without reasoning about which plugin packages exist.
+version = "0.1.0a1"
+description = "Curated meta-package: parsimony-core[standard] + the common SDMX/EDGAR connectors and the MCP adapter."
+authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
+license = "Apache-2.0"
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["parsimony", "starter", "meta-package"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "parsimony-core[standard]>=0.1.0a1",
+    "parsimony-sdmx>=0.1.0a1",
+    "parsimony-edgar>=0.1.0a1",
+    "parsimony-financial-reports>=0.1.0a1",
+    "parsimony-mcp>=0.1.0a1",
+]
+
+[project.urls]
+Homepage = "https://parsimony.dev"
+Repository = "https://github.com/ockham-sh/parsimony"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# This package ships no Python code: only a pinned dependency list.
+# Hatch needs at least one source path; the README serves as the package payload.
+[tool.hatch.build.targets.wheel]
+bypass-selection = true
+
+[tool.uv.sources]
+parsimony-core = { workspace = true }
+parsimony-sdmx = { workspace = true }
+parsimony-edgar = { workspace = true }
+parsimony-financial-reports = { workspace = true }
+parsimony-mcp = { workspace = true }

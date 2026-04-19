@@ -1,0 +1,54 @@
+name: Release
+
+# Release-please monorepo manifest mode:
+# - On every push to main, release-please opens / updates one PR per package
+#   that has new conventional commits since its last release.
+# - Merging that PR creates a tagged GitHub Release per package.
+# - Each release event triggers the publish job below for the matching package
+#   only, and uploads to PyPI via OIDC trusted publishing.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+      paths_released: ${{ steps.rp.outputs.paths_released }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    strategy:
+      fail-fast: false
+      matrix:
+        path: ${{ fromJson(needs.release-please.outputs.paths_released) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build ${{ matrix.path }}
+        working-directory: ${{ matrix.path }}
+        run: uv build --out-dir dist
+      - name: Publish ${{ matrix.path }}
+        # Trusted publishing: each package must be configured in PyPI with this
+        # repo + workflow file as a trusted publisher.
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: ${{ matrix.path }}/dist

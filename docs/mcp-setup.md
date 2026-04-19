@@ -78,7 +78,7 @@ Currently exposed tools (~18):
 - **SDMX**: `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys`
 - **FMP**: `fmp_search`, `fmp_taxonomy`, `fmp_company_profile`, `fmp_peers`, `fmp_index_constituents`, `fmp_market_movers`, `fmp_screener`
 - **SEC Edgar**: `sec_edgar_find_company`, `sec_edgar_company_profile`, `sec_edgar_search_filings`
-- **Financial Reports**: `fr_companies_search`, `fr_isic_browse`, `fr_isin_lookup`
+- **Financial Reports**: `financial_reports_companies_search`, `financial_reports_isic_browse`, `financial_reports_isin_lookup`
 
 ## How It Works
 
@@ -87,7 +87,7 @@ The MCP server is a thin bridge between parsimony's `Connectors` collection and 
 1. On startup, `build_connectors_from_env()` loads all connectors with available API keys
 2. Connectors tagged `"tool"` are filtered and registered as MCP tools
 3. Each tool's `name`, `description`, and `inputSchema` come directly from the connector metadata
-4. Server instructions (injected into the agent's system prompt) are generated from `connectors.to_llm(context="mcp")`
+4. Server instructions (injected into the agent's system prompt) are composed in `parsimony_mcp.server`, combining MCP-specific framing with `connectors.to_llm()`
 
 ## Running Manually
 

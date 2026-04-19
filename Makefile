@@ -1,39 +1,34 @@
-.PHONY: test lint typecheck format docs clean install
+.PHONY: test lint typecheck format check sync clean
 
-# Default Python — override with PYTHON=python3.13 make test
-PYTHON ?= .venv/bin/python
+# Workspace-aware Makefile. Operates on every package under packages/* via uv workspace.
+# `test` and `typecheck` walk packages/* so adding a new plugin needs no Makefile edit.
+# Per-package pytest invocation is required: pytest binds one configfile per rootdir,
+# and running across multiple pyproject configs cross-contaminates coverage targets.
 
-install:  ## Install dev dependencies
-	uv pip install -e ".[all,dev,docs]"
+sync:  ## Resolve and install workspace dependencies
+	uv sync --all-extras --all-packages
 
-test:  ## Run tests with coverage
-	$(PYTHON) -m pytest tests/ -x --tb=short -q
+test:  ## Run tests for every package that has a tests/ directory
+	@for pkg in packages/*/; do \
+	  if [ -d "$$pkg/tests" ]; then \
+	    name=$$(awk -F'"' '/^name = /{print $$2; exit}' $$pkg/pyproject.toml); \
+	    echo "=== $$name ==="; \
+	    (cd $$pkg && uv run --package $$name pytest --tb=short -q) || exit $$?; \
+	  fi; \
+	done
 
-test-cov:  ## Run tests with coverage report
-	$(PYTHON) -m pytest tests/ --cov=parsimony --cov-report=term-missing --cov-fail-under=80
+lint:  ## Lint workspace
+	uv run ruff check packages/
 
-lint:  ## Run ruff linter
-	$(PYTHON) -m ruff check parsimony/ tests/
+format:  ## Auto-format and auto-fix workspace
+	uv run ruff format packages/
+	uv run ruff check --fix packages/
 
-format:  ## Auto-format code
-	$(PYTHON) -m ruff format parsimony/ tests/
-	$(PYTHON) -m ruff check --fix parsimony/ tests/
+typecheck:  ## Type-check every package source tree
+	uv run mypy packages/*/parsimony*/
 
-typecheck:  ## Run mypy type checker
-	$(PYTHON) -m mypy parsimony/
+check: lint typecheck test  ## Lint + typecheck + test
 
-docs:  ## Serve docs locally
-	$(PYTHON) -m mkdocs serve
-
-docs-build:  ## Build docs
-	$(PYTHON) -m mkdocs build --strict
-
-check: lint typecheck test  ## Run all checks (lint + typecheck + test)
-
-clean:  ## Remove build artifacts
+clean:
 	rm -rf build/ dist/ *.egg-info .mypy_cache .ruff_cache .pytest_cache htmlcov/
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-
-help:  ## Show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-15s\033[0m %s\n", $$1, $$2}'

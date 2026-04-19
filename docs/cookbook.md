@@ -11,10 +11,10 @@ _Fetch quarterly real GDP from FRED and render a line chart._
 ```python
 import asyncio
 import altair as alt
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.connectors.fred import fred, FredFetchParams
 
 async def main():
-    conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
+    conn = fred.bind_deps(api_key="YOUR_FRED_KEY")
     result = await conn(FredFetchParams(series_id="GDPC1"))
     df = result.df
     chart = alt.Chart(df).mark_line().encode(
@@ -36,15 +36,15 @@ _Fetch the same exchange rate from two sources and merge for comparison._
 ```python
 import asyncio
 import pandas as pd
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
-from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony.connectors.fred import fred, FredFetchParams
+from parsimony.connectors.sdmx import sdmx, SdmxFetchParams
 
 async def main():
-    fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
+    fred_conn = fred.bind_deps(api_key="YOUR_FRED_KEY")
     fred_result = await fred_conn(FredFetchParams(
         series_id="DEXUSEU", observation_start="2023-01-01",
     ))
-    sdmx_result = await sdmx_fetch(SdmxFetchParams(
+    sdmx_result = await sdmx(SdmxFetchParams(
         dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A",
         start_period="2023-01",
     ))
@@ -90,11 +90,11 @@ _Enumerate a FRED release into an in-memory catalog and search it._
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
 
 async def main():
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    catalog = Catalog("fred")
     enum_conn = enumerate_fred_release.bind_deps(api_key="YOUR_FRED_KEY")
     # Release 50 = Employment Situation
     result = await enum_conn(FredEnumerateParams(release_id=50))
@@ -168,13 +168,13 @@ _Combine FRED inflation and ECB interest rates into one DataFrame._
 ```python
 import asyncio
 import pandas as pd
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
-from parsimony.connectors.sdmx import sdmx_fetch, SdmxFetchParams
+from parsimony.connectors.fred import fred, FredFetchParams
+from parsimony.connectors.sdmx import sdmx, SdmxFetchParams
 
 async def main():
-    fred_conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
+    fred_conn = fred.bind_deps(api_key="YOUR_FRED_KEY")
     cpi_task = fred_conn(FredFetchParams(series_id="CPIAUCSL", observation_start="2020-01-01"))
-    ecb_task = sdmx_fetch(SdmxFetchParams(
+    ecb_task = sdmx(SdmxFetchParams(
         dataset_key="ECB-FM", series_key="M.U2.EUR.RT.MM.EURIBOR3MD_.HSTA",
         start_period="2020-01",
     ))
@@ -197,13 +197,13 @@ _Fetch FRED data with OutputConfig, write to Parquet, and read it back with full
 
 ```python
 import asyncio
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony.connectors.fred import fred, FredFetchParams
 from parsimony.result import SemanticTableResult
 
 async def main():
-    conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
+    conn = fred.bind_deps(api_key="YOUR_FRED_KEY")
     result = await conn(FredFetchParams(series_id="UNRATE"))
-    # fred_fetch uses output=FETCH_OUTPUT, so result is a SemanticTableResult
+    # fred uses output=FETCH_OUTPUT, so result is a SemanticTableResult
     result.to_parquet("unrate.parquet")
     print(f"Wrote {len(result.df)} rows to unrate.parquet")
     # Read it back -- schema and provenance are embedded in Arrow metadata
@@ -222,13 +222,13 @@ _Loop over several releases, index all into one catalog, then search across them
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
 
 RELEASES = {50: "Employment", 53: "GDP", 10: "CPI"}
 
 async def main():
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    catalog = Catalog("fred")
     enum_conn = enumerate_fred_release.bind_deps(api_key="YOUR_FRED_KEY")
     for release_id, label in RELEASES.items():
         result = await enum_conn(FredEnumerateParams(release_id=release_id))
@@ -252,7 +252,7 @@ _Full discovery workflow: list datasets, inspect DSD, find series keys, then fet
 ```python
 import asyncio
 from parsimony.connectors.sdmx import (
-    sdmx_list_datasets, sdmx_dsd, sdmx_series_keys, sdmx_fetch,
+    sdmx_list_datasets, sdmx_dsd, sdmx_series_keys, sdmx,
     SdmxListDatasetsParams, SdmxDsdParams, SdmxSeriesKeysParams, SdmxFetchParams,
 )
 
@@ -274,7 +274,7 @@ async def main():
     print(keys.df.head(5).to_string(index=False))
 
     # Step 4: Fetch one series
-    result = await sdmx_fetch(SdmxFetchParams(
+    result = await sdmx(SdmxFetchParams(
         dataset_key="ECB-YC", series_key="B.U2.EUR.4F.G_N_A.SV_C_YM.SR_1Y",
         start_period="2023-01",
     ))

@@ -1624,8 +1624,8 @@ download) before falling back to running the `@enumerator` live (slower).
 
 2. **Verify the entries:**
    ```python
-   from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
-   store = SQLiteCatalogStore("catalog.db")
+   from parsimony import Catalog
+   catalog = Catalog("my_source")
    entries, total = await store.list(namespace="my_source", limit=10)
    print(f"{total} entries in my_source namespace")
    for e in entries:

@@ -23,7 +23,7 @@ import asyncio
 from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 async def main():
-    result = await SDMX["sdmx_fetch"](
+    result = await SDMX["sdmx"](
         dataset_key="ECB-EXR",
         series_key="D.USD.EUR.SP00.A",
         start_period="2024-01",
@@ -39,7 +39,7 @@ asyncio.run(main())
 ```python
 from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
-result = await SDMX["sdmx_fetch"](
+result = await SDMX["sdmx"](
     dataset_key="ECB-EXR",
     series_key="D.USD.EUR.SP00.A",
     start_period="2024-01",
@@ -67,7 +67,7 @@ result.data          # pandas DataFrame
 result.provenance    # Provenance(source="sdmx", params={...}, fetched_at=...)
 ```
 
-For schema-aware connectors like `sdmx_fetch`, the result is a `SemanticTableResult` with typed column roles:
+For schema-aware connectors like `sdmx`, the result is a `SemanticTableResult` with typed column roles:
 
 ```python
 result.columns          # all Column objects with role, dtype, namespace
@@ -148,7 +148,7 @@ print(search.data[["id", "title"]].head())
 **Fetch a series:**
 
 ```python
-result = await fred["fred_fetch"](
+result = await fred["fred"](
     series_id="UNRATE",
     observation_start="2020-01-01",
 )
@@ -168,19 +168,19 @@ print(result.data.tail())
 Index fetched series into a searchable catalog:
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 
-catalog = Catalog(store=SQLiteCatalogStore(":memory:"))
+catalog = Catalog("ecb_exr")
 
 # Index the ECB exchange rate result
-ecb_result = await SDMX["sdmx_fetch"](
+ecb_result = await SDMX["sdmx"](
     dataset_key="ECB-EXR",
     series_key="D.USD.EUR.SP00.A",
 )
-summary = await catalog.index_result(ecb_result, embed=False)
+summary = await catalog.index_result(ecb_result)
 print(f"Indexed: {summary.indexed}, Skipped: {summary.skipped}")
 
-# Search the catalog
+# Search the catalog (BM25 + vector via FAISS, fused with RRF)
 matches = await catalog.search("dollar euro exchange", limit=5)
 for m in matches:
     print(f"  [{m.namespace}:{m.code}] {m.title}")
@@ -191,20 +191,36 @@ Indexed: 1, Skipped: 0
   [sdmx_ecb_exr:D.USD.EUR.SP00.A] US dollar/Euro (EXR)
 ```
 
-For semantic (vector) search, add the search extra and an embedding provider:
+`parsimony.Catalog` requires the standard extra (FAISS + BM25 + sentence-transformers):
 
 ```bash
-pip install parsimony-core[search]
+pip install 'parsimony-core[standard]'        # local sentence-transformers embedder
+# pip install 'parsimony-core[standard,litellm]'  # also enable hosted-API embedder (OpenAI, Gemini, ...)
 ```
 
-```python
-from parsimony import LiteLLMEmbeddingProvider
+To use a different sentence-transformers model, pass an embedder explicitly:
 
-catalog = Catalog(
-    store=SQLiteCatalogStore(":memory:"),
-    embeddings=LiteLLMEmbeddingProvider(model="text-embedding-3-small", dimension=1536),
-)
-await catalog.index_result(ecb_result, embed=True)
+```python
+from parsimony import Catalog, SentenceTransformerEmbedder
+
+catalog = Catalog("ecb_exr", embedder=SentenceTransformerEmbedder(model="BAAI/bge-base-en-v1.5"))
+```
+
+To use a hosted API (OpenAI, Gemini, Cohere, Voyage, Bedrock, ...) via litellm:
+
+```python
+from parsimony import Catalog, LiteLLMEmbeddingProvider
+
+catalog = Catalog("ecb_exr", embedder=LiteLLMEmbeddingProvider(
+    model="openai/text-embedding-3-small",
+    dimension=1536,
+))
+```
+
+To pull a published catalog instead of building one:
+
+```python
+catalog = await Catalog.from_url("hf://ockham/ecb-yc-catalog")
 ```
 
 ---
@@ -221,11 +237,11 @@ Connectors accept keyword arguments or a typed Pydantic model:
 
 ```python
 # Keyword arguments (recommended)
-await SDMX["sdmx_fetch"](dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A")
+await SDMX["sdmx"](dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A")
 
 # Pydantic model (for programmatic use)
 from parsimony.connectors.sdmx import SdmxFetchParams
-await SDMX["sdmx_fetch"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A"))
+await SDMX["sdmx"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.USD.EUR.SP00.A"))
 ```
 
 ### Composing multiple sources
@@ -236,7 +252,7 @@ from parsimony.connectors.fred import CONNECTORS as FRED
 from parsimony.connectors.sdmx import CONNECTORS as SDMX
 
 all_connectors = FRED.bind_deps(api_key="your-key") + SDMX
-result = await all_connectors["fred_fetch"](series_id="GDP")
+result = await all_connectors["fred"](series_id="GDP")
 ```
 
 ---

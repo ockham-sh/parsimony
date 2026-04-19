@@ -11,9 +11,9 @@ from parsimony.connectors.fred import CONNECTORS as FRED
 
 client = FRED.bind_deps(api_key="your-fred-key")
 
-result = await client["fred_fetch"](series_id="GDPC1", observation_start="2020-01-01")
+result = await client["fred"](series_id="GDPC1", observation_start="2020-01-01")
 print(result.data)        # pandas DataFrame
-print(result.provenance)  # source="fred_fetch", params={...}
+print(result.provenance)  # source="fred", params={...}
 ```
 
 ## Installation
@@ -39,11 +39,11 @@ pip install parsimony-core[all]         # Everything
 
 | Source | Connectors | API Key |
 |--------|-----------|---------|
-| **FRED** (Federal Reserve Economic Data) | `fred_search`, `fred_fetch` | Free ([register](https://fred.stlouisfed.org/docs/api/api_key.html)) |
-| **SDMX** (ECB, Eurostat, IMF, World Bank, ...) | `sdmx_fetch`, `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys` | None |
+| **FRED** (Federal Reserve Economic Data) | `fred_search`, `fred` | Free ([register](https://fred.stlouisfed.org/docs/api/api_key.html)) |
+| **SDMX** (ECB, Eurostat, IMF, World Bank, ...) | `sdmx`, `sdmx_list_datasets`, `sdmx_dsd`, `sdmx_codelist`, `sdmx_series_keys` | None |
 | **FMP** (Financial Modeling Prep) | `fmp_stock_quote`, `fmp_income_statements`, `fmp_balance_sheet_statements`, `fmp_historical_prices`, `fmp_company_profile` | Paid |
 | **SEC Edgar** | `sec_edgar_fetch` | None |
-| **Polymarket** | `polymarket_clob_fetch`, `polymarket_gamma_fetch` | None |
+| **Polymarket** | `polymarket_clob`, `polymarket_gamma` | None |
 | **EODHD** | `eodhd_fetch` | Paid |
 | **Financial Reports** | `financial_reports_fetch` | Paid |
 | **+ 15 more** | CoinGecko, Finnhub, Tiingo, Alpha Vantage, EIA, BLS, Treasury, central banks | Varies |

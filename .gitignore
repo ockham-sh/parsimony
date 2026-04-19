@@ -44,6 +44,9 @@ Thumbs.db
 # Claude Code
 .claude/
 
+# Cursor IDE local debug logs / project state
+.cursor/
+
 # Council reviews
 .council/
 

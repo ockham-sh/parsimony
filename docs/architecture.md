@@ -34,7 +34,7 @@ parsimony is built around three core principles:
 
 **Immutability**. The `Connector` and `Connectors` types are frozen dataclasses. Every operation that would modify them — binding dependencies, attaching callbacks, filtering — returns a new instance. The original is never mutated.
 
-**Pluggable backends**. The catalog and data store are defined as abstract base classes (`CatalogStore`, `DataStore`). In-memory implementations are bundled for development. Production backends (e.g. Supabase) are external and injected at construction time.
+**Pluggable backends**. The catalog and data store are defined as abstract base classes (`BaseCatalog`, `DataStore`). The standard `parsimony.Catalog` (Parquet + FAISS + BM25 + RRF) is the bundled, production-grade implementation; custom backends subclass `BaseCatalog` directly.
 
 ---
 
@@ -46,31 +46,32 @@ parsimony/
 ├── connector.py              # Connector, Connectors, decorators
 ├── errors.py                 # Typed error hierarchy (ConnectorError and subclasses)
 ├── result.py                 # Result, SemanticTableResult, OutputConfig, Column, ColumnRole
-├── data_store.py             # DataStore ABC, LoadResult
 ├── catalog/
-│   ├── catalog.py            # Catalog orchestration layer
-│   ├── store.py              # CatalogStore ABC
-│   ├── models.py             # SeriesEntry, SeriesMatch, IndexResult (Pydantic)
-│   ├── embeddings.py         # EmbeddingProvider ABC
-│   ├── series_pipeline.py    # build_embedding_text(), text composition for indexing
+│   ├── catalog.py            # BaseCatalog ABC + ingest/index_result orchestration
+│   ├── models.py             # SeriesEntry (with embedding_text()), SeriesMatch, IndexResult
+│   ├── embedder_info.py      # EmbedderInfo: persisted embedder identity
 │   └── identity_from_params.py  # Namespace field extraction utilities
+├── _standard/                # Private: the canonical Catalog implementation
+│   ├── catalog.py            # Catalog: Parquet rows + FAISS vectors + BM25 + RRF
+│   ├── embedder.py           # EmbeddingProvider protocol + SentenceTransformerEmbedder
+│   ├── indexes.py            # FAISS / BM25 / RRF helpers
+│   ├── meta.py               # CatalogMeta, BuildInfo, file constants
+│   └── sources/              # URL-scheme dispatch: file://, hf://, s3:// (planned)
 ├── stores/
-│   ├── memory.py             # SQLiteCatalogStore
+│   ├── data_store.py         # DataStore ABC, LoadResult
 │   └── memory_data.py        # InMemoryDataStore
-├── embeddings/
-│   └── litellm.py            # LiteLLMEmbeddingProvider
 ├── transport/
 │   ├── http.py               # HttpClient wrapping httpx; API key log redaction
 │   └── json_helpers.py       # json_to_df(), interpolate_path()
 └── connectors/
     ├── __init__.py           # build_connectors_from_env(), PROVIDERS registry
-    ├── fred.py               # 3 connectors: fred_search, fred_fetch, enumerate_fred_release
+    ├── fred.py               # 3 connectors: fred_search, fred, enumerate_fred_release
     ├── sdmx.py               # 5 connectors + enumerate_sdmx_dataset_codelists()
     ├── fmp.py                # 18 connectors
     ├── fmp_screener.py       # 1 connector: fmp_screener (fan-out pattern)
     ├── sec_edgar.py          # SEC filing connectors
     ├── eodhd.py              # EODHD market data connectors
-    ├── polymarket.py         # 2 connectors: polymarket_gamma_fetch, polymarket_clob_fetch
+    ├── polymarket.py         # 2 connectors: polymarket_gamma, polymarket_clob
     ├── finnhub.py            # Finnhub news/events connectors
     ├── coingecko.py          # CoinGecko crypto connectors
     ├── tiingo.py             # Tiingo market data connectors
@@ -194,7 +195,7 @@ async def enumerate_fred_release(params: FredReleaseParams, *, api_key: str) -> 
     Column(name="date",      role=ColumnRole.DATA, dtype="date"),
     Column(name="value",     role=ColumnRole.DATA, dtype="float64"),
 ]))
-async def fred_fetch(params: FredFetchParams, *, api_key: str) -> pd.DataFrame:
+async def fred(params: FredFetchParams, *, api_key: str) -> pd.DataFrame:
     ...
 ```
 
@@ -227,7 +228,7 @@ The factory function `build_connectors_from_env()` calls `bind_deps()` internall
 
 ```python
 # Internal pattern used by factory functions
-fred_connectors = Connectors([fred_search, fred_fetch, enumerate_fred_release])
+fred_connectors = Connectors([fred_search, fred, enumerate_fred_release])
 fred_bound = fred_connectors.bind_deps(api_key=os.environ["FRED_API_KEY"])
 ```
 
@@ -261,29 +262,41 @@ If a connector returns a plain `Result` but the caller needs schema information,
 
 ## Catalog Subsystem
 
-The catalog subsystem (`parsimony/catalog/`) manages the lifecycle of series metadata: indexing, deduplication, embedding, and search.
+The catalog subsystem manages the lifecycle of series metadata: ingestion, deduplication, embedding, hybrid search, and distribution.
 
-### Component responsibilities
+### `BaseCatalog`: the contract (`parsimony/catalog/catalog.py`)
 
-| Component | File | Responsibility |
-|-----------|------|---------------|
-| `Catalog` | `catalog.py` | Orchestration: indexing pipeline, search routing, embedding coordination |
-| `CatalogStore` | `store.py` | Persistence ABC: CRUD + text search + vector search |
-| `SeriesEntry` / `SeriesMatch` / `IndexResult` | `models.py` | Pydantic data models for catalog records and results |
-| `EmbeddingProvider` | `embeddings.py` | ABC for text-to-vector embedding |
-| `build_embedding_text` | `series_pipeline.py` | Composes text from `SeriesEntry` fields for embedding; format affects search quality |
-| `identity_from_params` | `identity_from_params.py` | Extracts `(namespace, code)` from a Pydantic params model using `Namespace` annotations |
+`BaseCatalog` is the ABC every catalog implements. It defines two layers:
+
+* **Abstract** — `upsert`, `get`, `exists`, `delete`, `search`, `list`, `list_namespaces`. Implementations own the storage layout *and* the embedder, because index-time and query-time embeddings must come from the same model.
+* **Concrete orchestration** — `ingest` (dedupe + batched upsert with `dry_run` / `force`) and `index_result` (extracts `SeriesEntry` rows from a `SemanticTableResult` and calls `ingest`).
+
+| Component | Responsibility |
+|-----------|---------------|
+| `BaseCatalog` | ABC for catalogs; ingest/index_result orchestration |
+| `SeriesEntry` | Pydantic record with `embedding_text()` for index/query text composition |
+| `SeriesMatch` / `IndexResult` | Search hits and ingest summaries |
+| `EmbedderInfo` | Persisted embedder identity (model, dim, normalize); used by `Catalog.save`/`load` |
+| `identity_from_params` | Extracts `(namespace, code)` from a params model via `Namespace` annotation |
+
+### `Catalog`: the standard implementation (`parsimony._standard/`)
+
+The framework ships exactly one production-grade implementation, exposed at the top level as `parsimony.Catalog`. It is gated behind the `parsimony-core[standard]` extra (FAISS, BM25, sentence-transformers, huggingface-hub) and lazy-loaded so `import parsimony` stays cheap.
+
+* **Storage** — three-file directory snapshot: `meta.json` (`CatalogMeta` + `EmbedderInfo`), `entries.parquet` (zstd-compressed rows + embeddings), `embeddings.faiss` (FAISS index).
+* **Indices** — Flat IP for small catalogs, HNSW above 4 096 rows; BM25Okapi rebuilt in-memory from parquet on load (kept out of the on-disk contract for forward compatibility).
+* **Search** — pulls candidates from BM25 and FAISS independently, fuses via Reciprocal Rank Fusion (`k = 60`), filters by namespace afterwards.
+* **Embedder** — owned by the catalog. Default is `SentenceTransformerEmbedder("BAAI/bge-small-en-v1.5")`; pass `embedder=...` to override. Two implementations ship: `SentenceTransformerEmbedder` (local, `parsimony-core[standard]`) and `LiteLLMEmbeddingProvider` (hosted API, `parsimony-core[litellm]`). `EmbeddingProvider` is the public contract for custom backends; there is no entry-point plugin axis.
+* **Distribution** — `Catalog.from_url(...)` and `Catalog.push(url)` dispatch on URL scheme to `parsimony._standard/sources/`: `file://`, `hf://`, `s3://` (planned). Schemes are resolved in-process; not a plugin axis.
 
 ### Indexing pipeline
 
-When `Catalog.index_result()` is called with a `SemanticTableResult`:
+When `catalog.index_result(table)` is called:
 
-1. Each row with a KEY column is extracted and converted to a `SeriesEntry` using the `Namespace` annotation to determine `namespace` and `code`.
-2. If `force=False`, existing entries in the store are checked; unchanged entries are skipped.
-3. `build_embedding_text()` composes a text string from each entry's `title`, `tags`, `description`, and `metadata` fields.
-4. If `embed=True` and an `EmbeddingProvider` is configured, `EmbeddingProvider.embed()` is called on the batch of texts.
-5. Entries (with optional embeddings) are upserted into the `CatalogStore`.
-6. An `IndexResult` summarizing `total`, `indexed`, `skipped`, and `errors` is returned.
+1. `_entries_from_table_result` reads the KEY column's `Namespace` annotation and assembles one `SeriesEntry` per unique key, copying `title`, `tags` (provenance source + `extra_tags`), and METADATA columns.
+2. `ingest` batches entries (default 100), calls `exists()` to dedupe (skipped unless `force=True`), and `upsert()`s the survivors.
+3. `Catalog.upsert()` calls `embedder.embed_texts(entry.embedding_text())` for any entry without a precomputed vector and rebuilds the FAISS + BM25 indices.
+4. Returns an `IndexResult(total, indexed, skipped, errors)`. With `dry_run=True`, the dedupe pass runs but nothing is written.
 
 ### Identity resolution
 
@@ -294,14 +307,15 @@ class FredFetchParams(BaseModel):
     series_id: Annotated[str, Namespace("fred")]
 ```
 
-`identity_from_params()` inspects the params model, finds the field annotated with `Namespace`, and returns `(namespace, code)`. The constraint is that exactly one `Namespace`-annotated field may exist per params model. A params model without a `Namespace` field cannot be used to auto-resolve identity.
+Exactly one `Namespace`-annotated field may exist per params model.
 
 ### Search routing
 
-`Catalog.search()` dispatches to either token-based or vector-based search depending on the `semantic=` flag:
+`Catalog.search(query, limit, namespaces=None)` runs BM25 and FAISS in parallel (each over a wider candidate pool than `limit`), fuses via RRF, then applies the optional namespace filter. There is no `semantic=` flag — hybrid retrieval is the only mode, because owning both retrievers is what makes the embedder–catalog contract enforceable.
 
-- `semantic=False`: delegates to `CatalogStore.search()` (text/token matching).
-- `semantic=True`: calls `EmbeddingProvider.embed([query])` to get the query vector, then delegates to `CatalogStore.vector_search()`. Requires an `EmbeddingProvider` configured on the `Catalog`.
+### Custom backends
+
+Subclass `BaseCatalog` directly when the standard layout is wrong (Postgres+pgvector, OpenSearch, an in-memory mock for tests, …). Override the seven abstract methods; you inherit `ingest` and `index_result` for free. Override `from_url` / `push` if your backend needs URL-based loading.
 
 ---
 
@@ -383,7 +397,7 @@ Each data-source module in `connectors/` follows the same structure:
 ### Async transport strategies per module
 
 - **FRED, FMP, EODHD, Polymarket, Finnhub, CoinGecko, Tiingo, Alpha Vantage, central banks**: use `HttpClient` (httpx-based async).
-- **SDMX**: uses the `sdmx1` library's own async transport; `sdmx_fetch` yields a `pandasdmx` DataMessage.
+- **SDMX**: uses the `sdmx1` library's own async transport; `sdmx` yields a `pandasdmx` DataMessage.
 - **SEC Edgar**: uses `edgartools`, a synchronous library. The connector wraps it in `_SecEdgarEngine`, a dispatch class that runs synchronous calls.
 - **Financial Reports**: uses the `financial-reports-generated-client` SDK, which provides its own async client.
 
@@ -429,7 +443,7 @@ The following narrative describes the data flow for a typical connector call.
 
 ```
 Caller
-  → connectors["fred_fetch"]({"series_id": "GDP"})
+  → connectors["fred"]({"series_id": "GDP"})
   → Connector.__call__()
       → Pydantic: validate dict → FredFetchParams(series_id="GDP")
       → fn(params, api_key="...") called
@@ -574,14 +588,14 @@ parsimony draws a hard line between two access paths to the same data sources:
 | **Caller** | Agent via MCP protocol | Agent-written Python code |
 | **Result size** | Small — fits comfortably in a context window | Large — full datasets, thousands of rows |
 | **Purpose** | Figure out *what* to fetch | Fetch the actual data |
-| **Examples** | `fred_search`, `sdmx_dsd`, `fmp_screener` | `fred_fetch`, `sdmx_fetch`, `eodhd_fetch` |
+| **Examples** | `fred_search`, `sdmx_dsd`, `fmp_screener` | `fred`, `sdmx`, `eodhd_eod` |
 
 **The core problem is context window economics.** When an agent calls an MCP tool, the result is injected into its context window alongside the system prompt, conversation history, and reasoning. A 10,000-row DataFrame returned as an MCP tool response would consume most of the context budget and crowd out the agent's ability to reason about the data. Worse, the agent doesn't need all that data in its context — it needs it in a variable it can manipulate with code.
 
 **The workflow this enables:** discover → fetch → analyze.
 
 1. **Discover** (MCP tool): the agent calls `fred_search("unemployment rate")` as an MCP tool. It receives a compact table of series metadata — IDs, titles, frequencies — that fits in a few hundred tokens.
-2. **Fetch** (client code): the agent writes and executes Python code that calls `await client['fred_fetch'](series_id='UNRATE')`. The resulting DataFrame lands in the code execution environment, not in the context window.
+2. **Fetch** (client code): the agent writes and executes Python code that calls `await client['fred'](series_id='UNRATE')`. The resulting DataFrame lands in the code execution environment, not in the context window.
 3. **Analyze** (client code): the agent operates on the DataFrame programmatically — computing statistics, plotting, joining with other data — and only surfaces the conclusions back into the conversation.
 
 This mirrors a broader principle in the MCP ecosystem: **MCP is for point-in-time, scoped answers; APIs (and client libraries) are for bulk data.** They are complements, not competitors. The MCP tool gives the agent a quick, context-friendly answer to "what data exists?" The client connector gives it the full dataset to work with — through code, not through the context window.

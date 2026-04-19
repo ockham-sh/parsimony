@@ -165,15 +165,18 @@ The table below enumerates every symbol a plugin may import. Absence from this t
 | `Provenance` | stable | Fetch provenance record. |
 | `Column` | stable | Output column definition. |
 | `ColumnRole` | stable | Column role enum (KEY / TITLE / DATA / METADATA). |
-| `Catalog` | provisional | Catalog orchestrator. |
-| `CatalogStore` | provisional | Catalog store ABC. |
-| `DataStore` | provisional | Data-persistence ABC. |
-| `InMemoryDataStore` | provisional | In-memory DataStore implementation. |
-| `LoadResult` | provisional | DataStore.load_result outcome. |
+| `BaseCatalog` | provisional | Catalog ABC. Custom backends subclass this directly (no plugin axis). |
+| `Catalog` | provisional | Canonical `BaseCatalog` implementation (Parquet + FAISS + BM25 + RRF). Loaded lazily via `parsimony-core[standard]`. |
+| `EmbedderInfo` | provisional | Persisted identity of a catalog's embedder. |
+| `EmbeddingProvider` | provisional | Embedder ABC (requires `parsimony-core[standard]`). |
+| `SentenceTransformerEmbedder` | provisional | Local embedder (requires `parsimony-core[standard]`). |
+| `LiteLLMEmbeddingProvider` | provisional | Hosted-API embedder (requires `parsimony-core[litellm]`). |
+| `DataStore` | provisional | Observation-persistence ABC used by `@loader`. |
+| `InMemoryDataStore` | provisional | In-memory `DataStore` implementation. |
+| `LoadResult` | provisional | `DataStore.load_result` outcome. |
 | `SeriesEntry` | stable | Catalog row. |
 | `SeriesMatch` | stable | Catalog search match. |
-| `IndexResult` | provisional | Catalog.index_result outcome. |
-| `EmbeddingProvider` | provisional | Embedding provider ABC. |
+| `IndexResult` | provisional | `BaseCatalog.index_result` outcome. |
 | `ConnectorError` | stable | Base connector error. |
 | `EmptyDataError` | stable | Upstream returned no data. |
 | `ParseError` | stable | Upstream payload could not be parsed. |
@@ -181,14 +184,14 @@ The table below enumerates every symbol a plugin may import. Absence from this t
 | `PaymentRequiredError` | stable | Upstream requires payment/subscription. |
 | `RateLimitError` | stable | Upstream rate-limit response. |
 | `UnauthorizedError` | stable | Upstream credentials rejected. |
-| `build_embedding_text` | provisional | Embedding-text helper. |
+| `BundleNotFoundError` | provisional | Control-flow signal for "no bundle at this URL yet." |
+| `catalog_key` | stable | Canonical `(namespace, code)` key. |
 | `code_token` | stable | Catalog code normaliser. |
-| `normalize_code` | stable | Catalog code normaliser. |
-| `normalize_series_catalog_row` | provisional | Catalog row normaliser. |
-| `series_match_from_entry` | provisional | SeriesMatch constructor. |
-| `client` | provisional | Lazy-composed Connectors surface. |
+| `normalize_code` | stable | Catalog namespace normaliser. |
+| `series_match_from_entry` | provisional | `SeriesMatch` constructor. |
+| `client` | provisional | Lazy-composed `Connectors` surface. |
 | `__version__` | stable | Installed kernel package version. |
-| `CONTRACT_VERSION` | stable | Integer contract-version string (new in contract v1). |
+| `CONTRACT_VERSION` | stable | Contract major version (`"1"` in v1). |
 
 ### `parsimony.discovery`
 
@@ -251,8 +254,8 @@ The kernel refuses to import a plugin module whose `parsimony-contract-v<N>` key
 These are available in `parsimony.*` but are **not** stable-or-provisional surface, and plugins MUST NOT import them. They may change or disappear in any kernel release:
 
 - Anything with a leading underscore (e.g. `parsimony.discovery._scan`).
-- Submodules not named in §6 (`parsimony.bundles`, `parsimony.catalog.arrow_adapters`, `parsimony.mcp.*`, `parsimony.stores.*` except `DataStore` / `InMemoryDataStore` / `LoadResult` / `CatalogStore`, and anything else not listed above).
-- Anything under `parsimony-core`'s optional extras that is not explicitly re-exported from the public surface (e.g. the SQLite-vec / litellm path under `[search]`, the MCP server scaffolding under `[mcp]`).
+- Submodules not named in §6 (`parsimony.bundles.*` except `CatalogSpec` / `CatalogPlan` / `to_async` / `LazyNamespaceCatalog`, `parsimony._standard.*`, `parsimony.stores.*` except `DataStore` / `InMemoryDataStore` / `LoadResult`, and anything else not listed above).
+- Anything under `parsimony-core`'s optional extras that is not explicitly re-exported from the public surface (e.g. the sentence-transformers / FAISS / BM25 innards under `[standard]`, the `LiteLLMEmbeddingProvider` transport details under `[litellm]`, the `s3://` URL source planned under `[s3]`).
 
 There is no in-tree `parsimony.connectors` package: every connector ships as its own `parsimony-<name>` distribution discovered via the `parsimony.providers` entry-point group.
 

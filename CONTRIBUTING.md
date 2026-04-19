@@ -156,16 +156,18 @@ Look for issues labeled `good first issue` in the issue tracker.
 ```
 parsimony/
 ├── connector.py          # @connector, @enumerator, @loader decorators + Connectors collection
-├── result.py             # Result, SemanticTableResult, OutputConfig, Provenance, Column
-├── errors.py             # ConnectorError hierarchy (Unauthorized, RateLimit, Provider, Empty, Parse)
-├── catalog/              # Catalog service, SeriesEntry/SeriesMatch models, indexing
-├── connectors/           # Built-in data source modules (fred, sdmx, fmp, etc.)
-│   └── __init__.py       # ProviderSpec registry + build_connectors_from_env factory
-├── stores/               # CatalogStore (abstract), SQLiteCatalogStore, DataStore
-├── embeddings/           # LiteLLMEmbeddingProvider for catalog vector search
+├── result.py             # Result, SemanticTableResult, OutputConfig, Provenance, Column (+ Arrow/Parquet)
+├── errors.py             # ConnectorError hierarchy + BundleNotFoundError
+├── catalog/              # BaseCatalog ABC, SeriesEntry/SeriesMatch models, EmbedderInfo
+├── _standard/            # Canonical Catalog (Parquet + FAISS + BM25 + RRF), embedders, URL sources
+├── bundles/              # CatalogSpec/CatalogPlan declarative layer + LazyNamespaceCatalog wrapper
+├── discovery/            # Plugin entry-point discovery (parsimony.providers) + build_connectors_from_env
+├── stores/               # DataStore + InMemoryDataStore (observation persistence for @loader)
 ├── transport/            # HttpClient with credential redaction, JSON helpers
-└── mcp/                  # Model Context Protocol server (connector-to-tool bridge)
+├── cli/                  # `parsimony list-plugins`, `parsimony conformance verify`, `parsimony bundles {list,build}`
+└── testing.py            # assert_plugin_valid (procedural) + ProviderTestSuite (pytest class)
 ```
+(MCP server lives in the separate `parsimony-mcp` distribution.)
 
 ### Key architectural decisions
 

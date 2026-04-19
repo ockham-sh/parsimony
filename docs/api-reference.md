@@ -290,115 +290,137 @@ All `Result` serialization methods (`to_arrow`, `to_parquet`, `from_arrow`, `fro
 
 ## Catalog API
 
+The catalog layer is two things:
+
+1. `BaseCatalog` — an ABC that any backend (Parquet+FAISS, Postgres+pgvector, Redis, a mock) can implement. Custom backends subclass this directly; there is **no plugin axis** for catalogs.
+2. `Catalog` — the canonical implementation shipped with `parsimony-core[standard]` (Parquet rows + FAISS vectors + BM25 keywords + reciprocal rank fusion). It handles URL-based load/push (`file://`, `hf://`, `s3://` planned).
+
 ```python
 from parsimony import (
-    Catalog, CatalogStore, SeriesEntry, SeriesMatch,
-    IndexResult, EmbeddingProvider,
+    BaseCatalog, Catalog,
+    SeriesEntry, SeriesMatch, IndexResult,
+    EmbeddingProvider, SentenceTransformerEmbedder, LiteLLMEmbeddingProvider,
+    EmbedderInfo,
 )
-from parsimony.stores import HFBundleCatalogStore, SQLiteCatalogStore
-from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
+from parsimony.catalog.catalog import entries_from_table_result
+from parsimony.bundles import LazyNamespaceCatalog
+from parsimony.errors import BundleNotFoundError
 ```
 
-### `Catalog`
+### `BaseCatalog`
 
-```python
-Catalog(
-    store: CatalogStore,
-    *,
-    embeddings: EmbeddingProvider | None = None,
-    connectors: Any | None = None,
-)
-```
+Abstract base class for namespace-keyed catalogs of named entities. Implementations own their storage and their embedder — index-time and query-time embeddings must come from the same model, so the embedder is not a plugin axis.
 
-Orchestration layer over a `CatalogStore`. Lazy-populates requested
-namespaces (via the store's `try_load_remote`, falling back to a live
-`@enumerator` when `connectors` is supplied) and dispatches search.
-
-**Methods**:
-
-| Method | Signature | Description |
-|---|---|---|
-| `search` | `async (query: str, limit=10, *, namespaces: list[str]) -> list[SeriesMatch]` | Vector search scoped to the given namespaces (required, non-empty) |
-| `index_result` | `async (result: SemanticTableResult, *, embed=True, batch_size=100, extra_tags=None, dry_run=False, force=False) -> IndexResult` | Extract entries from a result and ingest them |
-| `ingest` | `async (entries: list[SeriesEntry], *, embed=True, batch_size=100, force=False) -> IndexResult` | Dedupe, optionally embed, and upsert pre-built entries |
-| `embed_pending` | `async (limit: int \| None = None, *, namespace: str \| None = None) -> int` | Backfill embeddings for entries that don't have them |
-| `list_namespaces` | `async () -> list[str]` | All loaded namespaces |
-| `list_entries` | `async (*, namespace=None, q=None, limit=50, offset=0) -> tuple[list[SeriesEntry], int]` | Paginated listing with optional substring filter |
-| `get_entry` | `async (namespace: str, code: str) -> SeriesEntry \| None` | Retrieve one entry |
-| `delete_entry` | `async (namespace: str, code: str) -> None` | Delete one entry (store must support writes) |
-| `upsert_entries` | `async (entries: list[SeriesEntry]) -> None` | Bulk upsert (store must support writes) |
-| `refresh` | `async (namespace: str) -> dict` | Force a fresh HEAD check and reload (store must support it) |
-
-### `CatalogStore`
-
-Abstract base class for catalog persistence backends.
+**Subclasses MUST set** `name: str` in `__init__` and implement the abstract methods below.
 
 **Abstract methods**:
 
 | Method | Signature | Description |
 |---|---|---|
-| `upsert` | `async (entries: list[SeriesEntry]) -> None` | Insert or update entries (read-only stores raise `NotImplementedError`) |
-| `get` | `async (namespace: str, code: str) -> SeriesEntry \| None` | Retrieve a single entry |
-| `delete` | `async (namespace: str, code: str) -> None` | Remove an entry |
-| `exists` | `async (keys: list[tuple[str, str]]) -> set[tuple[str, str]]` | Return the subset of `(namespace, code)` pairs that already exist |
-| `search` | `async (query: str, limit: int, *, namespaces: list[str] \| None = None, query_embedding: list[float] \| None = None) -> list[SeriesMatch]` | Vector or keyword search |
-| `list_namespaces` | `async () -> list[str]` | Distinct namespaces |
-| `list` | `async (*, namespace=None, q=None, limit=50, offset=0) -> tuple[list[SeriesEntry], int]` | Paginated listing |
+| `upsert` | `async (entries: list[SeriesEntry]) -> None` | Insert or update entries; implementation embeds as needed |
+| `get` | `async (namespace: str, code: str) -> SeriesEntry \| None` | Retrieve one entry |
+| `delete` | `async (namespace: str, code: str) -> None` | Remove one entry |
+| `exists` | `async (keys: list[tuple[str, str]]) -> set[tuple[str, str]]` | Subset of keys that already exist |
+| `search` | `async (query: str, limit: int, *, namespaces: list[str] \| None = None) -> list[SeriesMatch]` | Rank entries; retrieval strategy is the implementation's choice |
+| `list_namespaces` | `async () -> list[str]` | Distinct namespaces, sorted |
+| `list` | `async (*, namespace=None, q=None, limit=50, offset=0) -> tuple[list[SeriesEntry], int]` | Paginated browse; returns `(entries, total)` |
 
-**Optional hook**:
+**Concrete orchestration on the ABC**:
 
-| Method | Description |
-|---|---|
-| `try_load_remote` | Attempt to populate a namespace from a remote source (HF bundle stores override this; default returns `False`). |
+| Method | Signature | Description |
+|---|---|---|
+| `index_result` | `async (table: SemanticTableResult, *, batch_size=100, extra_tags=None, dry_run=False, force=False) -> IndexResult` | Lift rows from a `SemanticTableResult` into entries and `ingest` them |
+| `ingest` | `async (entries: list[SeriesEntry], *, batch_size=100, dry_run=False, force=False) -> IndexResult` | Dedupe (via `exists`) then upsert in batches |
+| `extend` | `async (other: BaseCatalog) -> None` | Upsert every entry from another catalog |
+| `entries` | `@property -> list[SeriesEntry]` | Default pages through `list`; override on subclasses that have cheap in-memory access |
+| `embedder_info` | `@property -> EmbedderInfo \| None` | Identity of the embedder this catalog uses, if any |
+| `close` | `async () -> None` | Release resources; default no-op |
 
-### `HFBundleCatalogStore`
+URL-based load/push is **not** part of this ABC. Concrete implementations that want to participate in `from_url` / `push` define those methods themselves.
 
-Read-only store backed by Parquet + FAISS bundles on HuggingFace Hub.
+### `Catalog` (canonical)
 
 ```python
-HFBundleCatalogStore(
+Catalog(name: str, *, embedder: EmbeddingProvider | None = None)
+```
+
+Standard catalog: Parquet rows, FAISS vectors (Flat IP below `HNSW_THRESHOLD` rows, HNSW above), BM25 keywords, reciprocal rank fusion. Part of `parsimony-core[standard]`.
+
+`name` is lowercase snake_case (validated). When `embedder` is omitted, a `SentenceTransformerEmbedder` with the default model is used — instantiation is cheap, the model is fetched on first embed.
+
+**Extra methods beyond `BaseCatalog`**:
+
+| Method | Signature | Description |
+|---|---|---|
+| `save` | `async (path: str \| Path, *, builder: str \| None = None) -> None` | Atomically write the three-file snapshot (`meta.json`, `entries.parquet`, `embeddings.faiss`) to a local directory |
+| `load` | `@classmethod async (path, *, embedder=None) -> Catalog` | Load a snapshot from a local directory |
+| `from_url` | `@classmethod async (url: str, *, embedder: EmbeddingProvider \| None = None) -> Catalog` | Dispatch on URL scheme (`file://`, `hf://`, `s3://` planned) |
+| `push` | `async (url: str) -> None` | Publish to a URL (same schemes) |
+
+**On-disk layout** (one directory, three files):
+
+| File | Content |
+|---|---|
+| `meta.json` | `CatalogMeta` — name, namespaces, entry count, embedder identity, build info |
+| `entries.parquet` | Rows: `namespace`, `code`, `title`, `description`, `tags_json`, `metadata_json`, `embedding` |
+| `embeddings.faiss` | FAISS index serialized via `faiss.write_index` |
+
+Writes are atomic via temp-directory rename. The embedder recorded in `meta.json` must match (`dimension`, `normalize`) the embedder used at query time, or `load`/`from_url` raises `ValueError`.
+
+### `entries_from_table_result`
+
+```python
+from parsimony.catalog.catalog import entries_from_table_result
+
+entries = entries_from_table_result(
+    table: SemanticTableResult,
     *,
-    embeddings: EmbeddingProvider,
-    cache_dir: Path | str | None = None,
-    pin: str | None = None,
-    repo_id_for_namespace: Callable | None = None,
+    extra_tags: list[str] | None = None,
+) -> list[SeriesEntry]
+```
+
+Lifts rows from a `SemanticTableResult` into `SeriesEntry` values. Resolves namespace templates (e.g. `"sdmx_series_{agency}_{dataset_id}"`) per row from declared columns — used internally by `Catalog.index_result` and by `LazyNamespaceCatalog`.
+
+### `LazyNamespaceCatalog`
+
+Opt-in wrapper that back-fills missing namespaces on the first `search` that needs them.
+
+```python
+from parsimony import Catalog
+from parsimony.bundles import LazyNamespaceCatalog
+
+base = Catalog("my_catalog")
+wrapped = LazyNamespaceCatalog(
+    base,
+    connectors=client,
+    bundle_loader=lambda ns: Catalog.from_url(f"hf://ockham/catalog-{ns}"),
 )
+matches = await wrapped.search("inflation", namespaces=["fred"])
 ```
 
 | Parameter | Description |
 |---|---|
-| `embeddings` | Provider whose `model_id` / `revision` / `dimension` must match every loaded manifest |
-| `cache_dir` | On-disk cache root; defaults to `PARSIMONY_CACHE_DIR` or a platformdirs user-cache path |
-| `pin` | 40-char HF commit SHA pinning every namespace; overrides `PARSIMONY_CATALOG_PIN` |
-| `repo_id_for_namespace` | Override for the HF repo id (default: `parsimony-dev/<namespace>`) |
+| `base` | Any `BaseCatalog` to wrap |
+| `bundle_loader` | `async (namespace) -> BaseCatalog \| None` — returns a catalog to merge in, or `None` for "no bundle published" |
+| `connectors` | `Connectors` collection; on miss, `LazyNamespaceCatalog` finds an `@enumerator` declaring the namespace and runs it to populate the base catalog |
 
-`upsert` and `delete` raise `NotImplementedError` — bundles are
-published by rebuilding. `refresh(namespace)` returns a dict
-`{namespace, updated, old_revision, new_revision}`. `status()` returns a
-dict snapshot of the cache and loaded bundles.
-
-### `SQLiteCatalogStore`
-
-Local FTS5 + vec0 store for custom catalogs ([search] extra).
-
-```python
-SQLiteCatalogStore(path: str | Path)
-```
+At least one source (`bundle_loader` or `connectors`) must be provided. Confirmed misses are cached; call `invalidate(namespace=None)` to clear.
 
 ### `SeriesEntry`
 
 ```python
 SeriesEntry(
-    namespace: str,
-    code: str,
+    namespace: str,      # lowercase snake_case
+    code: str,           # connector-native identifier (non-empty)
     title: str,
     tags: list[str] = [],
     description: str | None = None,
     metadata: dict = {},
-    properties: dict = {},
     embedding: list[float] | None = None,
 )
 ```
+
+`embedding_text()` composes the text an embedder should index: title, then `", ".join("k: v")` over metadata, then `"tags: a, b"`, all joined with `" | "`. The representation is fixed — overriding it would require reindexing.
 
 ### `SeriesMatch`
 
@@ -407,49 +429,41 @@ SeriesMatch(
     namespace: str,
     code: str,
     title: str,
-    similarity: float,
+    similarity: float,     # clamped to [0, 1]; higher is more relevant
     tags: list[str] = [],
     description: str | None = None,
     metadata: dict = {},
-    properties: dict = {},
 )
 ```
-
-`similarity` is clamped to `[0, 1]`; higher is more relevant.
 
 ### `IndexResult`
 
 ```python
-IndexResult(total: int, indexed: int, skipped: int, errors: int)
+IndexResult(total: int = 0, indexed: int = 0, skipped: int = 0, errors: int = 0)
 ```
 
-Summary returned by `Catalog.index_result()` and `ingest()`.
+Returned by `index_result()` and `ingest()`.
 
-### `EmbeddingProvider`
-
-Abstract base class for text-to-vector embedding backends.
-
-**Abstract methods**:
-
-| Method | Signature | Description |
-|---|---|---|
-| `dimension` | `@property -> int` | Output vector dimension |
-| `embed_texts` | `async (texts: list[str]) -> list[list[float]]` | Batch embed; returns L2-normalized vectors |
-| `embed_query` | `async (query: str) -> list[float]` | Single-query embed |
-
-### Bundle exceptions
+### `EmbedderInfo`
 
 ```python
-from parsimony.stores.hf_bundle import (
-    BundleError, BundleNotFoundError, BundleIntegrityError,
+EmbedderInfo(
+    model: str,          # e.g. "BAAI/bge-small-en-v1.5"
+    dim: int,
+    normalize: bool = True,
+    package: str | None = None,  # install hint surfaced in error messages
 )
 ```
 
-| Class | When it fires |
-|---|---|
-| `BundleNotFoundError` | No HF bundle published for this namespace (`try_load_remote` returns `False` in this case rather than raising) |
-| `BundleIntegrityError` | Any other failure: download, manifest corrupt, SHA / shape / size mismatch, model dim mismatch, pinned revision unavailable |
-| `BundleError` | Base — catch to handle any bundle failure |
+Persisted identity of the embedder in `meta.json`. Catalogs validate at load time that the embedder supplied matches the recorded `dim` and `normalize` flags.
+
+### `BundleNotFoundError`
+
+```python
+from parsimony.errors import BundleNotFoundError
+```
+
+Raised by `Catalog.from_url(url)` when no snapshot exists at the URL. `BundleLoader` callables in `LazyNamespaceCatalog` should catch this and return `None` to signal "no bundle published" rather than propagating.
 
 ---
 
@@ -506,52 +520,55 @@ data_store = InMemoryDataStore()
 
 ## Embedding Providers
 
-Two providers ship in-tree:
+Two concrete providers ship under `parsimony` (both lazily loaded from `parsimony._standard.embedder`). Embedders are **not** a plugin axis — users pass whichever instance they need to the catalog.
 
-### `SentenceTransformersEmbeddingProvider` (default)
+### `EmbeddingProvider`
+
+Abstract base class.
+
+| Method | Signature | Description |
+|---|---|---|
+| `dimension` | `@property -> int` | Output vector dimension |
+| `embed_texts` | `async (texts: list[str]) -> list[list[float]]` | Batch embed corpus documents |
+| `embed_query` | `async (query: str) -> list[float]` | Single-query embed |
+| `info` | `() -> EmbedderInfo` | Persisted identity for this embedder |
+
+### `SentenceTransformerEmbedder` (default, `[standard]` extra)
 
 ```python
-from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
+from parsimony import SentenceTransformerEmbedder
 
-provider = SentenceTransformersEmbeddingProvider(
-    model_id="sentence-transformers/all-MiniLM-L6-v2",
-    revision="c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
-    expected_dim=384,
+embedder = SentenceTransformerEmbedder(
+    model="BAAI/bge-small-en-v1.5",   # default
+    normalize=True,                    # default
+    device=None,                       # auto
+    batch_size=64,
 )
 ```
 
 | Parameter | Description |
 |---|---|
-| `model_id` | HF repo id; must start with `sentence-transformers/` or `parsimony-dev/` |
-| `revision` | 40-char HF commit SHA pinning the model weights |
-| `expected_dim` | Output dim; validated against the model's actual dim on first embed |
+| `model` | HF Hub identifier (`BAAI/bge-small-en-v1.5`, `intfloat/e5-small-v2`, …) |
+| `normalize` | L2-normalize output vectors; recorded in `EmbedderInfo` |
+| `device` | Optional override (`"cpu"`, `"cuda"`, `"mps"`, …) |
+| `batch_size` | Encoding batch size |
 
-- Process-wide LRU cache (size 2) keyed on `(model_id, revision)` so
-  multiple stores share one set of weights.
-- Per-instance `asyncio.Semaphore` caps concurrent embed calls at
-  `PARSIMONY_EMBED_CONCURRENCY` (default `os.cpu_count()`).
-- Vectors are L2-normalized so FAISS inner-product search == cosine similarity.
+The first attribute access that needs the model triggers loading; instantiation alone is cheap. Vectors are L2-normalized by default so the FAISS inner-product index == cosine similarity.
 
-### `LiteLLMEmbeddingProvider` (optional, [search] extra)
+### `LiteLLMEmbeddingProvider` (`[litellm]` extra)
 
 ```python
-from parsimony.embeddings.litellm import LiteLLMEmbeddingProvider
+from parsimony import Catalog, LiteLLMEmbeddingProvider
 
-provider = LiteLLMEmbeddingProvider(model="gemini/text-embedding-004", dimension=768)
+embedder = LiteLLMEmbeddingProvider(
+    model="gemini/text-embedding-004",
+    dimension=768,
+    batch_size=100,
+)
+catalog = Catalog("my_catalog", embedder=embedder)
 ```
 
-Wraps `litellm.aembedding()` for hosted embedding APIs. Requires
-`pip install parsimony-core[search]`. Batches at 100 texts per call. Applies
-L2 normalization.
-
-```python
-from parsimony import Catalog
-from parsimony.embeddings.litellm import LiteLLMEmbeddingProvider
-from parsimony.stores import SQLiteCatalogStore
-
-provider = LiteLLMEmbeddingProvider(model="gemini/text-embedding-004", dimension=768)
-catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
-```
+Wraps `litellm.aembedding()` for hosted embedding APIs (OpenAI, Gemini, Cohere, Voyage, Bedrock, …). Requires `pip install 'parsimony-core[litellm]'`. Identity (model + dimension) is supplied at construction — this provider does not introspect the remote endpoint. Outputs are L2-normalized.
 
 ---
 
@@ -559,21 +576,21 @@ catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
 
 ```python
 from parsimony import (
-    build_embedding_text,
+    catalog_key,
     code_token,
     normalize_code,
-    normalize_series_catalog_row,
     series_match_from_entry,
 )
 ```
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `build_embedding_text` | `(entry: SeriesEntry) -> str` | Compose a plain-text string from entry fields for embedding; format affects search quality |
-| `code_token` | `(code: str) -> str` | Normalize a code string to a single slug token (removes separators) |
-| `normalize_code` | `(code: str) -> str` | Lowercase normalization of namespace/code identifiers |
-| `normalize_series_catalog_row` | `(row: dict) -> SeriesEntry` | Convert a raw dict (e.g. from a database row) to a `SeriesEntry` |
-| `series_match_from_entry` | `(entry: SeriesEntry, similarity: float) -> SeriesMatch` | Construct a `SeriesMatch` from an existing `SeriesEntry` |
+| `catalog_key` | `(namespace: str, code: str) -> tuple[str, str]` | Canonical in-memory key: normalizes namespace (lowercase snake_case) and entity code (non-empty trimmed) |
+| `code_token` | `(value: str) -> str` | Provider-side helper: turn any input into a single slug token suitable for a `code` (lowercase, underscores, leading-digit guard) |
+| `normalize_code` | `(value: str) -> str` | Validate that *value* is lowercase snake_case; raises `ValueError` otherwise |
+| `series_match_from_entry` | `(entry: SeriesEntry, *, similarity: float) -> SeriesMatch` | Project a stored entry into a search result with a similarity score |
+
+For reading back a persisted entry from a Parquet snapshot, use `Catalog.from_url(...)` / `Catalog.load(...)` and iterate `catalog.entries` — the dedicated row-to-entry helper was removed.
 
 ---
 
@@ -656,7 +673,7 @@ graph LR
 
 ### FRED Connectors
 
-**Module**: `parsimony.connectors.fred`  
+**Module**: `parsimony_fred`  
 **Required dependency**: `FRED_API_KEY` environment variable
 
 #### `fred_search`

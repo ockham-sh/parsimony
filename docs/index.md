@@ -7,7 +7,7 @@ Every financial data project starts the same way: write API wrappers, parse resp
 ## Quick Start
 
 ```python
-from parsimony.connectors.fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as FRED
 
 client = FRED.bind_deps(api_key="your-fred-key")
 
@@ -18,16 +18,15 @@ print(result.provenance)  # source="fred_fetch", params={...}
 
 ## Installation
 
-```bash
-pip install parsimony-core
-```
-
-With optional extras:
+Pick what you need. The kernel has no connectors of its own:
 
 ```bash
-pip install parsimony-core[sec]         # + SEC Edgar
-pip install parsimony-core[search]      # + local SQLite catalog (HF bundle search is in base)
-pip install parsimony-core[all]         # Everything
+pip install parsimony-core                       # kernel only
+pip install parsimony-core parsimony-fred        # + FRED
+pip install parsimony-core parsimony-sdmx        # + SDMX (ECB, Eurostat, IMF, OECD, BIS, World Bank, ILO)
+pip install 'parsimony-core[standard]'           # + canonical Catalog (FAISS + BM25 + sentence-transformers + hf://)
+pip install 'parsimony-core[standard,litellm]'   # + hosted embeddings (OpenAI, Gemini, Cohere, Voyage, Bedrock)
+pip install parsimony-mcp                        # MCP server (separate distribution)
 ```
 
 !!! note "Distribution name vs import name"

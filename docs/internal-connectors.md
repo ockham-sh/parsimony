@@ -449,8 +449,8 @@ all_connectors = (
 )
 
 # Auto-index into catalog on every fetch:
-from parsimony import Catalog, SQLiteCatalogStore
-catalog = Catalog(SQLiteCatalogStore(":memory:"))
+from parsimony import Catalog
+catalog = Catalog("indexed")
 all_connectors = all_connectors.with_callback(catalog.index_result)
 ```
 

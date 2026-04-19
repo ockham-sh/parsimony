@@ -11,7 +11,7 @@ _Fetch quarterly real GDP from FRED and render a line chart._
 ```python
 import asyncio
 import altair as alt
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony_fred import fred_fetch, FredFetchParams
 
 async def main():
     conn = fred_fetch.bind_deps(api_key="YOUR_FRED_KEY")
@@ -90,15 +90,15 @@ _Enumerate a FRED release into an in-memory catalog and search it._
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
-from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
+from parsimony import Catalog
+from parsimony_fred import enumerate_fred_release, FredEnumerateParams
 
 async def main():
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    catalog = Catalog("fred")
     enum_conn = enumerate_fred_release.bind_deps(api_key="YOUR_FRED_KEY")
     # Release 50 = Employment Situation
     result = await enum_conn(FredEnumerateParams(release_id=50))
-    await catalog.index_result(result, embed=False)
+    await catalog.index_result(result)
     matches = await catalog.search("unemployment rate", limit=5, namespaces=["fred"])
     for m in matches:
         print(f"  {m.code:15s}  {m.title}")
@@ -197,7 +197,7 @@ _Fetch FRED data with OutputConfig, write to Parquet, and read it back with full
 
 ```python
 import asyncio
-from parsimony.connectors.fred import fred_fetch, FredFetchParams
+from parsimony_fred import fred_fetch, FredFetchParams
 from parsimony.result import SemanticTableResult
 
 async def main():
@@ -222,17 +222,17 @@ _Loop over several releases, index all into one catalog, then search across them
 
 ```python
 import asyncio
-from parsimony import Catalog, SQLiteCatalogStore
-from parsimony.connectors.fred import enumerate_fred_release, FredEnumerateParams
+from parsimony import Catalog
+from parsimony_fred import enumerate_fred_release, FredEnumerateParams
 
 RELEASES = {50: "Employment", 53: "GDP", 10: "CPI"}
 
 async def main():
-    catalog = Catalog(SQLiteCatalogStore(":memory:"))
+    catalog = Catalog("fred")
     enum_conn = enumerate_fred_release.bind_deps(api_key="YOUR_FRED_KEY")
     for release_id, label in RELEASES.items():
         result = await enum_conn(FredEnumerateParams(release_id=release_id))
-        idx = await catalog.index_result(result, embed=False)
+        idx = await catalog.index_result(result)
         print(f"  {label} (release {release_id}): indexed {idx.indexed}, skipped {idx.skipped}")
     namespaces = await catalog.list_namespaces()
     print(f"Namespaces: {namespaces}")
@@ -257,14 +257,12 @@ Requires `pip install parsimony-sdmx`. Dataset metadata lives in the
 ```python
 import asyncio
 from parsimony import Catalog
-from parsimony.stores import HFBundleCatalogStore
 from parsimony_sdmx.connectors.fetch import sdmx_fetch, SdmxFetchParams
 
 async def main():
-    catalog = Catalog(store=HFBundleCatalogStore(...))
-
     # Hop 1: find the yield-curve dataset
-    ds_hits = await catalog.search(
+    datasets = await Catalog.from_url("hf://ockham/catalog-sdmx_datasets")
+    ds_hits = await datasets.search(
         "Euro area government bond yield curve",
         limit=5,
         namespaces=["sdmx_datasets"],
@@ -275,9 +273,10 @@ async def main():
     # pick ECB|YC from the matches
     agency, dataset_id = "ECB", "YC"
 
-    # Hop 2: search series inside that dataset
+    # Hop 2: search series inside that dataset's per-dataset series bundle
     series_ns = f"sdmx_series_{agency.lower()}_{dataset_id.lower()}"
-    sk_hits = await catalog.search(
+    series = await Catalog.from_url(f"hf://ockham/catalog-{series_ns}")
+    sk_hits = await series.search(
         "10-year German government bond yield",
         limit=5,
         namespaces=[series_ns],

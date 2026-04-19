@@ -84,36 +84,28 @@ result.metadata_columns # [Column(name="...", role=METADATA)]
 
 ## Step 3: Explore Available Series
 
-The `parsimony-sdmx` plugin ships pre-built FAISS catalog bundles on
-HuggingFace — one for datasets across every supported agency and one
-per dataset for series. Discover what's available through the generic
-`Catalog.search` surface instead of calling one-off discovery tools:
+The `parsimony-sdmx` plugin publishes pre-built Catalog snapshots on
+HuggingFace Hub — one per namespace. Load the bundle you want with
+`Catalog.from_url` and search it directly:
 
 ```python
 from parsimony import Catalog
-from parsimony.stores import HFBundleCatalogStore
-
-catalog = Catalog(store=HFBundleCatalogStore(...))
 
 # Find datasets semantically
-datasets = await catalog.search(
-    "euro area exchange rates",
-    limit=10,
-    namespaces=["sdmx_datasets"],
-)
-for m in datasets:
+datasets_catalog = await Catalog.from_url("hf://ockham/catalog-sdmx_datasets")
+for m in await datasets_catalog.search("euro area exchange rates", limit=10):
     print(f"  [{m.namespace}:{m.code}] {m.title}")
 
-# Drill into a specific dataset's series bundle once you have dataset_key
-series = await catalog.search(
-    "daily USD EUR",
-    limit=10,
-    namespaces=["sdmx_series_ecb_exr"],
-)
+# Drill into a specific dataset's series bundle once you have the key
+series_catalog = await Catalog.from_url("hf://ockham/catalog-sdmx_series_ecb_exr")
+for m in await series_catalog.search("daily USD EUR", limit=10):
+    print(f"  [{m.namespace}:{m.code}] {m.title}")
 ```
 
 Each dataset has its own per-dataset series namespace following the
-template `sdmx_series_{agency}_{dataset_id}` (lowercased).
+template `sdmx_series_{agency}_{dataset_id}` (lowercased). The first
+`from_url` call downloads the bundle (~50–200 MB) and loads the
+embedder; subsequent calls hit the local Hugging Face cache.
 
 ---
 
@@ -128,7 +120,7 @@ export FRED_API_KEY="your-key-here"
 **Search for series:**
 
 ```python
-from parsimony.connectors.fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as FRED
 
 fred = FRED.bind_deps(api_key="your-key-here")
 
@@ -163,55 +155,51 @@ print(result.data.tail())
 
 ## Step 5: Search the Catalog
 
-parsimony ships pre-built catalog bundles for 6 central-bank namespaces
-(snb, riksbank, boc, rba, bde, treasury) on HuggingFace Hub. The first
-`search()` call per namespace downloads the bundle (~50–200 MB) and
-loads the sentence-transformers embedding model; subsequent calls hit
-the local cache.
+`parsimony.Catalog` is a Parquet + FAISS + BM25 hybrid-search catalog
+with reciprocal rank fusion. Install the `[standard]` extra to get the
+runtime:
+
+```bash
+pip install 'parsimony-core[standard]'
+```
+
+Load a published bundle by URL:
 
 ```python
 from parsimony import Catalog
-from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
-from parsimony.stores import HFBundleCatalogStore
 
-provider = SentenceTransformersEmbeddingProvider(
-    model_id="sentence-transformers/all-MiniLM-L6-v2",
-    revision="c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
-    expected_dim=384,
-)
-catalog = Catalog(HFBundleCatalogStore(embeddings=provider), embeddings=provider)
-
-matches = await catalog.search("policy rate", limit=5, namespaces=["snb"])
+catalog = await Catalog.from_url("hf://ockham/catalog-snb")
+matches = await catalog.search("policy rate", limit=5)
 for m in matches:
     print(f"  [{m.namespace}:{m.code}] {m.title}  (sim={m.similarity:.3f})")
 ```
 
-> `namespaces=[...]` is **required** — each namespace has its own
-> embedding model, so implicit cross-namespace merging is unsound.
+### Build your own catalog
 
-### Custom local catalog
-
-If you want to build your own catalog from arbitrary connector results,
-use `SQLiteCatalogStore` (in the `[search]` extra):
-
-```bash
-pip install parsimony-core[search]
-```
+Build a catalog from any `@enumerator` result and save it locally or
+publish to Hugging Face Hub:
 
 ```python
 from parsimony import Catalog
-from parsimony.stores import SQLiteCatalogStore
 
-catalog = Catalog(store=SQLiteCatalogStore(":memory:"))
+catalog = Catalog("my_catalog")
 ecb_result = await SDMX["sdmx_fetch"](
     dataset_key="ECB-EXR",
     series_key="D.USD.EUR.SP00.A",
 )
-summary = await catalog.index_result(ecb_result, embed=False)
-print(f"Indexed: {summary.indexed}, Skipped: {summary.skipped}")
+await catalog.index_result(ecb_result)
+
+await catalog.push("file:///tmp/my_catalog")      # local directory
+await catalog.push("hf://myorg/catalog-mine")     # Hugging Face Hub
 ```
 
-(`SDMX` here still refers to `parsimony_sdmx.CONNECTORS` from Step 1.)
+The canonical on-disk layout is three files in one directory: `meta.json`
++ `entries.parquet` + `embeddings.faiss`. Writes are atomic (temp-dir
+rename). `Catalog.from_url` picks the scheme handler (`file://`, `hf://`,
+`s3://` planned) automatically.
+
+Custom backends (Postgres + pgvector, Redis, in-memory mocks) subclass
+`parsimony.BaseCatalog` directly — there is no plugin axis for catalogs.
 
 ---
 

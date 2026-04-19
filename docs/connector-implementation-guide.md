@@ -1222,12 +1222,14 @@ except ImportError:
     pass
 ```
 
-Then build the catalog bundle locally:
+Then build the catalog snapshot locally:
 
 ```bash
-python -m parsimony.stores.hf_bundle.builder build <namespace> ./build/<namespace>
-# produces ./build/<namespace>/{entries.parquet, index.faiss, manifest.json}
+parsimony bundles build --target "file:///tmp/catalog-{namespace}"
+# produces /tmp/catalog-<ns>/{meta.json, entries.parquet, embeddings.faiss}
 ```
+
+The `--target` template must contain `{namespace}`. Use `hf://your-org/catalog-{namespace}` to publish to the Hub instead.
 
 ### How the Agent Uses the Catalog
 
@@ -1607,111 +1609,68 @@ example of typed connectors per operation.
 
 ---
 
-## Publishing HF Catalog Bundles
+## Publishing Catalog Snapshots
 
-After building a catalog with your new `@enumerator`, publish it as a
-HuggingFace Hub bundle under the `parsimony-dev` organization so other users
-get instant search without running your enumerator themselves.
+Once your `@enumerator` works end-to-end, publish the resulting catalog as a snapshot so users get instant search without running the enumerator themselves. A snapshot is three files in one directory — `meta.json`, `entries.parquet`, `embeddings.faiss` — written atomically via temp-dir rename. The scheme in the target URL selects the transport.
 
 ### How it works
 
-The `Catalog` class lazily downloads pre-built bundles from HuggingFace Hub.
-When a user searches for a namespace that isn't already loaded, the store
-(`HFBundleCatalogStore`) asks `HfApi.repo_info` for the current revision,
-downloads `entries.parquet` + `index.faiss` + `manifest.json` via
-`snapshot_download`, verifies SHA-256 integrity against the manifest, and
-loads the bundle for FAISS vector search. If no bundle is published, the
-catalog falls back to running the `@enumerator` live (slower).
+`Catalog.from_url(url)` dispatches on the URL scheme (`file://`, `hf://`, `s3://` planned) and returns a populated catalog. `Catalog.push(url)` writes the three files atomically to that URL. The embedder identity recorded in `meta.json` (`model`, `dim`, `normalize`) must match the embedder supplied at load time or `ValueError` is raised.
 
-Each namespace lives in its own HF dataset repo:
-`parsimony-dev/<namespace>`.
+Each namespace typically lives in its own snapshot — `hf://your-org/catalog-<namespace>` is the convention, but no naming is enforced.
 
-### Publishing your bundle
+### Publishing your snapshot
 
 Prerequisites:
 
-- Write access to the `parsimony-dev` HF org.
+- Write access to the target Hugging Face org.
 - A write-scoped HF token exported as `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`).
-- The pinned embedding-model revision exported as `PARSIMONY_EMBED_REVISION`
-  (full 40-char commit SHA of the `sentence-transformers/all-MiniLM-L6-v2`
-  weights).
+- `parsimony-core[standard]` installed in the build environment.
 
-The publish CLI has three safety rails:
+The `bundles` CLI walks every declared `CatalogSpec` and builds+pushes each namespace:
 
-| Flag | Purpose |
-|---|---|
-| `--dry-run` | Build locally, print the manifest JSON, skip upload entirely |
-| `--yes` | Required for an actual upload (prevents stray CLI invocations) |
-| `--allow-shrink` | Permit publishing when the fresh `entry_count` is <50% of the currently-published bundle (otherwise refused) |
-| `--keep-dir <path>` | Copy the built bundle into a caller-owned directory before the tempdir is cleaned up |
+```bash
+parsimony bundles list
+parsimony bundles build --target "hf://your-org/catalog-{namespace}"
+```
+
+`{namespace}` in `--target` is required — it is substituted per-namespace so every catalog lands in its own destination.
 
 1. **Build locally and inspect:**
    ```bash
-   python -m parsimony.stores.hf_bundle.builder build <namespace> ./build/<namespace>
-   ls ./build/<namespace>
-   # entries.parquet  index.faiss  manifest.json
+   parsimony bundles build --target "file:///tmp/catalog-{namespace}"
+   ls /tmp/catalog-<namespace>
+   # meta.json  entries.parquet  embeddings.faiss
    ```
 
-2. **Verify the bundle loads:**
+2. **Verify the snapshot loads:**
    ```python
-   from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
-   from parsimony.stores.hf_bundle.store import HFBundleCatalogStore
+   from parsimony import Catalog
 
-   provider = SentenceTransformersEmbeddingProvider(
-       model_id="sentence-transformers/all-MiniLM-L6-v2",
-       revision="<pinned-sha>",
-       expected_dim=384,
-   )
-   store = HFBundleCatalogStore(embeddings=provider, cache_dir="./build")
-   # Use try_load_remote with cache-only semantics by setting PARSIMONY_CATALOG_PIN
-   # to a bundle revision you've placed in ./build/<namespace>/<revision>/.
+   catalog = await Catalog.from_url("file:///tmp/catalog-<namespace>")
+   print(await catalog.list_namespaces())
+   matches = await catalog.search("sample query", limit=5, namespaces=["<namespace>"])
    ```
 
-3. **Dry-run publish to preview the manifest:**
+3. **Publish to the Hub:**
    ```bash
-   python -m parsimony.stores.hf_bundle.builder publish <namespace> --dry-run
+   parsimony bundles build --target "hf://your-org/catalog-{namespace}"
    ```
-   The full manifest JSON is written to stdout; no upload happens.
+   Each namespace's three files are uploaded via `huggingface_hub.upload_folder`. Writes are atomic locally (temp-dir rename); HF commits are one per namespace.
 
-4. **Publish:**
-   ```bash
-   python -m parsimony.stores.hf_bundle.builder publish <namespace> --yes
-   ```
-   Runs the builder, writes the three files, fetches the currently-published
-   `entry_count` for a shrink guard, and calls
-   `HfApi.upload_folder(..., allow_patterns=[...], ...)` to commit the
-   bundle to `parsimony-dev/<namespace>`. The publish report (commit SHA,
-   entry counts, shrink ratio, status) is written to stdout as JSON.
+### Pinning snapshots for reproducibility
 
-### Bundle versioning
+`hf://` URLs support a `@<revision>` suffix for pinning to a specific commit SHA, branch, or tag:
 
-Cache freshness is keyed on the HF commit SHA. To pin to a specific
-revision for reproducibility (CI, regression tests, customer repro):
-
-```bash
-export PARSIMONY_CATALOG_PIN=<40-char-commit-sha>
+```python
+catalog = await Catalog.from_url("hf://your-org/catalog-fred@<40-char-commit-sha>")
 ```
 
-When `PARSIMONY_CATALOG_PIN` is set, the store skips the HEAD check and
-serves only that revision; if the pin isn't in the local cache and HF is
-unreachable, `BundleIntegrityError` is raised (fail-closed — pinning is a
-security/reproducibility contract).
+CI and regression tests should pin to a known-good commit so a fresh snapshot upstream does not change test results.
 
 ### Cache layout
 
-The client cache lives at `$PARSIMONY_CACHE_DIR` (defaults to the
-platformdirs user cache) with layout:
-
-```
-<cache_base>/<namespace>/<commit_sha>/
-    manifest.json
-    entries.parquet
-    index.faiss
-```
-
-One revision per namespace is kept — a fresh download cleans up sibling
-SHA directories. The commit SHA is encoded in the directory name; there
-is no sidecar metadata file.
+The Hugging Face Hub cache is owned by `huggingface_hub` (default: `~/.cache/huggingface/hub`). `Catalog.from_url("hf://...")` calls `snapshot_download`, which handles revision resolution and local caching; parsimony does not maintain its own cache layer.
 
 ---
 

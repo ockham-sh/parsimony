@@ -8,28 +8,25 @@ parsimony requires **Python 3.11+**.
 
 ### What are the optional extras?
 
-SDMX support and the catalog-bundle subsystem (FAISS + sentence-transformers
-+ huggingface_hub) are included in the base install. Optional extras:
+The kernel (`parsimony-core`) is tiny — it ships the connector primitives, the `BaseCatalog` ABC, and plugin discovery. The canonical catalog and hosted-embeddings paths are extras:
 
 | Extra | Install command | What it enables |
 |---|---|---|
-| `search` | `pip install parsimony-core[search]` | Legacy local-SQLite search path via LiteLLM embeddings + sqlite-vec |
-| `sec` | `pip install parsimony-core[sec]` | SEC Edgar connector via edgartools |
-| `mcp` | `pip install parsimony-core[mcp]` | MCP server for AI agents |
-| `all` | `pip install parsimony-core[all]` | Everything |
+| `standard` | `pip install parsimony-core[standard]` | Canonical `Catalog` — Parquet + FAISS + BM25 + sentence-transformers + `hf://` loader |
+| `litellm` | `pip install parsimony-core[standard,litellm]` | Hosted embeddings via the LiteLLM unified API |
+| `s3` | `pip install parsimony-core[standard,s3]` | `s3://` URLs in `Catalog.from_url` / `Catalog.push` (planned) |
+| `all` | `pip install parsimony-core[all]` | `standard + litellm + s3` |
 
-Install multiple extras at once:
+Connectors ship as separate distributions — `parsimony-fred`, `parsimony-sdmx`, `parsimony-fmp`, etc. — discovered through the `parsimony.providers` entry point. Install whichever sources you need alongside the kernel:
 
 ```bash
-pip install "parsimony-core[sec,search]"
+pip install parsimony-core parsimony-fred parsimony-sdmx
 ```
 
-### I get `ModuleNotFoundError: No module named 'edgartools'`
-
-The SEC Edgar connector requires a separately-installed package:
+The MCP server lives in its own distribution:
 
 ```bash
-pip install edgartools
+pip install parsimony-mcp
 ```
 
 ---
@@ -63,7 +60,7 @@ python my_script.py
 In code, the `build_connectors_from_env()` factory reads `os.environ` and injects keys automatically:
 
 ```python
-from parsimony.connectors import build_connectors_from_env
+from parsimony import build_connectors_from_env
 
 connectors = build_connectors_from_env()
 ```
@@ -71,7 +68,7 @@ connectors = build_connectors_from_env()
 You can also bind keys manually on individual connectors:
 
 ```python
-from parsimony.connectors.fred import fred_fetch
+from parsimony_fred import fred_fetch
 
 bound = fred_fetch.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")
@@ -140,7 +137,7 @@ nest_asyncio.apply()
 You called a connector that requires API keys without binding them first. Call `bind_deps()`:
 
 ```python
-from parsimony.connectors.fred import fred_fetch
+from parsimony_fred import fred_fetch
 
 bound = fred_fetch.bind_deps(api_key="your-key")
 result = await bound(series_id="GDP")

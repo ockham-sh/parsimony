@@ -33,20 +33,19 @@ pip install parsimony-core
 
 ### Optional extras
 
-SDMX support (ECB, Eurostat, IMF, World Bank, BIS) is included in the base install.
+Connectors ship as separate distributions (discovered via the `parsimony.providers` entry point): `parsimony-fred`, `parsimony-sdmx`, `parsimony-fmp`, etc. The kernel itself has no connectors.
 
 | Extra | Install command | What it enables |
 |-------|----------------|-----------------|
-| `search` | `pip install "parsimony-core[search]"` | Semantic catalog search via LiteLLM embeddings + sqlite-vec |
-| `sec` | `pip install "parsimony-core[sec]"` | SEC Edgar connector via edgartools |
-| `mcp` | `pip install "parsimony-core[mcp]"` | MCP server for AI agents |
-| `all` | `pip install "parsimony-core[all]"` | Everything |
+| `standard` | `pip install "parsimony-core[standard]"` | Canonical `Catalog` — FAISS + BM25 + sentence-transformers + `hf://` loader |
+| `litellm` | `pip install "parsimony-core[standard,litellm]"` | Hosted embeddings via the LiteLLM unified API (OpenAI, Gemini, Cohere, Voyage, Bedrock, …) |
+| `s3` | `pip install "parsimony-core[standard,s3]"` | `s3://` URLs in `Catalog.from_url` / `Catalog.push` (planned) |
+| `all` | `pip install "parsimony-core[all]"` | `standard + litellm + s3` |
 
-Two connectors require separately-installed packages:
+The MCP server lives in a separate distribution:
 
 ```bash
-pip install edgartools                        # SEC Edgar connector
-pip install financial-reports-generated-client  # Financial Reports connector
+pip install parsimony-mcp
 ```
 
 ### Python version
@@ -302,108 +301,94 @@ async def fmp_examples():
 
 ## Using the Catalog
 
-The catalog has two personas:
+`parsimony.Catalog` (installed via `[standard]`) is a hybrid-search catalog: Parquet rows + FAISS vectors + BM25 keywords + reciprocal rank fusion. Custom backends subclass `BaseCatalog` directly — there is no plugin axis for catalogs.
 
-1. **Read pre-built bundles** from HuggingFace Hub (the default path for
-   built-in namespaces). Zero configuration — just search.
-2. **Build a custom catalog** locally from connector enumerations. Uses
-   `SQLiteCatalogStore` from the `[search]` extra.
+The catalog has three common flows:
 
-### Reading pre-built HF bundles
+1. **Load a published snapshot** via `Catalog.from_url("hf://...")` or `file:///...`.
+2. **Build a catalog locally** from an `@enumerator` result, then save it or push to a URL.
+3. **Auto-populate on search** via `LazyNamespaceCatalog`, using either a `bundle_loader` or a `Connectors` collection.
+
+### Loading a published snapshot
 
 ```python
 import asyncio
 from parsimony import Catalog
-from parsimony.embeddings.sentence_transformers import SentenceTransformersEmbeddingProvider
-from parsimony.stores import HFBundleCatalogStore
 
-async def hf_bundle_example():
-    provider = SentenceTransformersEmbeddingProvider(
-        model_id="sentence-transformers/all-MiniLM-L6-v2",
-        revision="c9745ed1d9f207416be6d2e6f8de32d1f16199bf",
-        expected_dim=384,
-    )
-    catalog = Catalog(HFBundleCatalogStore(embeddings=provider), embeddings=provider)
-
-    # First call per namespace downloads the bundle; subsequent calls hit cache.
+async def load_snb():
+    catalog = await Catalog.from_url("hf://ockham/catalog-snb")
     matches = await catalog.search("policy rate", limit=5, namespaces=["snb"])
-    for match in matches:
-        print(f"  {match.namespace}/{match.code}: {match.title}  (sim={match.similarity:.3f})")
+    for m in matches:
+        print(f"  {m.namespace}/{m.code}: {m.title}  (sim={m.similarity:.3f})")
 
-asyncio.run(hf_bundle_example())
+asyncio.run(load_snb())
 ```
 
-> `namespaces=[...]` is **required** and non-empty. Each bundle pins its
-> own embedding model in the manifest; a query vector is only valid
-> within namespaces that share a model.
+The first `from_url` call downloads the three-file bundle (`meta.json`, `entries.parquet`, `embeddings.faiss`) into the local Hugging Face cache; subsequent calls hit the cache. The embedder recorded in `meta.json` is reconstructed automatically — its `dimension` and `normalize` flags must match at query time or `ValueError` is raised.
 
-### Reproducible builds: pin a revision
-
-For CI and customer reproductions, pin every namespace to a specific HF
-commit SHA:
-
-```bash
-export PARSIMONY_CATALOG_PIN=<40-char-commit-sha>
-```
-
-The store skips the HEAD freshness check, serves only the pinned
-revision, and raises `BundleIntegrityError` if the pin isn't available
-locally and HF is unreachable (fail-closed).
-
-### Building a custom local catalog
-
-If you have connectors with `@enumerator` variants that aren't
-published as HF bundles, index them into a local `SQLiteCatalogStore`:
-
-```bash
-pip install parsimony[search]
-```
+### Building a catalog locally
 
 ```python
-from parsimony import Catalog
-from parsimony.connectors import build_connectors_from_env
-from parsimony.embeddings.litellm import LiteLLMEmbeddingProvider
-from parsimony.stores import SQLiteCatalogStore
+from parsimony import Catalog, LiteLLMEmbeddingProvider
+from parsimony import build_connectors_from_env
 
-async def custom_catalog():
+async def build_fred():
     connectors = build_connectors_from_env()
-    provider = LiteLLMEmbeddingProvider(
+    embedder = LiteLLMEmbeddingProvider(
         model="gemini/text-embedding-004",
         dimension=768,
     )
-    catalog = Catalog(SQLiteCatalogStore(":memory:"), embeddings=provider)
+    catalog = Catalog("fred", embedder=embedder)
 
     result = await connectors["enumerate_fred_release"](release_id=10)
-    summary = await catalog.index_result(result, embed=True)
+    summary = await catalog.index_result(result)
     print(f"Indexed {summary.indexed} series, skipped {summary.skipped}")
 
-    matches = await catalog.search("unemployment rate", limit=5, namespaces=["fred"])
-    for match in matches:
-        print(f"  {match.namespace}/{match.code}: {match.title}")
+    # Save locally, or publish:
+    await catalog.push("file:///tmp/catalog-fred")
+    # await catalog.push("hf://your-org/catalog-fred")
 ```
 
-### Using the `dry_run` option
+`Catalog.push` writes atomically (temp directory + rename), so a partially-written snapshot is never visible at the destination.
+
+### Auto-populating with LazyNamespaceCatalog
+
+Wrap any catalog to back-fill missing namespaces on the first `search` that needs them:
 
 ```python
-# Preview what would be indexed without writing to the store
-summary = await catalog.index_result(result, embed=False, dry_run=True)
+from parsimony import Catalog
+from parsimony.bundles import LazyNamespaceCatalog
+
+base = Catalog("multi")
+wrapped = LazyNamespaceCatalog(
+    base,
+    connectors=connectors,
+    bundle_loader=lambda ns: Catalog.from_url(f"hf://ockham/catalog-{ns}"),
+)
+
+matches = await wrapped.search("inflation", limit=5, namespaces=["fred"])
+```
+
+On a miss, `LazyNamespaceCatalog` tries the `bundle_loader` first; if it returns `None` (or raises `BundleNotFoundError`), the wrapper looks for an `@enumerator` in `connectors` whose KEY column declares that namespace and runs it to populate `base`. Confirmed misses are cached; call `wrapped.invalidate(namespace=None)` to clear.
+
+### Dry-run indexing
+
+```python
+summary = await catalog.index_result(result, dry_run=True)
 print(f"Would index {summary.indexed} entries, skip {summary.skipped}")
 ```
 
-### Listing and retrieving catalog entries
+### Browsing entries
 
 ```python
-# List all loaded namespaces
 namespaces = await catalog.list_namespaces()
 
-# Paginate through entries in a namespace (filter pushed to pyarrow.compute)
-entries, total = await catalog.list_entries(
-    namespace="snb", q="policy", limit=50, offset=0
+entries, total = await catalog.list(
+    namespace="fred", q="policy", limit=50, offset=0,
 )
 
-# Retrieve a specific entry (O(1) via a prebuilt code -> row_id index)
-entry = await catalog.get_entry(namespace="snb", code="...")
-if entry:
+entry = await catalog.get(namespace="fred", code="UNRATE")
+if entry is not None:
     print(entry.title)
 ```
 
@@ -493,13 +478,13 @@ all_connectors = build_connectors_from_env() + Connectors([bound])
 Callbacks let you react to every result produced by a connector, for example to index into a catalog or emit a metric:
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore, SemanticTableResult
+from parsimony import Catalog, SemanticTableResult
 
-catalog = Catalog(SQLiteCatalogStore(":memory:"))
+catalog = Catalog("auto_indexed")
 
 async def auto_index(result):
     if isinstance(result, SemanticTableResult):
-        await catalog.index_result(result, embed=False)
+        await catalog.index_result(result)
 
 # Attach callback to a single connector
 logged_connector = connectors["fred_fetch"].with_callback(auto_index)
@@ -638,7 +623,7 @@ Both forms are accepted:
 result = await connectors["fred_fetch"](series_id="GDP")
 
 # Pre-built Pydantic model
-from parsimony.connectors.fred import FredFetchParams
+from parsimony_fred import FredFetchParams
 result = await connectors["fred_fetch"](FredFetchParams(series_id="GDP"))
 ```
 
@@ -647,13 +632,13 @@ Note: raw `dict` is **not** accepted. Use keyword arguments or a typed model.
 ### Pattern 3: Bulk catalog indexing from an enumerator
 
 ```python
-from parsimony import Catalog, SQLiteCatalogStore
+from parsimony import Catalog
 
-catalog = Catalog(SQLiteCatalogStore(":memory:"))
+catalog = Catalog("fred")
 
 # Enumerate and index
 result = await connectors["enumerate_fred_release"](release_id=10)
-summary = await catalog.index_result(result, embed=False)
+summary = await catalog.index_result(result)
 print(f"Catalog now has {summary.indexed} entries")
 ```
 
@@ -681,18 +666,17 @@ if "eodhd_fetch" in connectors:
 
 ## MCP Server (Coding Agent Integration)
 
-parsimony includes an MCP server that exposes search and discovery connectors as native tools for coding agents (Claude Code, Cursor, Windsurf). The agent can search for data directly, then fetch and analyze it via code execution.
+The MCP server is a separate distribution — `parsimony-mcp`. It exposes every installed tool-tagged connector to coding agents (Claude Code, Cursor, Windsurf) so the agent can search for data directly, then fetch and analyze it via code execution.
 
 ```bash
-pip install -e ".[mcp]"
+pip install parsimony-mcp
 ```
 
 ```json
 {
   "mcpServers": {
     "parsimony": {
-      "command": "python3",
-      "args": ["-m", "parsimony.mcp"],
+      "command": "parsimony-mcp",
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"
@@ -702,4 +686,4 @@ pip install -e ".[mcp]"
 }
 ```
 
-See [docs/mcp-setup.md](mcp-setup.md) for full configuration, environment variables, and how to expose new connectors as MCP tools.
+See [docs/mcp-setup.md](mcp-setup.md) for full configuration and how to expose new connectors as MCP tools.

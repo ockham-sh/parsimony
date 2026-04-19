@@ -14,21 +14,22 @@ Typed, composable data connectors for Python. A small kernel; every data source 
 - **One calling convention.** `await connectors["name"](params)` across every data source. Parameters are Pydantic models; results carry provenance.
 - **Install what you need.** `pip install parsimony parsimony-fred parsimony-sdmx` — the kernel composes whatever is installed.
 - **Private connectors as a first-class path.** Customer-private and vendor-published plugins use the same entry-point contract as official ones; the kernel cannot tell them apart.
-- **MCP-ready.** Every connector is agent-addressable via the Model Context Protocol.
+- **MCP-ready.** Connectors are agent-addressable via the [Model Context Protocol](https://modelcontextprotocol.io/) — the server lives in the separate [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp) distribution.
 
 ## Install
 
 Pick what you need. The kernel has no connectors of its own:
 
 ```bash
-pip install parsimony                 # kernel only (tiny footprint)
-pip install parsimony parsimony-fred  # + FRED
-pip install parsimony parsimony-sdmx  # + SDMX (ECB, Eurostat, IMF, OECD, BIS, World Bank, ILO)
-pip install parsimony[catalog]        # + HF bundle runtime for catalog search
-pip install parsimony[mcp]            # + MCP server scaffolding
+pip install parsimony-core                       # kernel only (tiny footprint)
+pip install parsimony-core parsimony-fred        # + FRED
+pip install parsimony-core parsimony-sdmx        # + SDMX (ECB, Eurostat, IMF, OECD, BIS, World Bank, ILO)
+pip install 'parsimony-core[standard]'           # + canonical Catalog (FAISS + BM25 + sentence-transformers, hf:// loader)
+pip install 'parsimony-core[standard,litellm]'   # + LiteLLMEmbeddingProvider (OpenAI, Gemini, Cohere, Voyage, Bedrock)
+pip install parsimony-mcp                        # MCP server (separate distribution)
 ```
 
-> The kernel currently publishes on PyPI as **`parsimony-core`** until the bare `parsimony` name claim resolves. Imports remain `from parsimony import ...` either way.
+> Imports are always `from parsimony import ...`; the bare `parsimony` PyPI name is squatted, so the distribution ships as `parsimony-core`.
 
 Full list of officially-maintained connectors: [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
 
@@ -82,7 +83,7 @@ Every data source is a separate distribution implementing one contract:
 # your-connector/pyproject.toml
 [project]
 name = "parsimony-yourname"
-dependencies = ["parsimony>=0.1.0,<0.3", "pydantic"]
+dependencies = ["parsimony-core>=0.1.0,<0.3", "pydantic"]
 classifiers = ["Framework :: Parsimony :: Contract 1"]
 
 [project.entry-points."parsimony.providers"]
@@ -121,12 +122,14 @@ See [`SECURITY.md`](SECURITY.md) for disclosure.
 
 ## MCP Server
 
+The MCP server is a separate distribution, [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp):
+
 ```bash
-pip install parsimony[mcp]
-python -m parsimony.mcp
+pip install parsimony-mcp
+parsimony-mcp
 ```
 
-Every tool-tagged connector becomes an MCP tool. See [`docs/mcp-setup.md`](docs/mcp-setup.md).
+Every tool-tagged connector becomes an MCP tool.
 
 ## Documentation
 

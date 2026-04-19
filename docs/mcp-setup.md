@@ -1,14 +1,18 @@
 # MCP Server Setup
 
-parsimony includes an MCP (Model Context Protocol) server that exposes search and discovery connectors as native tools for coding agents like Claude Code, Cursor, and Windsurf.
+The MCP (Model Context Protocol) server for parsimony lives in a **separate distribution**: [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp). It exposes every tool-tagged connector from every installed `parsimony.providers` plugin as a native tool for coding agents like Claude Code, Cursor, and Windsurf.
 
 ## Installation
 
 ```bash
-pip install -e ".[mcp]"
+pip install parsimony-mcp
 ```
 
-This adds the `mcp` and `tabulate` dependencies.
+The distribution vendors an `mcp` CLI entry point named `parsimony-mcp`. Install it alongside the kernel and whichever connector plugins you want exposed:
+
+```bash
+pip install parsimony-core parsimony-mcp parsimony-fred parsimony-sdmx
+```
 
 ## Configuration
 
@@ -23,8 +27,7 @@ Add to `~/.claude.json` under `mcpServers`:
   "mcpServers": {
     "parsimony": {
       "type": "stdio",
-      "command": "python3",
-      "args": ["-m", "parsimony.mcp"],
+      "command": "parsimony-mcp",
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"
@@ -42,8 +45,7 @@ Add to your MCP configuration file (typically `.cursor/mcp.json` or equivalent):
 {
   "mcpServers": {
     "parsimony": {
-      "command": "python3",
-      "args": ["-m", "parsimony.mcp"],
+      "command": "parsimony-mcp",
       "env": {
         "FRED_API_KEY": "your-key",
         "FMP_API_KEY": "your-key"
@@ -70,12 +72,12 @@ SDMX connectors (ECB, Eurostat, IMF, World Bank — install `parsimony-sdmx`) an
 
 ## What Gets Exposed
 
-The MCP server exposes connectors tagged `"tool"` — these are search and discovery connectors that return small, context-friendly results. Bulk data fetch connectors are not exposed as MCP tools; agents use them via code execution with `from parsimony import client`.
+The MCP server exposes connectors tagged `"tool"` — these are search and discovery operations that return small, context-friendly results. Bulk data-fetch connectors are not exposed as MCP tools; agents use them via code execution with `from parsimony import client`.
 
-Currently exposed tools (~18):
+Exact tool list depends on which plugin distributions are installed. Typical examples:
 
-- **FRED**: `fred_search` (via `parsimony-fred` plugin)
-- **SDMX**: discovery moved to the generic `catalog_search` tool against the `sdmx_datasets` and `sdmx_series_{agency}_{dataset_id}` namespaces shipped by the `parsimony-sdmx` plugin.
+- **FRED**: `fred_search` (via `parsimony-fred`)
+- **SDMX**: the generic `catalog_search` tool against the `sdmx_datasets` and per-dataset `sdmx_series_{agency}_{dataset_id}` bundles shipped by `parsimony-sdmx`
 - **FMP**: `fmp_search`, `fmp_taxonomy`, `fmp_company_profile`, `fmp_peers`, `fmp_index_constituents`, `fmp_market_movers`, `fmp_screener`
 - **SEC Edgar**: `sec_edgar_find_company`, `sec_edgar_company_profile`, `sec_edgar_search_filings`
 - **Financial Reports**: `fr_companies_search`, `fr_isic_browse`, `fr_isin_lookup`
@@ -84,23 +86,23 @@ Currently exposed tools (~18):
 
 The MCP server is a thin bridge between parsimony's `Connectors` collection and the MCP protocol:
 
-1. On startup, `build_connectors_from_env()` loads all connectors with available API keys
-2. Connectors tagged `"tool"` are filtered and registered as MCP tools
-3. Each tool's `name`, `description`, and `inputSchema` come directly from the connector metadata
-4. Server instructions (injected into the agent's system prompt) are generated from `connectors.to_llm(context="mcp")`
+1. On startup, `build_connectors_from_env()` loads every discovered `parsimony.providers` plugin whose required env vars are set.
+2. Connectors tagged `"tool"` are filtered and registered as MCP tools.
+3. Each tool's `name`, `description`, and `inputSchema` come directly from the connector metadata.
+4. Server instructions (injected into the agent's system prompt) are generated from `connectors.to_llm(context="mcp")`.
 
 ## Running Manually
 
 ```bash
-# Test that the server starts
-python -m parsimony.mcp
+# Smoke test — the server communicates over stdio so there is no visible output.
+parsimony-mcp
 ```
 
-The server communicates over stdio — it won't produce visible output. Press Ctrl+C to stop.
+Press Ctrl+C to stop.
 
 ## Adding New Tools
 
-To expose a new connector as an MCP tool, add `"tool"` to its tags:
+To expose a new connector as an MCP tool, add `"tool"` to its tags in whichever plugin distribution owns it:
 
 ```python
 @connector(tags=["macro", "tool"])
@@ -108,4 +110,4 @@ async def my_search(params: MySearchParams, *, api_key: str) -> Result:
     ...
 ```
 
-The MCP server picks it up automatically on next restart.
+The MCP server picks it up automatically on the next restart.

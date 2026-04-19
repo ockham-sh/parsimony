@@ -44,8 +44,8 @@ catalog = [
 # Legacy SQLite-vec + hosted embedding API path. Retained as an extra for
 # users who want local SQLite-based indexing instead of HF bundles.
 search = ["litellm>=1.59.0,<2", "sqlite-vec>=0.1.6"]
-mcp = ["mcp>=1.0.0", "tabulate>=0.9.0"]
-all = ["parsimony-core[catalog,search,mcp]"]
+# MCP server lives in the separate parsimony-mcp distribution.
+all = ["parsimony-core[catalog,search]"]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
@@ -110,7 +110,6 @@ markers = [
 
 [tool.coverage.run]
 omit = [
-    "parsimony/mcp/__main__.py",
     "parsimony/embeddings/__init__.py",
     # Requires a real HuggingFace-hosted model (torch + sentence-transformers)
     # to exercise; tests use FakeEmbeddingProvider (tests/hf_bundle_helpers.py).

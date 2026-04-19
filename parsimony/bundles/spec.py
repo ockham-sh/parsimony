@@ -30,11 +30,11 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Final, TypeAlias
 
-from parsimony.bundles.errors import BundleSpecError
-
 DEFAULT_TARGET: Final[str] = "hf_bundle"
-"""Default catalog target name. The HF bundle target ships in
-:mod:`parsimony.bundles.targets`.
+"""Default catalog target name — kept for backwards wiring inside the
+plugin-author surface. The build pipeline resolves the target against the
+standard :class:`~parsimony.Catalog` (``hf://`` / ``file://`` / ``s3://``)
+rather than the legacy ``parsimony.bundles.targets`` registry.
 """
 
 # Namespaces become HuggingFace dataset repo IDs (``parsimony-dev/<namespace>``)
@@ -46,12 +46,12 @@ _NAMESPACE_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$"
 
 def _validate_namespace(value: str, *, field_name: str) -> None:
     if not isinstance(value, str) or not value:
-        raise BundleSpecError(f"{field_name} must be a non-empty string")
+        raise ValueError(f"{field_name} must be a non-empty string")
     if not _NAMESPACE_RE.match(value):
-        raise BundleSpecError(
+        raise ValueError(
             f"{field_name}={value!r} contains characters outside the allowed set "
-            "(lowercase letters, digits, hyphen, underscore; must start with a letter or digit; max 64 chars)",
-            next_action="rename the namespace to match ^[a-z0-9][a-z0-9_-]{0,63}$",
+            "(lowercase letters, digits, hyphen, underscore; must start with a letter or digit; max 64 chars). "
+            "Rename the namespace to match ^[a-z0-9][a-z0-9_-]{0,63}$"
         )
 
 
@@ -103,16 +103,16 @@ class CatalogSpec:
 
     def __post_init__(self) -> None:
         if not callable(self.plan):
-            raise BundleSpecError(
-                "CatalogSpec.plan must be a callable (no string/dotted-path lookup)",
-                next_action="pass the function object directly, not its name",
+            raise ValueError(
+                "CatalogSpec.plan must be a callable (no string/dotted-path lookup). "
+                "Pass the function object directly, not its name."
             )
         if isinstance(self.plan, str):
-            raise BundleSpecError("CatalogSpec.plan must not be a string")
+            raise ValueError("CatalogSpec.plan must not be a string")
         if not isinstance(self.target, str) or not self.target:
-            raise BundleSpecError("CatalogSpec.target must be a non-empty string")
+            raise ValueError("CatalogSpec.target must be a non-empty string")
         if not isinstance(self.embed, bool):
-            raise BundleSpecError("CatalogSpec.embed must be a bool")
+            raise ValueError("CatalogSpec.embed must be a bool")
         if self.static_namespace is not None:
             _validate_namespace(self.static_namespace, field_name="CatalogSpec.static_namespace")
 
@@ -158,11 +158,10 @@ def from_decorator_kwargs(
     :meth:`CatalogSpec.static`) are trusted by construction.
     """
     if not isinstance(value, CatalogSpec):
-        raise BundleSpecError(
+        raise ValueError(
             "catalog= must be a CatalogSpec instance "
             f"(got {type(value).__name__}); construct one via CatalogSpec(plan=...) "
-            "or CatalogSpec.static(namespace=...)",
-            next_action="construct the typed dataclass at the @enumerator call site",
+            "or CatalogSpec.static(namespace=...) at the @enumerator call site.",
         )
     if value.static_namespace is None:
         _validate_plan_provenance(value.plan, connector_module=connector_module)
@@ -184,17 +183,17 @@ def _validate_plan_provenance(
     """
     plan_module = getattr(plan, "__module__", None)
     if not isinstance(plan_module, str):
-        raise BundleSpecError(
+        raise ValueError(
             "CatalogSpec.plan callable has no __module__ — cannot verify origin",
         )
     plan_root = plan_module.split(".", 1)[0]
     connector_root = connector_module.split(".", 1)[0]
     if plan_root != connector_root:
-        raise BundleSpecError(
+        raise ValueError(
             f"CatalogSpec.plan defined in {plan_module!r} but the connector "
             f"lives in {connector_module!r} — plan must originate from the same plugin "
-            f"(top-level package: {connector_root!r})",
-            next_action="move the plan function into the connector's package",
+            f"(top-level package: {connector_root!r}). "
+            "Move the plan function into the connector's package."
         )
 
 
@@ -225,7 +224,7 @@ def to_async(
         iterable = source() if callable(source) else source
         for item in iterable:
             if not isinstance(item, CatalogPlan):
-                raise BundleSpecError(
+                raise ValueError(
                     f"to_async source yielded {type(item).__name__}, expected CatalogPlan",
                 )
             yield item
@@ -251,13 +250,13 @@ async def materialize(spec: CatalogSpec) -> list[CatalogPlan]:
     plans: list[CatalogPlan] = []
     iterator = spec.plan()
     if not inspect.isasyncgen(iterator):
-        raise BundleSpecError(
+        raise ValueError(
             f"CatalogSpec.plan must return an async iterator; "
             f"got {type(iterator).__name__}. Wrap sync sources with to_async().",
         )
     async for item in iterator:
         if not isinstance(item, CatalogPlan):
-            raise BundleSpecError(
+            raise ValueError(
                 f"plan generator yielded {type(item).__name__}, expected CatalogPlan",
             )
         plans.append(item)

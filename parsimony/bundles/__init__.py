@@ -1,32 +1,30 @@
 """Plugin-owned catalog bundle pipeline.
 
-A bundle is a Parquet rowstore + FAISS vector index + JSON manifest packaged
-under a single namespace and published to one HuggingFace dataset repo.
+A bundle is a published snapshot of a :class:`~parsimony.Catalog` under one
+namespace. The on-disk layout (``meta.json`` + ``entries.parquet`` +
+``embeddings.faiss``) is owned by the standard catalog implementation; this
+package provides the **declarative layer** plugin authors use to attach a
+publishable catalog to their ``@enumerator`` functions.
 
-Plugin authors import the decorator-facing primitives from this namespace:
+Public surface:
 
 * :class:`CatalogSpec` / :class:`CatalogPlan` — attach via ``@enumerator(catalog=...)``.
-  Use ``CatalogSpec.static(namespace=...)`` for the one-namespace-one-bundle
-  pattern; ``CatalogSpec(plan=...)`` for dynamic plans yielding N items.
+  Use :meth:`CatalogSpec.static` for the one-namespace-one-bundle pattern;
+  ``CatalogSpec(plan=...)`` for dynamic plans yielding N items.
 * :func:`to_async` — wrap a sync source so the build pipeline does not branch.
-* :class:`BundleError` / :class:`BundleNotFoundError` / :class:`BundleSpecError` —
-  errors plugin code may catch. ``BundleNotFoundError`` is distinct because
-  callers legitimately catch it as a "no bundle published yet" control-flow
-  signal rather than a failure.
+* :class:`LazyNamespaceCatalog` — opt-in wrapper that populates missing
+  namespaces by fetching a published bundle or falling back to a live
+  enumerator. Composes any :class:`~parsimony.BaseCatalog`.
 
-Everything else (format constants, discovery, eval, safety, targets) lives in
-the submodules and is consumed by the kernel CLI directly.
+The one bundle-specific error, :class:`~parsimony.BundleNotFoundError`,
+lives on :mod:`parsimony.errors` with the other public exceptions.
 """
 
 from __future__ import annotations
 
-from parsimony.bundles.errors import BundleError, BundleNotFoundError, BundleSpecError
 from parsimony.bundles.spec import CatalogPlan, CatalogSpec, to_async
 
 __all__ = [
-    "BundleError",
-    "BundleNotFoundError",
-    "BundleSpecError",
     "CatalogPlan",
     "CatalogSpec",
     "to_async",

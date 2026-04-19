@@ -12,11 +12,16 @@ Hierarchy::
     ├── ProviderError           (5xx / unexpected status)
     ├── EmptyDataError          (200 but no rows)
     └── ParseError              (200 but unparseable)
+
+:class:`BundleNotFoundError` is a separate tree — the bundle pipeline's
+"no published snapshot for this namespace yet" control-flow signal, which
+is not an error per se.
 """
 
 from __future__ import annotations
 
 __all__ = [
+    "BundleNotFoundError",
     "ConnectorError",
     "EmptyDataError",
     "ParseError",
@@ -145,3 +150,17 @@ class ParseError(ConnectorError):
     def __init__(self, provider: str, message: str | None = None) -> None:
         msg = message or f"{provider}: failed to parse provider response"
         super().__init__(msg, provider=provider)
+
+
+class BundleNotFoundError(Exception):
+    """The requested namespace has no bundle published at the target URL.
+
+    Distinct from connector errors because callers catch it as a non-error
+    control-flow signal — e.g. "no catalog bundle yet, fall back to the live
+    enumerator." Bundle-publishing failures surface as plain exceptions from
+    the underlying transport (``httpx.HTTPError``, ``FileNotFoundError``).
+    """
+
+    def __init__(self, url: str, message: str | None = None) -> None:
+        self.url = url
+        super().__init__(message or f"no catalog bundle at {url!r}")

@@ -1,30 +1,19 @@
-"""Parsimony — detachable catalog + connector framework.
+"""Parsimony — typed connectors and a hybrid-search catalog for financial data.
 
-**Contracts**
+Public surface lives at the top level. Heavy symbols (``Catalog`` and its FAISS
+/ sentence-transformers / huggingface-hub stack) load lazily on first access
+via :pep:`562` so that ``import parsimony`` stays cheap.
 
-* :class:`~parsimony.connector.Connectors` is an immutable collection of
-  bound :class:`~parsimony.connector.Connector` instances; callers use
-  ``await connectors[name](**kwargs)`` or ``connectors.get(name)``.
-  Each connector exposes a typed Pydantic param model at the boundary.
-* :func:`~parsimony.connector.connector` infers each connector's name and
-  description from the function name and docstring; pass ``output=`` for
-  tabular :class:`~parsimony.result.OutputConfig`.
-* :func:`~parsimony.connector.enumerator` builds the same
-  :class:`~parsimony.connector.Connector` type with a catalog-oriented schema
-  (no DATA columns; KEY with ``namespace=...``; one TITLE).
-* :func:`~parsimony.connector.loader` builds the same
-  :class:`~parsimony.connector.Connector` type with a data-oriented schema
-  (KEY with ``namespace=...`` and DATA columns only; no TITLE/METADATA).
-  :class:`~parsimony.stores.data_store.InMemoryDataStore` persists observations via
-  :meth:`~parsimony.stores.data_store.InMemoryDataStore.load_result`.
-* :class:`~parsimony.catalog.catalog.Catalog` orchestrates store and optional
-  embeddings for indexing. Catalog identity is ``(namespace, code)``.
-* Catalog helpers (:class:`SeriesEntry`, :class:`SeriesMatch`, normalization
-  utilities) live in :mod:`parsimony.catalog.models` — import from there.
-
-Optional providers under the ``[search]`` extra (``SQLiteCatalogStore``,
-``LiteLLMEmbeddingProvider``) are not re-exported from the root namespace —
-import them directly from their modules.
+* :class:`Connectors` is an immutable collection of :class:`Connector` objects;
+  callers use ``await connectors[name](**kwargs)``. Each connector validates
+  its input through a Pydantic param model.
+* :class:`BaseCatalog` is the catalog ABC. :class:`Catalog` is the canonical
+  implementation (Parquet rows + FAISS vectors + BM25 keywords + RRF) and is
+  loaded lazily.
+* Connector plugins are discovered through the ``parsimony.providers``
+  entry-point group (see :mod:`parsimony.discovery`). The catalog has no
+  plugin axis: custom backends subclass :class:`BaseCatalog` directly.
+* ``CONTRACT_VERSION`` is the plugin ABI pin; see ``docs/contract.md``.
 """
 
 from __future__ import annotations
@@ -32,7 +21,17 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from parsimony.catalog.catalog import Catalog
+from parsimony.catalog.catalog import BaseCatalog
+from parsimony.catalog.embedder_info import EmbedderInfo
+from parsimony.catalog.models import (
+    IndexResult,
+    SeriesEntry,
+    SeriesMatch,
+    catalog_key,
+    code_token,
+    normalize_code,
+    series_match_from_entry,
+)
 from parsimony.connector import (
     Connector,
     Connectors,
@@ -59,18 +58,20 @@ from parsimony.result import (
     Result,
     SemanticTableResult,
 )
-from parsimony.stores.catalog_store import CatalogStore
 from parsimony.stores.data_store import DataStore, InMemoryDataStore, LoadResult
 
 try:
-    __version__ = version("parsimony")
+    __version__ = version("parsimony-core")
 except PackageNotFoundError:
-    try:
-        __version__ = version("parsimony-core")
-    except PackageNotFoundError:
-        __version__ = "0.0.0-dev"
+    __version__ = "0.0.0-dev"
+
+#: Plugin contract ABI version. Bumped only when a stable symbol breaks; see
+#: ``docs/contract.md`` §2.
+CONTRACT_VERSION = "1"
 
 __all__ = [
+    # --- Meta ---
+    "CONTRACT_VERSION",
     # --- Connector primitives ---
     "Connector",
     "Connectors",
@@ -87,9 +88,15 @@ __all__ = [
     "Result",
     "SemanticTableResult",
     # --- Catalog ---
+    "BaseCatalog",
     "Catalog",
-    "CatalogStore",
-    "SQLiteCatalogStore",
+    "EmbedderInfo",
+    "EmbeddingProvider",
+    "IndexResult",
+    "LiteLLMEmbeddingProvider",
+    "SentenceTransformerEmbedder",
+    "SeriesEntry",
+    "SeriesMatch",
     # --- Data persistence ---
     "DataStore",
     "InMemoryDataStore",
@@ -102,13 +109,27 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "UnauthorizedError",
+    # --- Utilities ---
+    "catalog_key",
+    "code_token",
+    "normalize_code",
+    "series_match_from_entry",
     # --- Convenience ---
     "client",
 ]
 
 
-# Convenience: `from parsimony import client` builds a ready-to-use Connectors
-# collection with API keys from environment variables (cached after first access).
+# Heavy symbols — loaded lazily via PEP 562 so ``import parsimony`` does not
+# pull torch / faiss / huggingface-hub. Keys are the public attribute names;
+# values are ``(module, attribute)``.
+_LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "Catalog": ("parsimony._standard", "Catalog"),
+    "EmbeddingProvider": ("parsimony._standard.embedder", "EmbeddingProvider"),
+    "SentenceTransformerEmbedder": ("parsimony._standard.embedder", "SentenceTransformerEmbedder"),
+    "LiteLLMEmbeddingProvider": ("parsimony._standard.embedder", "LiteLLMEmbeddingProvider"),
+}
+
+
 _client_cache: Any = None
 
 
@@ -122,11 +143,11 @@ def __getattr__(name: str) -> Any:
             _client_cache = build_connectors_from_env()
         return _client_cache
 
-    # SQLiteCatalogStore needs sqlite-vec from the [search] extra; fail at
-    # access time (with a real ImportError) rather than at package import.
-    if name == "SQLiteCatalogStore":
-        from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
+    spec = _LAZY_IMPORTS.get(name)
+    if spec is not None:
+        import importlib
 
-        return SQLiteCatalogStore
+        module = importlib.import_module(spec[0])
+        return getattr(module, spec[1])
 
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

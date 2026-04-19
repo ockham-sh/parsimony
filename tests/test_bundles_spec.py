@@ -7,7 +7,6 @@ from collections.abc import AsyncIterator
 import pytest
 from pydantic import BaseModel
 
-from parsimony.bundles.errors import BundleSpecError
 from parsimony.bundles.spec import (
     DEFAULT_TARGET,
     CatalogPlan,
@@ -32,7 +31,7 @@ def test_catalog_plan_freezes_params():
 
 
 def test_catalog_plan_rejects_empty_namespace():
-    with pytest.raises(BundleSpecError):
+    with pytest.raises(ValueError):
         CatalogPlan(namespace="")
 
 
@@ -55,7 +54,7 @@ def test_static_spec_defaults():
 
 
 def test_static_spec_rejects_empty_namespace():
-    with pytest.raises(BundleSpecError):
+    with pytest.raises(ValueError):
         CatalogSpec.static(namespace="")
 
 
@@ -91,17 +90,17 @@ def test_dynamic_spec_accepts_callable():
 
 
 def test_dynamic_spec_rejects_string_plan():
-    with pytest.raises(BundleSpecError, match="callable|string"):
+    with pytest.raises(ValueError, match="callable|string"):
         CatalogSpec(plan="parsimony.example._plan")  # type: ignore[arg-type]
 
 
 def test_dynamic_spec_rejects_non_callable():
-    with pytest.raises(BundleSpecError, match="callable"):
+    with pytest.raises(ValueError, match="callable"):
         CatalogSpec(plan=42)  # type: ignore[arg-type]
 
 
 def test_dynamic_spec_rejects_non_bool_embed():
-    with pytest.raises(BundleSpecError):
+    with pytest.raises(ValueError):
         CatalogSpec(plan=_example_plan, embed=1)  # type: ignore[arg-type]
 
 
@@ -124,7 +123,7 @@ def test_from_decorator_kwargs_passes_dynamic_spec_through():
 
 def test_from_decorator_kwargs_rejects_cross_plugin_plan():
     """Plan must originate from the same top-level package as the connector."""
-    with pytest.raises(BundleSpecError, match="originate from the same plugin"):
+    with pytest.raises(ValueError, match="originate from the same plugin"):
         from_decorator_kwargs(
             CatalogSpec(plan=_example_plan),
             connector_module="parsimony_evil.connector",
@@ -132,7 +131,7 @@ def test_from_decorator_kwargs_rejects_cross_plugin_plan():
 
 
 def test_from_decorator_kwargs_rejects_dict_sugar():
-    with pytest.raises(BundleSpecError, match="CatalogSpec"):
+    with pytest.raises(ValueError, match="CatalogSpec"):
         from_decorator_kwargs(
             {"namespace": "treasury"},  # type: ignore[arg-type]
             connector_module="parsimony_example.connector",
@@ -140,7 +139,7 @@ def test_from_decorator_kwargs_rejects_dict_sugar():
 
 
 def test_from_decorator_kwargs_rejects_unsupported_value_type():
-    with pytest.raises(BundleSpecError, match="CatalogSpec"):
+    with pytest.raises(ValueError, match="CatalogSpec"):
         from_decorator_kwargs(42, connector_module="parsimony_example.connector")  # type: ignore[arg-type]
 
 
@@ -170,7 +169,7 @@ async def test_to_async_wraps_callable_returning_iterable():
 @pytest.mark.asyncio
 async def test_to_async_rejects_non_plan_items():
     plan_callable = to_async([{"namespace": "x"}])  # type: ignore[list-item]
-    with pytest.raises(BundleSpecError, match="CatalogPlan"):
+    with pytest.raises(ValueError, match="CatalogPlan"):
         async for _ in plan_callable():
             pass
 
@@ -231,7 +230,7 @@ def test_enumerator_accepts_typed_static_catalog():
 
 def test_enumerator_rejects_dict_sugar():
     """The decorator boundary requires a typed CatalogSpec instance."""
-    with pytest.raises(BundleSpecError, match="CatalogSpec"):
+    with pytest.raises(ValueError, match="CatalogSpec"):
         @enumerator(output=_ENUM_OUTPUT, catalog={"namespace": "example"})  # type: ignore[arg-type]
         async def bad_enum(params: _NoParams) -> Result:
             """Bad."""

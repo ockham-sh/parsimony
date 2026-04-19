@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 __all__ = [
-    "EmbeddingProvider",
     "IndexResult",
     "SeriesEntry",
     "SeriesMatch",
@@ -12,9 +11,7 @@ __all__ = [
     "series_match_from_entry",
 ]
 
-import json
 import re
-from abc import ABC, abstractmethod
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
@@ -58,19 +55,6 @@ def catalog_key(namespace: str, code: str) -> tuple[str, str]:
     return (normalize_code(namespace), normalize_entity_code(code))
 
 
-def normalize_series_catalog_row(row: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a series_catalog row from Supabase/Postgres (embedding may be JSON string)."""
-    normalized = dict(row)
-    embedding = normalized.get("embedding")
-    if isinstance(embedding, str):
-        stripped = embedding.strip()
-        if stripped:
-            normalized["embedding"] = [float(v) for v in json.loads(stripped)]
-        else:
-            normalized["embedding"] = None
-    return normalized
-
-
 class SeriesEntry(BaseModel):
     """Canonical catalog row: indexing input and persisted store shape.
 
@@ -84,7 +68,6 @@ class SeriesEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    properties: dict[str, Any] = Field(default_factory=dict)
     embedding: list[float] | None = None
 
     @field_validator("namespace")
@@ -105,6 +88,22 @@ class SeriesEntry(BaseModel):
             raise ValueError("title must be non-empty")
         return normalized
 
+    def embedding_text(self) -> str:
+        """Compose the text an embedder should index for this entry.
+
+        The default joins title, metadata key/value pairs, and tags with a
+        ``" | "`` separator. Subclassing or overriding requires reindexing the
+        catalog, so this representation is intentionally fixed.
+        """
+        parts = [self.title]
+        if self.metadata:
+            meta_parts = [f"{k}: {v}" for k, v in self.metadata.items() if v is not None]
+            if meta_parts:
+                parts.append(", ".join(meta_parts))
+        if self.tags:
+            parts.append(f"tags: {', '.join(self.tags)}")
+        return " | ".join(parts)
+
 
 class SeriesMatch(BaseModel):
     """Search projection: catalog row fields needed for display + fetch, plus similarity."""
@@ -116,7 +115,6 @@ class SeriesMatch(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    properties: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("namespace")
     @classmethod
@@ -147,7 +145,6 @@ def series_match_from_entry(entry: SeriesEntry, *, similarity: float) -> SeriesM
         tags=list(entry.tags),
         description=entry.description,
         metadata=dict(entry.metadata),
-        properties=dict(entry.properties),
     )
 
 
@@ -158,21 +155,3 @@ class IndexResult(BaseModel):
     indexed: int = 0
     skipped: int = 0
     errors: int = 0
-
-
-class EmbeddingProvider(ABC):
-    """Text-to-vector embedding for catalog search."""
-
-    @property
-    @abstractmethod
-    def dimension(self) -> int: ...
-
-    @abstractmethod
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embeddings for corpus documents (indexing)."""
-        ...
-
-    @abstractmethod
-    async def embed_query(self, query: str) -> list[float]:
-        """Single embedding optimized for retrieval queries."""
-        ...

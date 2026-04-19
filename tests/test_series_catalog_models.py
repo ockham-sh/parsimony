@@ -5,12 +5,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from parsimony.catalog.catalog import build_embedding_text
 from parsimony.catalog.models import (
     SeriesEntry,
     normalize_code,
     normalize_entity_code,
-    normalize_series_catalog_row,
 )
 
 
@@ -56,7 +54,7 @@ def test_series_entry_first_class_tags_metadata() -> None:
     assert e.metadata == {"k": "v"}
 
 
-def test_build_embedding_text_joins_title_metadata_tags() -> None:
+def test_embedding_text_joins_title_metadata_tags() -> None:
     e = SeriesEntry(
         namespace="fred",
         code="GDPC1",
@@ -64,25 +62,19 @@ def test_build_embedding_text_joins_title_metadata_tags() -> None:
         metadata={"frequency_short": "Q", "units_short": "Bil. of $"},
         tags=["macro", "usa"],
     )
-    text = build_embedding_text(e)
+    text = e.embedding_text()
     assert "Real GDP" in text
     assert "frequency_short: Q" in text
     assert "units_short: Bil. of $" in text
     assert "tags: macro, usa" in text
 
 
-def test_build_embedding_text_omits_empty_metadata() -> None:
+def test_embedding_text_omits_empty_metadata() -> None:
     e = SeriesEntry(
         namespace="fred",
         code="X",
         title="T",
         metadata={},
     )
-    text = build_embedding_text(e)
+    text = e.embedding_text()
     assert text == "T"
-
-
-def test_normalize_series_catalog_row_parses_embedding_json_string() -> None:
-    row = {"namespace": "fred", "code": "x", "embedding": "[0.5, 1.0]"}
-    out = normalize_series_catalog_row(row)
-    assert out["embedding"] == [0.5, 1.0]

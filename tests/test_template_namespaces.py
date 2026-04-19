@@ -1,4 +1,9 @@
-"""Tests for template-namespace support in Column / OutputConfig / Catalog."""
+"""Tests for template-namespace support in Column / OutputConfig / entries_from_table_result.
+
+Reverse-resolution tests (_find_enumerator / _template_to_regex) belong to
+the LazyNamespaceCatalog wrapper under :mod:`parsimony.bundles.lazy_catalog`
+and are covered separately there.
+"""
 
 from __future__ import annotations
 
@@ -6,14 +11,9 @@ from typing import Any
 
 import pandas as pd
 import pytest
-from pydantic import BaseModel, ValidationError
+from pydantic import ValidationError
 
-from parsimony.catalog.catalog import (
-    _find_enumerator,
-    _template_to_regex,
-    entries_from_table_result,
-)
-from parsimony.connector import enumerator
+from parsimony.catalog.catalog import entries_from_table_result
 from parsimony.result import (
     Column,
     ColumnRole,
@@ -159,85 +159,3 @@ def testentries_from_table_result_template_null_placeholder_raises() -> None:
     with pytest.raises(ValueError, match="is null for row with key"):
         entries_from_table_result(_make_table(cfg, df))
 
-
-# ---------------------------------------------------------------------------
-# Reverse-resolution in _find_enumerator
-# ---------------------------------------------------------------------------
-
-
-def test_template_to_regex_escapes_literals_and_captures_placeholders() -> None:
-    pattern = _template_to_regex("sdmx_series_{agency}_{dataset_id}")
-    m = pattern.match("sdmx_series_ECB_YC")
-    assert m is not None
-    assert m.groupdict() == {"agency": "ECB", "dataset_id": "YC"}
-
-    # Adjacent placeholders: non-greedy capture keeps them separable.
-    pat2 = _template_to_regex("{a}_{b}")
-    m2 = pat2.match("foo_bar")
-    assert m2 is not None
-    assert m2.groupdict() == {"a": "foo", "b": "bar"}
-
-
-class _NoParams(BaseModel):
-    pass
-
-
-class _SeriesParams(BaseModel):
-    agency: str
-    dataset_id: str
-
-
-@enumerator(
-    output=OutputConfig(
-        columns=[
-            Column(name="code", role=ColumnRole.KEY, namespace="sdmx_datasets"),
-            Column(name="title", role=ColumnRole.TITLE),
-        ]
-    ),
-)
-async def _enumerate_datasets(params: _NoParams) -> pd.DataFrame:
-    """Fake datasets enumerator for template-namespace tests."""
-    return pd.DataFrame({"code": ["x"], "title": ["X"]})
-
-
-@enumerator(
-    output=OutputConfig(
-        columns=[
-            Column(name="code", role=ColumnRole.KEY, namespace="sdmx_series_{agency}_{dataset_id}"),
-            Column(name="title", role=ColumnRole.TITLE),
-            Column(name="agency", role=ColumnRole.METADATA),
-            Column(name="dataset_id", role=ColumnRole.METADATA),
-        ]
-    ),
-)
-async def _enumerate_series(params: _SeriesParams) -> pd.DataFrame:
-    """Fake series enumerator for template-namespace tests."""
-    return pd.DataFrame(
-        {
-            "code": ["B.U2.EUR"],
-            "title": ["Euro yield"],
-            "agency": [params.agency],
-            "dataset_id": [params.dataset_id],
-        }
-    )
-
-
-def test_find_enumerator_matches_static_namespace() -> None:
-    match = _find_enumerator([_enumerate_datasets], "sdmx_datasets")
-    assert match is not None
-    conn, extracted = match
-    assert conn is _enumerate_datasets
-    assert extracted == {}
-
-    assert _find_enumerator([_enumerate_datasets], "other_namespace") is None
-
-
-def test_find_enumerator_reverse_resolves_template_namespace() -> None:
-    match = _find_enumerator([_enumerate_series], "sdmx_series_ecb_yc")
-    assert match is not None
-    conn, extracted = match
-    assert conn is _enumerate_series
-    # Reverse-resolution captures whatever case appears in the resolved namespace;
-    # the catalog convention (per normalize_code) is lowercase, so placeholder
-    # values come out lowercase too. Plugin's Pydantic validator re-upcases as needed.
-    assert extracted == {"agency": "ecb", "dataset_id": "yc"}

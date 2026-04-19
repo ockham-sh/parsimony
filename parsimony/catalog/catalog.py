@@ -1,124 +1,67 @@
-"""Catalog: search and lazy namespace population from HF bundles or enumerators.
+"""BaseCatalog: ABC for namespace-keyed catalogs of named entities.
 
-Search flow:
+A catalog persists :class:`SeriesEntry` rows keyed by ``(namespace, code)`` and
+exposes hybrid retrieval over them. Persistence and search are a single
+contract — the model that produced an entry's embedding *must* be the same
+model used at query time, so a catalog implementation owns its embedder.
 
-1. Caller names one or more namespaces (``namespaces=...`` is required;
-   implicit "search all namespaces" is rejected by design).
-2. :meth:`Catalog._ensure_namespace` populates each requested namespace:
-   if the store already has it → return; else ask the store to
-   :meth:`~parsimony.stores.catalog_store.CatalogStore.try_load_remote`
-   (HF bundle stores know how); else fall back to a live
-   ``@enumerator``-decorated connector.
+The framework ships one canonical implementation under
+:class:`parsimony.Catalog` (Parquet rows + FAISS vectors + BM25 keywords +
+reciprocal rank fusion). Custom backends — Postgres+pgvector, Redis,
+OpenSearch, in-memory mocks — satisfy this ABC directly.
 
-Catalog distribution is owned by
-:class:`~parsimony.stores.hf_bundle.HFBundleCatalogStore` (HF Hub bundles).
-This module no longer performs any HTTP downloads itself.
+This module deliberately knows nothing about file formats, vector libraries,
+embedders, or the Hugging Face Hub. URL-based load/push is a concern of the
+concrete implementation, not of the ABC — :class:`BaseCatalog` does not
+define ``from_url`` or ``push``.
+
+``entries_from_table_result`` lifts rows from a
+:class:`~parsimony.result.SemanticTableResult` into :class:`SeriesEntry`
+values. It resolves namespace templates (e.g. ``"sdmx-series-{agency}-{dataset_id}"``)
+per row when the KEY column declares placeholders, so catalogs built from
+multi-key SDMX-style enumerators land in the right namespace.
 """
 
 from __future__ import annotations
 
+import builtins
 import logging
-import re
+from abc import ABC, abstractmethod
 from typing import Any
 
 import httpx
-import numpy as np
 import pandas as pd
 
+from parsimony.catalog.embedder_info import EmbedderInfo
 from parsimony.catalog.models import (
-    EmbeddingProvider,
     IndexResult,
     SeriesEntry,
     SeriesMatch,
     normalize_code,
     normalize_entity_code,
 )
-from parsimony.errors import ConnectorError
-from parsimony.result import (
-    ColumnRole,
-    SemanticTableResult,
-    resolve_namespace_template,
-)
-from parsimony.stores.catalog_store import CatalogStore
+from parsimony.result import ColumnRole, SemanticTableResult, resolve_namespace_template
 
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# SemanticTableResult → SeriesEntry conversion
 # ---------------------------------------------------------------------------
-
-
-def build_embedding_text(entry: SeriesEntry) -> str:
-    """Compose text embedded for semantic search."""
-    parts = [entry.title]
-    if entry.metadata:
-        meta_parts = [f"{k}: {v}" for k, v in entry.metadata.items() if v is not None]
-        if meta_parts:
-            parts.append(", ".join(meta_parts))
-    if entry.tags:
-        parts.append(f"tags: {', '.join(entry.tags)}")
-    return " | ".join(parts)
-
-
-async def embed_entries_in_batches(
-    entries: list[SeriesEntry],
-    *,
-    provider: EmbeddingProvider,
-    batch_size: int = 64,
-) -> np.ndarray:
-    """Embed entries in fixed-size batches; returns ``(N, dim)`` float32 ndarray.
-
-    Embedding text is the entry's title plus metadata/tags via
-    :func:`build_embedding_text` — same function used at query time so build
-    and query see the same text shape. Each batch is converted to ndarray
-    immediately so the Python list-of-lists never co-exists with the entries
-    list and the FAISS index.
-    """
-    if not entries:
-        return np.empty((0, provider.dimension), dtype=np.float32)
-
-    texts = [build_embedding_text(e) for e in entries]
-    chunks: list[np.ndarray] = []
-    for start in range(0, len(texts), batch_size):
-        batch = texts[start : start + batch_size]
-        vectors = await provider.embed_texts(batch)
-        if len(vectors) != len(batch):
-            raise ValueError(
-                f"embed_texts returned {len(vectors)} vectors for {len(batch)} texts; "
-                "provider contract violation"
-            )
-        chunks.append(np.asarray(vectors, dtype=np.float32))
-
-    arr = np.concatenate(chunks, axis=0)
-    if arr.shape != (len(entries), provider.dimension):
-        raise ValueError(
-            f"embedded ndarray shape {arr.shape} does not match "
-            f"(entries={len(entries)}, dim={provider.dimension})"
-        )
-    return arr
-
-
-async def _embed_batch(
-    embeddings: EmbeddingProvider,
-    entries: list[SeriesEntry],
-) -> list[SeriesEntry]:
-    """Embed catalog entries and attach the vectors to each entry."""
-    arr = await embed_entries_in_batches(entries, provider=embeddings)
-    return [
-        entry.model_copy(update={"embedding": arr[i].tolist()})
-        for i, entry in enumerate(entries)
-    ]
 
 
 def entries_from_table_result(
     table: SemanticTableResult,
     *,
-    extra_tags: list[str] | None = None,
-) -> list[SeriesEntry]:
+    extra_tags: builtins.list[str] | None = None,
+) -> builtins.list[SeriesEntry]:
     """Build :class:`SeriesEntry` rows from a :class:`SemanticTableResult`.
 
-    Namespace is read from the KEY column's :attr:`~parsimony.result.Column.namespace`.
+    The KEY column's ``namespace`` may be a static string (``"sdmx-datasets"``)
+    or a template containing placeholders (``"sdmx-series-{agency}-{dataset_id}"``).
+    Templates are resolved per row from other declared columns on the table;
+    all placeholders are guaranteed to be declared columns (validated at
+    :class:`~parsimony.result.OutputConfig` construction time).
     """
     if not isinstance(table.data, (pd.DataFrame, pd.Series)):
         raise TypeError(f"indexing expected tabular data, got {type(table.data).__name__}")
@@ -150,16 +93,13 @@ def entries_from_table_result(
             raise ValueError(f"SemanticTableResult missing METADATA column {mn!r}. Available: {list(df.columns)}")
 
     raw_codes = df[key_name].dropna().unique()
-    # Templated namespaces resolve per row from other declared columns; static
-    # namespaces normalize once. All placeholders are guaranteed to be declared
-    # columns (validated at OutputConfig construction time).
     template_placeholders = key_col.namespace_placeholders
     static_ns = None if template_placeholders else normalize_code(key_col.namespace)
     tag_list = [table.provenance.source]
     if extra_tags:
         tag_list.extend(extra_tags)
 
-    entries: list[SeriesEntry] = []
+    entries: builtins.list[SeriesEntry] = []
     for raw_code in raw_codes:
         code = normalize_entity_code(str(raw_code))
         mask = df[key_name] == raw_code
@@ -182,11 +122,9 @@ def entries_from_table_result(
             ns = static_ns
         else:
             # Per-row resolve: pull placeholder values from the row's metadata
-            # columns (OutputConfig validator guarantees they're declared).
-            # Values are stringified and lowercased so the resolved namespace
-            # passes normalize_code's lowercase-snake_case contract regardless
-            # of the source column's casing — the same lowercasing applies on
-            # the reverse-resolution path (_find_enumerator via Catalog.search).
+            # columns. Values are stringified and lowercased so the resolved
+            # namespace passes normalize_code's lowercase-snake_case contract
+            # regardless of the source column's casing.
             first_row = sub.iloc[0]
             values: dict[str, Any] = {}
             for placeholder in template_placeholders:
@@ -213,181 +151,168 @@ def entries_from_table_result(
 
 
 # ---------------------------------------------------------------------------
-# Lazy namespace helpers
+# BaseCatalog
 # ---------------------------------------------------------------------------
 
 
-def _template_to_regex(template: str) -> re.Pattern[str]:
-    """Compile a namespace template into a reverse-resolution regex.
+def _url_scheme(url: str) -> str:
+    """Return the lowercased scheme of a ``scheme://...`` URL.
 
-    ``"sdmx-series-{agency}-{dataset_id}"`` → pattern matching
-    ``"sdmx-series-<agency>-<dataset_id>"`` with named groups. Literal
-    template segments are regex-escaped; placeholders become ``(?P<name>.+?)``
-    (non-greedy so adjacent placeholders don't merge).
+    Exposed for concrete catalog implementations that dispatch on URL scheme.
     """
-    # Split on {placeholder} while keeping the placeholder names.
-    parts = re.split(r"(\{[A-Za-z_][A-Za-z0-9_]*\})", template)
-    regex = ""
-    for part in parts:
-        if part.startswith("{") and part.endswith("}"):
-            name = part[1:-1]
-            regex += rf"(?P<{name}>.+?)"
-        else:
-            regex += re.escape(part)
-    return re.compile(f"^{regex}$")
+    if "://" not in url:
+        raise ValueError(f"URL must include a scheme (e.g. 'hf://...'); got {url!r}")
+    return url.split("://", 1)[0].lower()
 
 
-def _find_enumerator(connectors: Any, namespace: str) -> tuple[Any, dict[str, Any]] | None:
-    """Find an ``@enumerator`` whose KEY column declares *namespace*.
+class BaseCatalog(ABC):
+    """Persistence and hybrid search for ``(namespace, code)`` entries.
 
-    Returns ``(enumerator, extracted_params)`` or ``None``. For static namespaces
-    ``extracted_params`` is ``{}``. For template namespaces (e.g. declared as
-    ``"sdmx-series-{agency}-{dataset_id}"``), the resolved *namespace* is
-    reverse-matched against the template and the captured groups are returned
-    as params suitable for ``enumerator.param_type(**extracted)``.
-    """
-    for conn in connectors:
-        oc = conn.output_config
-        if oc is None:
-            continue
-        roles = {c.role for c in oc.columns}
-        if ColumnRole.DATA in roles:
-            continue
-        if ColumnRole.TITLE not in roles:
-            continue
-        for col in oc.columns:
-            if col.role != ColumnRole.KEY or col.namespace is None:
-                continue
-            if not col.namespace_is_template:
-                if col.namespace == namespace:
-                    return conn, {}
-                continue
-            match = _template_to_regex(col.namespace).match(namespace)
-            if match is not None:
-                return conn, dict(match.groupdict())
-    return None
+    A catalog is to :class:`SeriesEntry` what :class:`~parsimony.Connectors`
+    is to :class:`~parsimony.Connector` — a named collection. Entries are
+    self-describing (they carry their own ``namespace``); the catalog's
+    :attr:`name` is the collection's label (the HF repo suffix, the ``meta.json``
+    identifier). A catalog typically holds one source's entries
+    (``Catalog(name="fred")`` with all entries having ``namespace="fred"``),
+    but the framework does not enforce that — composition by :meth:`upsert`
+    of one catalog's entries into another is supported.
 
+    Implementations own the storage layout and the embedder. The orchestration
+    layered on top — extracting rows from a :class:`SemanticTableResult`,
+    deduping, batching :meth:`upsert` — is concrete here so every
+    implementation gets it for free.
 
-# ---------------------------------------------------------------------------
-# Catalog
-# ---------------------------------------------------------------------------
+    URL-based load/push is not part of this ABC. Implementations that want to
+    participate in ``from_url`` / ``push`` define those classmethods /
+    instance methods themselves (see :class:`parsimony.Catalog`).
 
+    Implementations:
 
-_NAMESPACE_REQUIRED_MSG = (
-    "Catalog.search requires an explicit non-empty namespaces=[...] list. "
-    "Implicit cross-namespace search was removed — each catalog namespace "
-    "lives in its own HF bundle with its own embedding model. "
-    "Migration: change Catalog.search(query) -> "
-    "Catalog.search(query, namespaces=['fred', 'snb', ...])."
-)
-
-
-class Catalog:
-    """Catalog service: search, bulk indexing, and lazy namespace loading.
-
-    Composes a :class:`CatalogStore` and optional :class:`EmbeddingProvider`.
-
-    When *connectors* is provided, :meth:`search` auto-populates requested
-    namespaces via the store's
-    :meth:`~parsimony.stores.catalog_store.CatalogStore.try_load_remote`
-    (HF bundle stores fetch from HuggingFace Hub), falling back to a live
-    enumerator when no bundle is published.
+    * Set :attr:`name` in ``__init__`` and expose entries via :attr:`entries`.
+    * Override the abstract methods (:meth:`upsert`, :meth:`get`, :meth:`exists`,
+      :meth:`delete`, :meth:`search`, :meth:`list`, :meth:`list_namespaces`).
+    * Override :attr:`embedder_info` if the catalog uses an embedder whose
+      identity needs to be persisted (e.g. for redistribution).
     """
 
-    def __init__(
-        self,
-        store: CatalogStore,
-        *,
-        embeddings: EmbeddingProvider | None = None,
-        connectors: Any | None = None,  # duck-typed iterable of Connector-like objects
-    ) -> None:
-        self._store = store
-        self._embeddings = embeddings
-        self._connectors = connectors
-        # Namespaces we've already resolved (success OR confirmed miss).
-        # Confirmed misses are cached so a cold lookup doesn't re-probe on
-        # every search — but callers can clear an entry with invalidate()
-        # after publishing a new bundle or registering a new enumerator.
-        self._attempted: set[str] = set()
-
-    @property
-    def store(self) -> CatalogStore:
-        """The underlying catalog store."""
-        return self._store
+    #: Catalog identifier — lowercase snake_case. Subclasses MUST set this in ``__init__``.
+    name: str
 
     # ------------------------------------------------------------------
-    # Search
+    # Abstract: persistence
     # ------------------------------------------------------------------
 
+    @abstractmethod
+    async def upsert(self, entries: builtins.list[SeriesEntry]) -> None:
+        """Insert or update entries. The catalog computes embeddings as needed."""
+        ...
+
+    @abstractmethod
+    async def get(self, namespace: str, code: str) -> SeriesEntry | None: ...
+
+    @abstractmethod
+    async def exists(self, keys: builtins.list[tuple[str, str]]) -> set[tuple[str, str]]:
+        """Return the subset of ``(namespace, code)`` pairs that already exist."""
+        ...
+
+    @abstractmethod
+    async def delete(self, namespace: str, code: str) -> None: ...
+
+    # ------------------------------------------------------------------
+    # Abstract: retrieval
+    # ------------------------------------------------------------------
+
+    @abstractmethod
     async def search(
         self,
         query: str,
-        limit: int = 10,
+        limit: int,
         *,
-        namespaces: list[str] | None = None,
-    ) -> list[SeriesMatch]:
-        """Search the catalog for a query.
+        namespaces: builtins.list[str] | None = None,
+    ) -> builtins.list[SeriesMatch]:
+        """Rank entries against *query*. Hybrid retrieval is left to the implementation."""
+        ...
 
-        ``namespaces`` is required: must be a non-empty list. The old
-        implicit "search every namespace" behavior was removed — each
-        namespace ships in its own HF bundle and may declare its own
-        embedding model; merging without explicit scoping is unsound.
+    @abstractmethod
+    async def list_namespaces(self) -> builtins.list[str]:
+        """Distinct catalog namespaces, sorted lexicographically."""
+        ...
 
-        Embedding ownership: the store owns ``embed_query`` on vector
-        searches. :class:`Catalog` does not pre-embed — doing so either
-        duplicates work (when the store has its own provider) or leaves
-        the store without a provider to re-embed with. Stores that don't
-        need an embedding ignore ``query_embedding=None``.
-        """
-        if namespaces is None or len(namespaces) == 0:
-            raise ValueError(_NAMESPACE_REQUIRED_MSG)
-
-        for ns in namespaces:
-            await self._ensure_namespace(ns)
-
-        return await self._store.search(
-            query,
-            limit,
-            namespaces=namespaces,
-        )
+    @abstractmethod
+    async def list(
+        self,
+        *,
+        namespace: str | None = None,
+        q: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[builtins.list[SeriesEntry], int]:
+        """Paginated browse. Returns ``(entries, total_count)``."""
+        ...
 
     # ------------------------------------------------------------------
-    # Indexing
+    # Composition
+    # ------------------------------------------------------------------
+
+    @property
+    def entries(self) -> builtins.list[SeriesEntry]:
+        """All entries in this catalog as a fresh list.
+
+        The default implementation pages through :meth:`list`. Subclasses with
+        cheaper in-memory access should override.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__}.entries is not implemented. Override on the concrete subclass."
+        )
+
+    async def extend(self, other: BaseCatalog) -> None:
+        """Upsert every entry from *other* into this catalog."""
+        await self.upsert(other.entries)
+
+    # ------------------------------------------------------------------
+    # Optional metadata
+    # ------------------------------------------------------------------
+
+    @property
+    def embedder_info(self) -> EmbedderInfo | None:
+        """Identity of the embedder this catalog uses, if any."""
+        return None
+
+    async def close(self) -> None:
+        """Release any held resources. Default: no-op."""
+        return None
+
+    # ------------------------------------------------------------------
+    # Concrete orchestration
     # ------------------------------------------------------------------
 
     async def index_result(
         self,
         table: SemanticTableResult,
         *,
-        embed: bool = True,
         batch_size: int = 100,
-        extra_tags: list[str] | None = None,
+        extra_tags: builtins.list[str] | None = None,
         dry_run: bool = False,
         force: bool = False,
     ) -> IndexResult:
-        """Extract catalog rows from *table* and :meth:`ingest` them."""
+        """Extract :class:`SeriesEntry` rows from *table* and :meth:`ingest` them."""
         entries = entries_from_table_result(table, extra_tags=extra_tags)
-        return await self.ingest(
-            entries, embed=embed, batch_size=batch_size, force=force, dry_run=dry_run
-        )
+        return await self.ingest(entries, batch_size=batch_size, dry_run=dry_run, force=force)
 
     async def ingest(
         self,
-        entries: list[SeriesEntry],
+        entries: builtins.list[SeriesEntry],
         *,
-        embed: bool = True,
         batch_size: int = 100,
-        force: bool = False,
         dry_run: bool = False,
+        force: bool = False,
     ) -> IndexResult:
-        """Dedupe, optionally embed, and upsert entries in batches.
+        """Dedupe and upsert entries in batches.
 
-        With ``dry_run=True``, report counts without embedding or writing.
+        ``dry_run=True`` performs the dedupe pass without writing anything;
+        ``force=True`` skips the dedupe pass entirely and counts every entry
+        as inserted.
         """
-        if embed and not dry_run and self._embeddings is None:
-            raise RuntimeError(
-                "ingest(embed=True) requires an EmbeddingProvider; pass embeddings=... to Catalog, or use embed=False."
-            )
         result = IndexResult()
         result.total = len(entries)
         if not entries:
@@ -399,7 +324,7 @@ class Catalog:
                 to_insert = batch
             else:
                 keys = [(e.namespace, e.code) for e in batch]
-                existing = await self._store.exists(keys)
+                existing = await self.exists(keys)
                 to_insert = [e for e in batch if (e.namespace, e.code) not in existing]
                 result.skipped += len(batch) - len(to_insert)
             if not to_insert:
@@ -407,127 +332,16 @@ class Catalog:
             if dry_run:
                 result.indexed += len(to_insert)
                 continue
-            if embed:
-                if self._embeddings is None:
-                    raise RuntimeError("embed=True requires an EmbeddingProvider, but none was configured")
-                try:
-                    out = await _embed_batch(self._embeddings, to_insert)
-                except httpx.TransportError as exc:
-                    logger.warning("ingest embed network error: %s", exc)
-                    result.errors += len(to_insert)
-                    continue
-            else:
-                out = [r.model_copy() for r in to_insert]
             try:
-                await self._store.upsert(out)
-                result.indexed += len(out)
-            except httpx.TransportError as exc:
-                logger.warning("ingest upsert network error: %s", exc)
+                await self.upsert(to_insert)
+                result.indexed += len(to_insert)
+            except (OSError, RuntimeError, httpx.HTTPError) as exc:
+                logger.warning("ingest batch failed: %s", exc)
                 result.errors += len(to_insert)
         return result
 
-    # ------------------------------------------------------------------
-    # Embeddings
-    # ------------------------------------------------------------------
 
-    async def embed_pending(
-        self,
-        limit: int | None = None,
-        *,
-        namespace: str | None = None,
-    ) -> int:
-        """Backfill embeddings for entries that don't have them."""
-        if self._embeddings is None:
-            raise RuntimeError("embed_pending requires an EmbeddingProvider; pass embeddings=... to Catalog.")
-        lim = limit if limit is not None else 10_000
-        entries, _ = await self._store.list(namespace=namespace, limit=lim)
-        missing = [e for e in entries if e.embedding is None]
-        if not missing:
-            return 0
-        embedded = await _embed_batch(self._embeddings, missing)
-        await self._store.upsert(embedded)
-        return len(embedded)
-
-    # ------------------------------------------------------------------
-    # Lazy namespace population (thin dispatcher)
-    # ------------------------------------------------------------------
-
-    async def _ensure_namespace(self, namespace: str) -> None:
-        """Populate *namespace* if not already resolved.
-
-        Three-step dispatcher: already-attempted guard, store remote load,
-        live-enumerator fallback. All remote-fetch logic lives inside the
-        store — this method only sequences the fallbacks.
-
-        Confirmed misses are cached so the same cold namespace is not
-        re-probed on every query. Use :meth:`invalidate` to drop the cache
-        entry after publishing a new bundle or registering a new enumerator.
-        """
-        ns = normalize_code(namespace)
-        if ns in self._attempted:
-            return
-
-        existing = await self._store.list_namespaces()
-        if ns in existing:
-            self._attempted.add(ns)
-            return
-
-        if await self._store.try_load_remote(ns):
-            self._attempted.add(ns)
-            return
-
-        if await self._try_enumerate(ns):
-            self._attempted.add(ns)
-            return
-
-        # Confirmed miss — cache so cold queries don't re-probe.
-        self._attempted.add(ns)
-        logger.debug("Namespace %r not available from remote or enumerator", ns)
-
-    def invalidate(self, namespace: str | None = None) -> None:
-        """Drop cached resolution(s) so the next lookup re-probes.
-
-        Pass ``None`` to clear the full cache (e.g. after bulk publishing),
-        or a namespace string to clear only that entry. Normalisation matches
-        :meth:`_ensure_namespace`'s lookup key.
-        """
-        if namespace is None:
-            self._attempted.clear()
-            return
-        self._attempted.discard(normalize_code(namespace))
-
-    async def _try_enumerate(self, namespace: str) -> bool:
-        """Find and run the enumerator for *namespace* from the connectors.
-
-        For template-namespace enumerators, placeholder values extracted from
-        the resolved *namespace* are passed as constructor kwargs to the
-        enumerator's ``param_type``, so a lookup on ``sdmx-series-ECB-YC``
-        invokes the enumerator with ``agency='ECB', dataset_id='YC'``.
-        """
-        if self._connectors is None:
-            return False
-        match = _find_enumerator(self._connectors, namespace)
-        if match is None:
-            return False
-        enumerator, extracted = match
-
-        try:
-            if enumerator.param_type:
-                params = enumerator.param_type(**extracted) if extracted else enumerator.param_type()
-            else:
-                params = None
-            result = await enumerator(params)
-            entries = entries_from_table_result(result)
-            if not entries:
-                return False
-            idx = await self.ingest(entries, embed=False, force=True)
-            logger.info("Enumerated %s: %d entries", namespace, idx.indexed)
-            return idx.indexed > 0
-        except ConnectorError as exc:
-            logger.warning("Enumerator failed for %s: %s", namespace, exc)
-            return False
-
-    async def close(self) -> None:
-        """Close the underlying store if it supports closing."""
-        if hasattr(self._store, "close"):
-            await self._store.close()
+__all__ = [
+    "BaseCatalog",
+    "entries_from_table_result",
+]

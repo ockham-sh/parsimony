@@ -60,10 +60,10 @@ async def main() -> None:
     print()
 
     # --- 5. List namespaces and entries ---
-    namespaces = await catalog.list_namespaces()
+    namespaces = await catalog.store.list_namespaces()
     print(f"Namespaces: {namespaces}")
 
-    entries, total = await catalog.list_entries(namespace="fred", limit=5)
+    entries, total = await catalog.store.list(namespace="fred", limit=5)
     print(f"Entries in 'fred' namespace: {total} total, showing first {len(entries)}")
     for e in entries:
         print(f"  {e.code}: {e.title}")

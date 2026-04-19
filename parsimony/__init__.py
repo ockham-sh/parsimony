@@ -6,26 +6,21 @@
   bound :class:`~parsimony.connector.Connector` instances; callers use
   ``await connectors[name](**kwargs)`` or ``connectors.get(name)``.
   Each connector exposes a typed Pydantic param model at the boundary.
-  Post-fetch hooks attach per connector via :meth:`~parsimony.connector.Connector.with_callback`
-  or to every connector in a collection via :meth:`~parsimony.connector.Connectors.with_callback`.
-* :func:`~parsimony.connector.connector` infers each connector's name and description from the
-  function name and docstring; pass ``output=`` for tabular :class:`~parsimony.result.OutputConfig`.
-* :func:`~parsimony.connector.enumerator` builds the same :class:`~parsimony.connector.Connector`
-  type with a catalog-oriented schema (no DATA columns; KEY with ``namespace=...``; one TITLE).
-* :func:`~parsimony.connector.loader` builds the same :class:`~parsimony.connector.Connector`
-  type with a data-oriented schema (KEY with ``namespace=...`` and DATA columns only; no TITLE/METADATA).
-  :class:`~parsimony.data_store.DataStore` persists observations via
-  :meth:`~parsimony.data_store.DataStore.load_result`.
+* :func:`~parsimony.connector.connector` infers each connector's name and
+  description from the function name and docstring; pass ``output=`` for
+  tabular :class:`~parsimony.result.OutputConfig`.
+* :func:`~parsimony.connector.enumerator` builds the same
+  :class:`~parsimony.connector.Connector` type with a catalog-oriented schema
+  (no DATA columns; KEY with ``namespace=...``; one TITLE).
+* :func:`~parsimony.connector.loader` builds the same
+  :class:`~parsimony.connector.Connector` type with a data-oriented schema
+  (KEY with ``namespace=...`` and DATA columns only; no TITLE/METADATA).
+  :class:`~parsimony.stores.data_store.InMemoryDataStore` persists observations via
+  :meth:`~parsimony.stores.data_store.InMemoryDataStore.load_result`.
 * :class:`~parsimony.catalog.catalog.Catalog` orchestrates store and optional
-  embeddings for indexing (:meth:`~parsimony.catalog.catalog.Catalog.ingest`).
-  :meth:`~parsimony.catalog.store.CatalogStore.search` is implementation-defined on the store.
-  Catalog identity is ``(namespace, code)``; ``code`` is the connector-native identifier for that namespace.
-  :meth:`~parsimony.catalog.catalog.Catalog.index_result` builds :class:`SeriesEntry` rows from a
-  :class:`~parsimony.result.SemanticTableResult`. The catalog namespace comes from ``namespace=...`` on the
-  KEY column in :class:`~parsimony.result.OutputConfig`. Use ``conn.with_callback(catalog.index_result)``
-  for auto-indexing after fetch.
-* Optional :class:`~parsimony.connector.Namespace` metadata on a param field
-  documents which catalog namespace supplies valid values for that field.
+  embeddings for indexing. Catalog identity is ``(namespace, code)``.
+* Catalog helpers (:class:`SeriesEntry`, :class:`SeriesMatch`, normalization
+  utilities) live in :mod:`parsimony.catalog.models` — import from there.
 
 Optional providers under the ``[search]`` extra (``SQLiteCatalogStore``,
 ``LiteLLMEmbeddingProvider``) are not re-exported from the root namespace —
@@ -37,17 +32,7 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from parsimony.catalog.catalog import Catalog, build_embedding_text
-from parsimony.catalog.models import (
-    EmbeddingProvider,
-    IndexResult,
-    SeriesEntry,
-    SeriesMatch,
-    code_token,
-    normalize_code,
-    normalize_series_catalog_row,
-    series_match_from_entry,
-)
+from parsimony.catalog.catalog import Catalog
 from parsimony.connector import (
     Connector,
     Connectors,
@@ -75,13 +60,15 @@ from parsimony.result import (
     SemanticTableResult,
 )
 from parsimony.stores.catalog_store import CatalogStore
-from parsimony.stores.data_store import DataStore, LoadResult
-from parsimony.stores.memory_data import InMemoryDataStore
+from parsimony.stores.data_store import DataStore, InMemoryDataStore, LoadResult
 
 try:
     __version__ = version("parsimony")
 except PackageNotFoundError:
-    __version__ = "0.0.0-dev"
+    try:
+        __version__ = version("parsimony-core")
+    except PackageNotFoundError:
+        __version__ = "0.0.0-dev"
 
 __all__ = [
     # --- Connector primitives ---
@@ -102,10 +89,6 @@ __all__ = [
     # --- Catalog ---
     "Catalog",
     "CatalogStore",
-    "EmbeddingProvider",
-    "IndexResult",
-    "SeriesEntry",
-    "SeriesMatch",
     "SQLiteCatalogStore",
     # --- Data persistence ---
     "DataStore",
@@ -119,12 +102,6 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "UnauthorizedError",
-    # --- Utilities ---
-    "build_embedding_text",
-    "code_token",
-    "normalize_code",
-    "normalize_series_catalog_row",
-    "series_match_from_entry",
     # --- Convenience ---
     "client",
 ]
@@ -140,9 +117,9 @@ def __getattr__(name: str) -> Any:
 
     if name == "client":
         if _client_cache is None:
-            from parsimony.connectors import build_connectors_from_env
+            from parsimony.discovery import build_connectors_from_env
 
-            _client_cache = build_connectors_from_env(lenient=True)
+            _client_cache = build_connectors_from_env()
         return _client_cache
 
     # SQLiteCatalogStore needs sqlite-vec from the [search] extra; fail at

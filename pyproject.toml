@@ -21,25 +21,31 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
+    # Mandatory kernel footprint — the freeze (DESIGN-distribution-model.md §5)
+    # restricts this list to: validation, data carriers, async HTTP, cache
+    # directory resolution. Heavy catalog deps live under [catalog].
     "pydantic>=2.11.1,<3",
     "pandas>=2.3.0,<3",
     "pyarrow>=23.0.1",
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
-    # Catalog bundle runtime (HF Parquet + FAISS distribution).
+    "tenacity>=9.0.0,<10",
+]
+
+[project.optional-dependencies]
+# HF Parquet + FAISS catalog bundle runtime — moved out of mandatory deps so
+# `pip install parsimony-core` stays small. All callsites import these
+# lazily, so absence does not break kernel import.
+catalog = [
     "faiss-cpu>=1.8.0",
     "sentence-transformers>=3.0.0",
     "huggingface_hub>=0.25.0",
 ]
-
-[project.optional-dependencies]
 # Legacy SQLite-vec + hosted embedding API path. Retained as an extra for
 # users who want local SQLite-based indexing instead of HF bundles.
 search = ["litellm>=1.59.0,<2", "sqlite-vec>=0.1.6"]
-sec = ["edgartools>=4.0.0"]
-financial-reports = ["financial-reports-generated-client>=0.1.0"]
 mcp = ["mcp>=1.0.0", "tabulate>=0.9.0"]
-all = ["parsimony-core[search,sec,financial-reports,mcp]"]
+all = ["parsimony-core[catalog,search,mcp]"]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",
@@ -48,9 +54,9 @@ dev = [
     "mypy>=1.10",
     "types-requests>=2.31",
     "pip-audit>=2.7",
-    # Extracted plugins — included in dev so in-repo integration tests still
-    # exercise the full connector surface after Phase 2+ extractions.
-    "parsimony-fred",
+    # Dev pulls in the catalog extra so the full test suite exercises the HF
+    # bundle + FAISS + sentence-transformers code paths.
+    "parsimony-core[catalog]",
 ]
 docs = ["mkdocs-material"]
 
@@ -62,47 +68,10 @@ Documentation = "https://docs.parsimony.dev"
 [project.scripts]
 parsimony = "parsimony.cli:main"
 
-[tool.uv.sources]
-# Resolve extracted plugins from sibling checkouts during local dev. CI and
-# published installs use the PyPI versions (pinned in [project.optional-dependencies].dev).
-parsimony-fred = { path = "../parsimony-fred", editable = true }
-
-# ---------------------------------------------------------------------------
-# Bundled providers registered as entry points.
-#
-# Every connector currently shipped in this package is exposed via the
-# ``parsimony.providers`` entry-point group so that ``parsimony.plugins.discovery``
-# picks it up the same way it picks up external ``parsimony-<name>`` plugins.
-#
-# During the Phase 5 bulk extraction each entry listed below will be deleted
-# from this file as the corresponding connector moves to its own repo
-# (see ``PLAN-plugin-migration.md``).
-# ---------------------------------------------------------------------------
-[project.entry-points."parsimony.providers"]
-# fred — extracted to parsimony-fred (PyPI / ockham-sh/parsimony-fred) in Phase 2
-fmp = "parsimony.connectors.fmp"
-fmp_screener = "parsimony.connectors.fmp_screener"
-eodhd = "parsimony.connectors.eodhd"
-coingecko = "parsimony.connectors.coingecko"
-finnhub = "parsimony.connectors.finnhub"
-tiingo = "parsimony.connectors.tiingo"
-financial_reports = "parsimony.connectors.financial_reports"
-eia = "parsimony.connectors.eia"
-bdf = "parsimony.connectors.bdf"
-alpha_vantage = "parsimony.connectors.alpha_vantage"
-riksbank = "parsimony.connectors.riksbank"
-destatis = "parsimony.connectors.destatis"
-bls = "parsimony.connectors.bls"
-# sdmx — extracted to parsimony-sdmx (PyPI / ockham-sh/parsimony-sdmx).
-polymarket = "parsimony.connectors.polymarket"
-sec_edgar = "parsimony.connectors.sec_edgar"
-treasury = "parsimony.connectors.treasury"
-snb = "parsimony.connectors.snb"
-rba = "parsimony.connectors.rba"
-bde = "parsimony.connectors.bde"
-boc = "parsimony.connectors.boc"
-boj = "parsimony.connectors.boj"
-bdp = "parsimony.connectors.bdp"
+# No in-tree connectors. Every connector is published as its own
+# parsimony-<name> distribution from the parsimony-connectors monorepo and
+# discovered via the `parsimony.providers` entry-point group. See
+# `docs/contract.md` for the plugin contract.
 
 [tool.ruff]
 target-version = "py311"
@@ -141,28 +110,6 @@ markers = [
 
 [tool.coverage.run]
 omit = [
-    "parsimony/connectors/alpha_vantage.py",
-    "parsimony/connectors/bde.py",
-    "parsimony/connectors/bdf.py",
-    "parsimony/connectors/bdp.py",
-    "parsimony/connectors/bls.py",
-    "parsimony/connectors/boc.py",
-    "parsimony/connectors/boj.py",
-    "parsimony/connectors/coingecko.py",
-    "parsimony/connectors/destatis.py",
-    "parsimony/connectors/eia.py",
-    "parsimony/connectors/eodhd.py",
-    "parsimony/connectors/financial_reports.py",
-    "parsimony/connectors/finnhub.py",
-    "parsimony/connectors/fmp.py",
-    "parsimony/connectors/fmp_screener.py",
-    "parsimony/connectors/polymarket.py",
-    "parsimony/connectors/rba.py",
-    "parsimony/connectors/riksbank.py",
-    "parsimony/connectors/sec_edgar.py",
-    "parsimony/connectors/snb.py",
-    "parsimony/connectors/tiingo.py",
-    "parsimony/connectors/treasury.py",
     "parsimony/mcp/__main__.py",
     "parsimony/embeddings/__init__.py",
     # Requires a real HuggingFace-hosted model (torch + sentence-transformers)

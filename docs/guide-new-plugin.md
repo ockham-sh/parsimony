@@ -1,6 +1,6 @@
 # Building a new parsimony plugin
 
-A parsimony plugin is a standalone Python package that exposes connectors to the `parsimony` kernel via an entry point. This guide walks through building one from scratch. For the authoritative contract, see [`plugin-contract.md`](plugin-contract.md).
+A parsimony plugin is a standalone Python package that exposes connectors to the `parsimony` kernel via an entry point. This guide walks through building one from scratch. For the authoritative contract, see [`contract.md`](contract.md).
 
 ## Canonical template
 

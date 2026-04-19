@@ -470,15 +470,15 @@ A single factory in `connectors/__init__.py` composes the per-module connector l
 connectors/__init__.py
     PROVIDERS = (ProviderSpec(...), ...)   # declarative registry of provider modules
 
-    build_connectors_from_env(*, env, lenient=False)
-        → iterates PROVIDERS
-        → reads env vars (FRED_API_KEY, FMP_API_KEY, EODHD_API_KEY, etc.)
-        → for each provider whose env vars are present: binds keys to the module's CONNECTORS
+    build_connectors_from_env(*, env=None)
+        → iterates every discovered `parsimony.providers` entry point
+        → reads each plugin's declared env vars (e.g. FRED_API_KEY, FMP_API_KEY)
+        → providers whose required env vars are absent are silently skipped
         → concatenates all bound bundles into one Connectors instance
         → returns Connectors
 ```
 
-`FRED_API_KEY` is required by default; pass `lenient=True` to skip it when missing. All other credentialed providers are optional — if their env vars are absent, they are silently excluded. Consumers needing only the MCP/search surface filter with `connectors.filter(tags=["tool"])`.
+Providers are discovered via the `parsimony.providers` entry-point group; each plugin declares its own required env vars. Missing env vars cause the provider to be skipped, not the whole build to fail. Consumers needing only the MCP/search surface filter with `connectors.filter(tags=["tool"])`.
 
 Connectors for SEC Edgar (no key needed) and Polymarket (no key needed) are always included in `build_connectors_from_env()` when their respective package dependencies are installed. SDMX connectors follow the same no-credentials pattern but ship as the separate `parsimony-sdmx` plugin, discovered via the `parsimony.providers` entry point.
 

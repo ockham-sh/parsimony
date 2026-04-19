@@ -8,9 +8,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Breaking changes
 
-- **Catalog distribution has moved from GitHub SQLite to HuggingFace Parquet + FAISS bundles.** The old `_CATALOG_REPO` / `_try_github_download` / `_merge_remote_db` code paths and `SQLiteCatalogStore.merge_from_file` are removed. Users who relied on the GitHub SQLite download now get their catalogs from `parsimony-dev/<namespace>` on HuggingFace Hub via the new `HFBundleCatalogStore`. The `SQLiteCatalogStore` is retained for local-only use.
-- **`Catalog.search` now requires an explicit non-empty `namespaces=[...]` list.** Implicit cross-namespace search is rejected — each namespace ships with its own embedding model and merging without scoping is unsound. Calls like `catalog.search("gdp")` raise `ValueError` with a migration example.
-- **Base install now includes `faiss-cpu`, `sentence-transformers`, and `huggingface_hub`.** This adds ~800 MB to `pip install parsimony-core` (driven by torch). The legacy `[search]` extra with `litellm` + `sqlite-vec` is retained for users who prefer the hosted-embedding + local-SQLite path.
+- **Connectors ship as separate `parsimony-<name>` packages.** Every
+  connector is published from
+  [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)
+  as its own PyPI distribution and discovered via the
+  `parsimony.providers` entry-point group. The kernel is a thin shell
+  with no in-tree connectors. Import connectors from their own package
+  (`from parsimony_fred import CONNECTORS`). See
+  [`DESIGN-distribution-model.md`](DESIGN-distribution-model.md) and
+  [`docs/contract.md`](docs/contract.md) for the binding spec.
+- **Allow-list default for discovery.** Officially-maintained
+  `parsimony-<name>` packages (listed in the bundled
+  `OFFICIAL_PLUGINS.json`) load without opt-in. Non-official plugins
+  require `PARSIMONY_TRUST_PLUGINS=<name1>,<name2>` to load. Set
+  `PARSIMONY_TRUST_PLUGINS=*` to bypass allow-list checks entirely
+  (developer escape hatch; logs a warning). See
+  [`docs/contract.md`](docs/contract.md) §7.
+- **ABI gate.** Plugins declare their target contract version via the
+  `parsimony-contract-v<N>` keyword in `[project] keywords`. The
+  kernel refuses to import plugins whose declared version does not
+  match `parsimony.CONTRACT_VERSION`, or that omit the keyword.
+- **Heavy catalog dependencies moved to `[catalog]` extra.** `faiss-cpu`,
+  `sentence-transformers`, and `huggingface_hub` are no longer mandatory.
+  Users who need HF-bundle catalog search install via
+  `pip install parsimony-core[catalog]`.
+- **Catalog distribution uses HuggingFace Parquet + FAISS bundles**
+  (`HFBundleCatalogStore`). `SQLiteCatalogStore` remains for local-only
+  use.
+- **`Catalog.search` requires an explicit non-empty `namespaces=[...]`
+  list.** Each namespace ships with its own embedding model; implicit
+  cross-namespace search is unsound and now rejected with `ValueError`.
+
+### Added (distribution model)
+
+- `parsimony.discovery` — plugin discovery + composition public API:
+  `build_connectors_from_env`, `discovered_providers`,
+  `iter_entry_points`, `load_provider`, `DiscoveredProvider`.
+- `parsimony.CONTRACT_VERSION` export. Used by the ABI gate;
+  documented in [`docs/contract.md`](docs/contract.md) §2.
+- `parsimony conformance verify <package>` CLI subcommand. Release-gate
+  and regulated-finance security-review artefact. JSON output; exit 0
+  on pass, 1 on fail, 2 on not-installed.
+- Structured logging on the `parsimony.discovery` logger for every
+  ABI-gate and trust-gate decision.
 
 ### Changed
 

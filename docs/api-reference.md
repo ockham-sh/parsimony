@@ -588,13 +588,13 @@ from parsimony.connectors import build_connectors_from_env
 ### `build_connectors_from_env`
 
 ```python
-build_connectors_from_env(*, env: dict[str, str] | None = None, lenient: bool = False) -> Connectors
+build_connectors_from_env(*, env: dict[str, str] | None = None) -> Connectors
 ```
 
-Single factory that builds the complete `Connectors` bundle — all providers registered in the `PROVIDERS` registry — with API keys injected from environment variables.
+Single factory that composes every discovered `parsimony.providers` plugin into one `Connectors` bundle, binding each plugin's declared env vars from `os.environ`.
 
 - `env`: optional dict of environment variables; defaults to `os.environ` if `None`.
-- `lenient`: when `True`, skips required providers whose env vars are missing (used by the catalog builder). When `False` (default), missing required env vars raise an error.
+- Providers whose required env vars are absent are silently skipped.
 
 **Required env vars**: `FRED_API_KEY`  
 **Optional env vars**: `FMP_API_KEY`, `EODHD_API_KEY`, `FINNHUB_API_KEY`, `TIINGO_API_KEY`, `COINGECKO_API_KEY`, `EIA_API_KEY`, `ALPHA_VANTAGE_API_KEY`, `FINANCIAL_REPORTS_API_KEY`, and others

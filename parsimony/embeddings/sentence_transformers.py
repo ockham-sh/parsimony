@@ -19,7 +19,7 @@ import os
 import threading
 from typing import Any
 
-from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.errors import BundleError
 from parsimony.bundles.format import ALLOWED_MODEL_ID_PREFIXES
 from parsimony.catalog.models import EmbeddingProvider
 
@@ -58,7 +58,7 @@ def _load_model_sync(repo_id: str, revision: str) -> Any:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
-            raise BundleIntegrityError(
+            raise BundleError(
                 "sentence-transformers is not installed",
                 resource=repo_id,
                 next_action="install parsimony's base dependencies: pip install 'parsimony'",
@@ -71,7 +71,7 @@ def _load_model_sync(repo_id: str, revision: str) -> Any:
             # ``modeling_*.py`` that runs at load — we never want that path.
             model = SentenceTransformer(repo_id, revision=revision, trust_remote_code=False)
         except Exception as exc:  # broad catch: sentence-transformers raises various types
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"Failed to load embedding model {repo_id!r} at revision {revision!r}: {exc}",
                 resource=f"{repo_id}@{revision}",
                 next_action=(
@@ -121,7 +121,7 @@ class SentenceTransformersEmbeddingProvider(EmbeddingProvider):
 
     def __init__(self, *, model_id: str, revision: str, expected_dim: int) -> None:
         if not any(model_id.startswith(p) for p in ALLOWED_MODEL_ID_PREFIXES):
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"embedding model_id {model_id!r} is not under an allowed prefix",
                 resource=model_id,
                 next_action=f"use a model under one of {ALLOWED_MODEL_ID_PREFIXES}",
@@ -178,7 +178,7 @@ class SentenceTransformersEmbeddingProvider(EmbeddingProvider):
                 show_progress_bar=False,
             )
         except Exception as exc:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"encode() failed on model {self._model_id!r}: {exc}",
                 resource=self._model_id,
             ) from exc
@@ -191,13 +191,13 @@ class SentenceTransformersEmbeddingProvider(EmbeddingProvider):
             return
         shape = getattr(vectors, "shape", None)
         if shape is None or len(shape) != 2:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"encode() returned unexpected output shape {shape!r}",
                 resource=self._model_id,
             )
         actual_dim = int(shape[1])
         if actual_dim != self._expected_dim:
-            raise BundleIntegrityError(
+            raise BundleError(
                 f"model {self._model_id!r} produced dim={actual_dim}, "
                 f"manifest declares embedding_dim={self._expected_dim}",
                 resource=self._model_id,

@@ -2,7 +2,7 @@
 
 The Phase 1.3 contract: the connector set returned by
 ``build_connectors_from_env`` must remain byte-identical to the pre-refactor
-output while the registry delegates to ``parsimony.plugins.discovery``.
+output while the registry delegates to ``parsimony.discovery``.
 """
 
 from __future__ import annotations
@@ -43,44 +43,25 @@ def _make_module(
 
 
 # ---------------------------------------------------------------------------
-# Baseline — PROVIDERS tuple still works
+# Baseline — empty discovery when no plugins are installed
 # ---------------------------------------------------------------------------
 
 
-def test_baseline_provider_set_unchanged() -> None:
-    """Precondition: the factory returns the same connector names as before Phase 1.
+def test_baseline_empty_when_no_plugins_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Kernel-only install (no connector packages) yields an empty Connectors set.
 
-    If this test drifts, Phase 1.3's byte-identity guarantee has been violated.
+    Post-Phase-3, the kernel ships no connectors of its own. Any test that
+    needs connectors in the surface must install an entry-point plugin or
+    monkeypatch one in.
     """
-    from parsimony.connectors import build_connectors_from_env
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery import build_connectors_from_env
 
-    env = {
-        "FRED_API_KEY": "test",
-        "FMP_API_KEY": "test",
-        "EODHD_API_KEY": "test",
-        "COINGECKO_API_KEY": "test",
-        "FINNHUB_API_KEY": "test",
-        "TIINGO_API_KEY": "test",
-        "EIA_API_KEY": "test",
-        "BDF_API_KEY": "test",
-        "ALPHA_VANTAGE_API_KEY": "test",
-        "RIKSBANK_API_KEY": "test",
-        "DESTATIS_API_KEY": "test",
-        "BLS_API_KEY": "test",
-        "FINANCIAL_REPORTS_API_KEY": "test",
-    }
+    monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
+    discovery._clear_cache()
 
-    c = build_connectors_from_env(env=env)
-    names = set(c.names())
-
-    # Canonical expectations from the pre-refactor snapshot. sdmx_fetch
-    # was removed from this set when the connector migrated to the
-    # parsimony-sdmx plugin; it's still discoverable via entry point when
-    # the plugin is installed (covered in the plugin's own tests).
-    assert "fred_fetch" in names
-    assert "fred_search" in names
-    assert "fmp_quotes" in names
-    assert "treasury_fetch" in names
+    c = build_connectors_from_env(env={})
+    assert list(c.names()) == []
 
 
 # ---------------------------------------------------------------------------
@@ -96,8 +77,8 @@ def test_discovered_provider_appears_in_build_output(monkeypatch: pytest.MonkeyP
     :func:`test_baseline_provider_set_unchanged` and
     :func:`test_connector_names_snapshot_matches_pre_refactor`).
     """
-    from parsimony.connectors import build_connectors_from_env
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery import build_connectors_from_env
 
     fake_module = _make_module(
         "pkg_fake_provider",
@@ -121,8 +102,8 @@ def test_discovered_provider_appears_in_build_output(monkeypatch: pytest.MonkeyP
 
 def test_discovered_provider_silently_skipped_when_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing env var for a discovered plugin silently skips it — no raise."""
-    from parsimony.connectors import build_connectors_from_env
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery import build_connectors_from_env
 
     fake_module = _make_module(
         "pkg_silent_skip",
@@ -142,72 +123,36 @@ def test_discovered_provider_silently_skipped_when_env_missing(monkeypatch: pyte
     assert "silent_fetch" not in c.names()
 
 
-def test_discovered_dedupes_against_bundled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If an entry-point re-declares a bundled provider module, discovered wins (no duplicates).
+def test_discovered_single_entry_no_duplicates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An entry-point pointing at a synthetic module composes cleanly without duplicates.
 
-    Uses ``parsimony.connectors.treasury`` as the bundled module under test — a
-    credential-free provider that loads reliably in CI. FRED and SDMX are no
-    longer bundled (extracted to their own plugins), so neither can serve this role.
+    Uses ``tests.fixtures.synth_provider`` because the kernel no longer
+    contains provider-specific modules — every connector lives in its own
+    ``parsimony_<name>`` package (freeze §6).
     """
-    from parsimony.connectors import build_connectors_from_env
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery import build_connectors_from_env
 
-    ep = EntryPoint(name="treasury", value="parsimony.connectors.treasury", group="parsimony.providers")
+    ep = EntryPoint(
+        name="synth",
+        value="tests.fixtures.synth_provider",
+        group="parsimony.providers",
+    )
 
-    import parsimony.connectors.treasury as real_treasury_module
+    import tests.fixtures.synth_provider as synth_module
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
-    monkeypatch.setattr(discovery, "_import_module", lambda path: real_treasury_module)
-    monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-core", "0.1.0a1"))
+    monkeypatch.setattr(discovery, "_import_module", lambda path: synth_module)
+    monkeypatch.setattr(
+        discovery,
+        "_distribution_for_entry_point",
+        lambda _ep: ("parsimony-core", "0.1.0a1"),
+    )
     discovery._clear_cache()
 
     c = build_connectors_from_env(env={})
     names = c.names()
 
-    # treasury_fetch must appear exactly once despite dual registration
-    assert names.count("treasury_fetch") == 1
-
-
-# ---------------------------------------------------------------------------
-# Snapshot contract test
-# ---------------------------------------------------------------------------
-
-
-def test_connector_names_snapshot_matches_pre_refactor() -> None:
-    """Golden-snapshot contract: the set of connector names with all creds provided
-    should match the pre-refactor output. Update the snapshot deliberately if intent changes.
-    """
-    from parsimony.connectors import build_connectors_from_env
-
-    env = {
-        "FRED_API_KEY": "test",
-        "FMP_API_KEY": "test",
-        "EODHD_API_KEY": "test",
-        "COINGECKO_API_KEY": "test",
-        "FINNHUB_API_KEY": "test",
-        "TIINGO_API_KEY": "test",
-        "EIA_API_KEY": "test",
-        "BDF_API_KEY": "test",
-        "ALPHA_VANTAGE_API_KEY": "test",
-        "RIKSBANK_API_KEY": "test",
-        "DESTATIS_API_KEY": "test",
-        "BLS_API_KEY": "test",
-        "FINANCIAL_REPORTS_API_KEY": "test",
-    }
-    c = build_connectors_from_env(env=env)
-    names = set(c.names())
-
-    # Names established by test_fetch_connectors_factory.py today. The
-    # sdmx_* connectors moved to parsimony-sdmx and are no longer bundled;
-    # their presence is covered by that plugin's own test suite.
-    expected_subset = {
-        "fred_fetch",
-        "fred_search",
-        "fmp_quotes",
-        "fmp_search",
-        "fmp_taxonomy",
-        "fmp_screener",
-        "treasury_fetch",
-    }
-    missing = expected_subset - names
-    assert not missing, f"Expected connectors missing after refactor: {sorted(missing)}"
+    # Both connectors from synth_provider are present exactly once.
+    assert names.count("synth_fetch") == 1
+    assert names.count("enumerate_synth") == 1

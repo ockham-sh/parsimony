@@ -142,7 +142,7 @@ async def _section_catalog_and_callbacks() -> None:
     idx = await catalog.index_result(table, embed=False)
     print(f"  IndexResult: total={idx.total}, indexed={idx.indexed}, skipped={idx.skipped}")
 
-    listed, total = await catalog.list_entries(namespace=DEMO_NAMESPACE, limit=10)
+    listed, total = await catalog.store.list(namespace=DEMO_NAMESPACE, limit=10)
     print(f"  list_entries: total={total}, codes={[e.code for e in listed]}")
 
     print("\n--- 5) dry_run=True (dedupe preview; no store writes) ---\n")

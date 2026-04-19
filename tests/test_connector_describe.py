@@ -80,7 +80,6 @@ async def bare_connector(params: EmptyDescParams) -> pd.DataFrame:
 @connector(
     description="A connector with a very long description that exceeds eighty characters easily "
     "because it contains a detailed explanation of what the connector does and how.",
-    result_type="text",
 )
 async def long_desc_connector(params: SimpleParams) -> str:
     """Ignored docstring."""
@@ -218,14 +217,6 @@ class TestConnectorToLlm:
         text = fred_search.to_llm()
         assert "Returns:" not in text
 
-    def test_result_type_noted_when_not_dataframe(self) -> None:
-        text = long_desc_connector.to_llm()
-        assert "result.data is text (not a DataFrame)" in text
-
-    def test_result_type_not_noted_for_dataframe(self) -> None:
-        text = fred_search.to_llm()
-        assert "not a DataFrame" not in text
-
     def test_parameters_listed(self) -> None:
         text = fred_fetch.to_llm()
         assert "- series_id: string" in text
@@ -326,36 +317,37 @@ class TestConnectorsDescribe:
 
 
 class TestConnectorsToLlm:
-    def test_code_context_header(self) -> None:
+    def test_caller_header_is_prepended(self) -> None:
         coll = Connectors([fred_search])
-        text = coll.to_llm(context="code")
-        assert "Data connectors (code execution)" in text
-        assert 'client["name"]' in text
+        text = coll.to_llm(header="# CUSTOM HEADER\nrules here")
+        assert "# CUSTOM HEADER" in text
+        assert "rules here" in text
 
-    def test_mcp_context_header(self) -> None:
+    def test_default_no_header(self) -> None:
+        """No product-specific prose in the kernel — host owns the header."""
         coll = Connectors([fred_search])
-        text = coll.to_llm(context="mcp")
-        assert "financial data discovery tools" in text
+        text = coll.to_llm()
+        assert "Data connectors" not in text
+        assert "financial data discovery" not in text
 
-    def test_code_context_connectors_label(self) -> None:
+    def test_default_heading_is_connectors(self) -> None:
         coll = Connectors([fred_search])
-        text = coll.to_llm(context="code")
-        assert "## Connectors (1)" in text
+        assert "## Connectors (1)" in coll.to_llm()
 
-    def test_mcp_context_tools_label(self) -> None:
+    def test_custom_heading(self) -> None:
         coll = Connectors([fred_search])
-        text = coll.to_llm(context="mcp")
-        assert "## Tools (1)" in text
+        assert "## Tools (1)" in coll.to_llm(heading="Tools")
 
     def test_empty_collection_message(self) -> None:
         coll = Connectors([])
         text = coll.to_llm()
         assert "No connectors available." in text
 
-    def test_empty_mcp_collection(self) -> None:
+    def test_empty_collection_with_header(self) -> None:
         coll = Connectors([])
-        text = coll.to_llm(context="mcp")
+        text = coll.to_llm(header="# HEADER", heading="Tools")
         assert "No connectors available." in text
+        assert "# HEADER" in text
 
     def test_connector_details_included(self) -> None:
         coll = Connectors([fred_search, bare_connector])

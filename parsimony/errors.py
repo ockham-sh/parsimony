@@ -93,7 +93,7 @@ class RateLimitError(ConnectorError):
             msg = message
         elif quota_exhausted:
             msg = (
-                f"{provider}: API quota exhausted for the current billing period. "
+                f"{provider}: API quota exhausted for the current billing period — do not retry. "
                 "Upgrade your plan or wait for the next billing cycle."
             )
         else:

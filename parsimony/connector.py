@@ -60,6 +60,43 @@ class Namespace:
         return json_schema
 
 
+# ---------------------------------------------------------------------------
+# ResultCallback — post-fetch observer type, referenced by Connector below.
+# ---------------------------------------------------------------------------
+
+
+ResultCallback = Callable[[Result], Any]
+"""Post-fetch **observer**: ``(result) -> None | Awaitable``.
+
+**Observer semantics — exceptions are logged and swallowed.** The connector
+has already produced a valid :class:`Result`; a downstream side-effect
+failure (telemetry, audit log, notification) must not corrupt the caller's
+view. If you need fail-closed persistence (e.g. the caller must not see a
+successful ``Result`` when a write fails), call the persistence function
+directly from the connector or wrap the call site — do not rely on a
+post-hook.
+"""
+
+
+async def _invoke_result_callbacks(
+    callbacks: tuple[ResultCallback, ...],
+    result: Result,
+) -> None:
+    for cb in callbacks:
+        try:
+            ret = cb(result)
+            if inspect.isawaitable(ret):
+                await ret
+        except Exception:
+            # Observer semantics — see ResultCallback docstring.
+            logger.exception("Result observer %r failed; data was fetched successfully", cb)
+
+
+# ---------------------------------------------------------------------------
+# Private helpers used by Connector and its factories.
+# ---------------------------------------------------------------------------
+
+
 def _mapping_proxy(d: dict[str, Any] | None) -> Mapping[str, Any]:
     return MappingProxyType(dict(d or {}))
 
@@ -155,7 +192,6 @@ class Connector:
     dep_names: frozenset[str]
     optional_dep_names: frozenset[str]
     output_config: OutputConfig | None = None
-    result_type: str = "dataframe"
     tags: tuple[str, ...] = ()
     properties: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
@@ -256,137 +292,143 @@ class Connector:
             )
         model = self._validate_params(params, **kwargs)
         raw = await self.call_raw(model)
+        # Narrow catch: ValueError from dtype coercion inside build_table_result
+        # is a legitimate "upstream data does not fit the declared schema"
+        # signal — ParseError is the right type. TypeError / AttributeError /
+        # etc. are programmer bugs in the connector's OutputConfig and
+        # propagate untouched so real tracebacks aren't masked.
         try:
             result = self._wrap_result(raw, model)
-        except (ValueError, TypeError) as exc:
+        except ValueError as exc:
             raise ParseError(self.name, str(exc)) from exc
-        # Ensure provenance carries the connector name for UI display
-        if result.provenance.source != self.name:
-            result = result.model_copy(
-                update={
-                    "provenance": result.provenance.model_copy(
-                        update={
-                            "source": self.name,
-                            "source_description": result.provenance.source_description or self.description,
-                        }
-                    )
-                }
-            )
         if self._callbacks:
             await _invoke_result_callbacks(self._callbacks, result)
         return result
 
     def describe(self) -> str:
-        """Return a multi-line human- and LLM-readable description of this connector.
-
-        Includes the full description, all parameters with types and namespace
-        annotations, unbound dependencies, and the output schema if configured.
-        Use ``__repr__`` for the compact one-liner; this method is for documentation
-        and tool introspection.
-        """
-        lines: list[str] = []
-
-        header = f"Connector: {self.name}"
-        lines.append(header)
-        lines.append("─" * len(header))
-        lines.append("")
-        lines.append(self.description)
-        lines.append("")
-
-        schema = dict(self.param_schema)
-        props: dict[str, Any] = schema.get("properties", {})
-        required: set[str] = set(schema.get("required", []))
-        if props:
-            lines.append("Parameters:")
-            for fname, spec in props.items():
-                typ = _resolve_type(spec)
-                req_label = "required" if fname in required else "optional"
-                line = f"  {fname}: {typ} ({req_label})"
-                extras: list[str] = []
-                ns = spec.get("namespace")
-                if ns:
-                    extras.append(f"namespace={ns!r}")
-                fdesc = spec.get("description")
-                if fdesc:
-                    extras.append(fdesc)
-                if extras:
-                    line += "  —  " + ", ".join(extras)
-                lines.append(line)
-            lines.append("")
-
-        req_deps = sorted(self.dep_names)
-        opt_deps = sorted(self.optional_dep_names)
-        if req_deps or opt_deps:
-            lines.append("Dependencies (bind via bind_deps before calling):")
-            for d in req_deps:
-                lines.append(f"  {d} (required)")
-            for d in opt_deps:
-                lines.append(f"  {d} (optional)")
-            lines.append("")
-
-        if self.output_config is not None:
-            lines.append("Output Schema:")
-            cols = self.output_config.columns
-            name_w = max((len(c.name) for c in cols), default=0) + 2
-            for col in cols:
-                role_str = col.role.value.upper()
-                suffix = f"  namespace={col.namespace!r}" if col.namespace else ""
-                lines.append(f"  {col.name:<{name_w}}{role_str:<10}{suffix}")
-            lines.append("")
-
-        if self.tags:
-            lines.append(f"Tags: {', '.join(self.tags)}")
-        if self.properties:
-            lines.append(f"Properties: {dict(self.properties)}")
-
-        return "\n".join(lines).rstrip()
+        """Multi-line human- and LLM-readable description. See :func:`describe_connector`."""
+        return describe_connector(self)
 
     def to_llm(self) -> str:
-        """Return a compact, token-efficient description for LLM system prompts.
-
-        Full description with output columns appended, then structured parameter list.  No decorative
-        separators or redundant labels — optimised for injection into a system prompt.
-        """
-        lines: list[str] = []
-
-        # --- header: ### name [tags] ---
-        tag_suffix = f" [{', '.join(self.tags)}]" if self.tags else ""
-        lines.append(f"### {self.name}{tag_suffix}")
-
-        # --- description (reflowed) + appended output columns ---
-        desc = " ".join(self.description.split())  # collapse whitespace / indentation
-        if self.output_config is not None:
-            data_cols = [c.name for c in self.output_config.columns]
-            if data_cols:
-                desc += f" Returns: {', '.join(data_cols)}."
-        if self.result_type != "dataframe":
-            desc += f" → result.data is {self.result_type} (not a DataFrame)."
-        lines.append(desc)
-
-        # --- parameters as a compact list ---
-        schema = dict(self.param_schema)
-        props: dict[str, Any] = schema.get("properties", {})
-        required: set[str] = set(schema.get("required", []))
-        for fname, spec in props.items():
-            typ = _resolve_type(spec)
-            opt = "?" if fname not in required else ""
-            ns = spec.get("namespace")
-            ns_hint = f" [ns:{ns}]" if ns else ""
-            fdesc = spec.get("description", "")
-            desc_part = f" — {fdesc}" if fdesc else ""
-            lines.append(f"- {fname}{opt}: {typ}{ns_hint}{desc_part}")
-
-        return "\n".join(lines)
+        """Compact token-efficient description for LLM system prompts. See :func:`llm_card`."""
+        return llm_card(self)
 
     def __repr__(self) -> str:
-        params = _summarize_params(self.param_schema)
-        desc = self.description
-        if len(desc) > 80:
-            desc = desc[:77] + "..."
-        return f"Connector({self.name!r}, params=[{params}], desc={desc!r})"
+        return _connector_repr(self)
 
-    def __str__(self) -> str:
-        return self.__repr__()
+
+# ---------------------------------------------------------------------------
+# Presentation projections (pure functions of Connector state)
+# ---------------------------------------------------------------------------
+
+
+def describe_connector(c: Connector) -> str:
+    """Multi-line human- and LLM-readable description of *c*.
+
+    Pure projection of the dataclass state — included description, parameters
+    with types and namespaces, unbound dependencies, output schema, tags,
+    properties. Used by documentation and tool introspection.
+    """
+    lines: list[str] = []
+    header = f"Connector: {c.name}"
+    lines.append(header)
+    lines.append("─" * len(header))
+    lines.append("")
+    lines.append(c.description)
+    lines.append("")
+
+    schema = dict(c.param_schema)
+    props: dict[str, Any] = schema.get("properties", {})
+    required: set[str] = set(schema.get("required", []))
+    if props:
+        lines.append("Parameters:")
+        for fname, spec in props.items():
+            typ = _resolve_type(spec)
+            req_label = "required" if fname in required else "optional"
+            line = f"  {fname}: {typ} ({req_label})"
+            extras: list[str] = []
+            ns = spec.get("namespace")
+            if ns:
+                extras.append(f"namespace={ns!r}")
+            fdesc = spec.get("description")
+            if fdesc:
+                extras.append(fdesc)
+            if extras:
+                line += "  —  " + ", ".join(extras)
+            lines.append(line)
+        lines.append("")
+
+    req_deps = sorted(c.dep_names)
+    opt_deps = sorted(c.optional_dep_names)
+    if req_deps or opt_deps:
+        lines.append("Dependencies (bind via bind_deps before calling):")
+        for d in req_deps:
+            lines.append(f"  {d} (required)")
+        for d in opt_deps:
+            lines.append(f"  {d} (optional)")
+        lines.append("")
+
+    if c.output_config is not None:
+        lines.append("Output Schema:")
+        cols = c.output_config.columns
+        name_w = max((len(col.name) for col in cols), default=0) + 2
+        for col in cols:
+            role_str = col.role.value.upper()
+            suffix = f"  namespace={col.namespace!r}" if col.namespace else ""
+            lines.append(f"  {col.name:<{name_w}}{role_str:<10}{suffix}")
+        lines.append("")
+
+    if c.tags:
+        lines.append(f"Tags: {', '.join(c.tags)}")
+    if c.properties:
+        lines.append(f"Properties: {dict(c.properties)}")
+
+    return "\n".join(lines).rstrip()
+
+
+def llm_card(c: Connector) -> str:
+    """Compact token-efficient description of *c* for LLM system prompts.
+
+    Pure projection. No decorative separators — optimised for injection into
+    a system prompt.
+    """
+    lines: list[str] = []
+    tag_suffix = f" [{', '.join(c.tags)}]" if c.tags else ""
+    lines.append(f"### {c.name}{tag_suffix}")
+
+    desc = " ".join(c.description.split())
+    if c.output_config is not None:
+        data_cols = [col.name for col in c.output_config.columns]
+        if data_cols:
+            desc += f" Returns: {', '.join(data_cols)}."
+    lines.append(desc)
+
+    schema = dict(c.param_schema)
+    props: dict[str, Any] = schema.get("properties", {})
+    required: set[str] = set(schema.get("required", []))
+    for fname, spec in props.items():
+        typ = _resolve_type(spec)
+        opt = "?" if fname not in required else ""
+        ns = spec.get("namespace")
+        ns_hint = f" [ns:{ns}]" if ns else ""
+        fdesc = spec.get("description", "")
+        desc_part = f" — {fdesc}" if fdesc else ""
+        lines.append(f"- {fname}{opt}: {typ}{ns_hint}{desc_part}")
+
+    return "\n".join(lines)
+
+
+def _connector_repr(c: Connector) -> str:
+    params = _summarize_params(c.param_schema)
+    desc = c.description
+    if len(desc) > 80:
+        desc = desc[:77] + "..."
+    return f"Connector({c.name!r}, params=[{params}], desc={desc!r})"
+
+
+# ---------------------------------------------------------------------------
+# Decorator factories
+# ---------------------------------------------------------------------------
 
 
 def connector(
@@ -395,7 +437,6 @@ def connector(
     description: str | None = None,
     params: type[BaseModel] | None = None,
     output: OutputConfig | None = None,
-    result_type: str = "dataframe",
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     catalog: Any = None,
@@ -426,12 +467,9 @@ def connector(
     bundle catalog spec, since the wire format requires KEY+TITLE+METADATA shape.
     """
     if catalog is not None:
-        # Encode the invariant in the type system (Dodds R3): only @enumerator
-        # accepts catalog=. @connector raises immediately so plugin authors
-        # don't drift toward "catalog on a fetch connector" patterns.
-        from parsimony.bundles.errors import BundleSpecError
-
-        raise BundleSpecError(
+        # @connector must not accept catalog= — that kwarg is for @enumerator
+        # only. TypeError keeps connector.py decoupled from the bundles package.
+        raise TypeError(
             "catalog= is only valid on @enumerator, not @connector. "
             "Move the spec onto the enumerator that produces the catalog rows.",
         )
@@ -457,7 +495,6 @@ def connector(
             dep_names=dep_names,
             optional_dep_names=optional_dep_names,
             output_config=output,
-            result_type=result_type,
             tags=tag_tup,
             properties=_mapping_proxy(properties),
         )
@@ -527,7 +564,7 @@ def loader(
 
     **Validation:** ``output`` must have no TITLE or METADATA columns, at least one DATA column,
     exactly one KEY column, and that KEY must set ``namespace=...`` for
-    :meth:`~parsimony.data_store.DataStore.load_result`.
+    :meth:`~parsimony.stores.data_store.InMemoryDataStore.load_result`.
     """
 
     _validate_loader_output(output)
@@ -582,45 +619,42 @@ def enumerator(
 
     _validate_enumerator_output(output)
     merged_tags = ["enumerator", *(tags or [])]
-    merged_properties: dict[str, Any] = dict(properties or {})
-    if catalog is not None:
+
+    if catalog is None:
+        # No catalog spec — plain enumerator. Forward to `connector` directly;
+        # there is no per-call state, so `merged_properties` can be a single
+        # dict copy taken at decoration time.
+        return connector(
+            name=name,
+            description=description,
+            params=params,
+            output=output,
+            tags=merged_tags,
+            properties=dict(properties or {}),
+        )
+
+    def _wrap(fn: Callable[..., Any]) -> Connector:
+        # With a catalog spec we need the decorated function's module to
+        # validate plan provenance, so we resolve `from_decorator_kwargs`
+        # per-decoration (and build `merged_properties` fresh inside the
+        # closure to avoid leaking the catalog entry across decorations).
         from parsimony.bundles.spec import from_decorator_kwargs
 
-        # The connector's __module__ — needed for the plan-provenance check
-        # (rejects cross-plugin plan substitution). Frame inspection: caller
-        # is the @enumerator(...) call site, which lives in the plugin's
-        # connector module.
-        frame = inspect.currentframe()
-        connector_module = frame.f_back.f_globals.get("__name__", "") if frame and frame.f_back else ""
-        merged_properties["catalog"] = from_decorator_kwargs(catalog, connector_module=connector_module)
+        connector_module = getattr(fn, "__module__", "") or ""
+        merged_properties: dict[str, Any] = dict(properties or {})
+        merged_properties["catalog"] = from_decorator_kwargs(
+            catalog, connector_module=connector_module
+        )
+        return connector(
+            name=name,
+            description=description,
+            params=params,
+            output=output,
+            tags=merged_tags,
+            properties=merged_properties,
+        )(fn)
 
-    # Bypass the @connector catalog= guard by calling its decorator factory directly
-    # without forwarding catalog= (we've already validated and inlined it into properties).
-    return connector(
-        name=name,
-        description=description,
-        params=params,
-        output=output,
-        tags=merged_tags,
-        properties=merged_properties,
-    )
-
-
-ResultCallback = Callable[[Result], Any]
-"""Post-fetch hook: ``(result)``. May return ``None`` or an awaitable."""
-
-
-async def _invoke_result_callbacks(
-    callbacks: tuple[ResultCallback, ...],
-    result: Result,
-) -> None:
-    for cb in callbacks:
-        try:
-            ret = cb(result)
-            if inspect.isawaitable(ret):
-                await ret
-        except Exception:
-            logger.exception("Result callback %r failed; data was fetched successfully", cb)
+    return _wrap
 
 
 class Connectors:
@@ -702,70 +736,31 @@ class Connectors:
             lines.append(f"  {i:2}. {c.name:<{name_w}} {desc}")
         return "\n".join(lines)
 
-    _CODE_HEADER = (
-        "\n# Data connectors (code execution)\n"
-        "\n"
-        "These connectors are available via `client` in the code executor. "
-        "They return full datasets as DataFrames — the data stays in the "
-        "execution environment, not in the conversation context.\n"
-        "\n"
-        "## How to use\n"
-        '- `result = await client["name"](param=value)` — returns Result '
-        "with .data and .provenance (source metadata).\n"
-        "- .data is usually a DataFrame; some connectors return text (noted in their description).\n"
-        "- Keyword arguments must match the connector's typed parameters.\n"
-        '- `client.filter(name="query")` narrows by name or description.\n'
-        "- **ONLY use connectors listed below. Do NOT invent connector names.**\n"
-    )
-
-    _MCP_HEADER = (
-        "\n# Parsimony — financial data discovery tools\n"
-        "\n"
-        "These MCP tools search and discover data. They return compact, "
-        "context-friendly results — metadata, listings, search matches — "
-        "not bulk datasets. For bulk retrieval, write and execute a Python "
-        "script:\n"
-        "```python\n"
-        "from parsimony import client\n"
-        "result = await client['fred_fetch'](series_id='UNRATE')\n"
-        "df = result.data  # pandas DataFrame\n"
-        "```\n"
-        "\n"
-        "After discovering data with MCP tools, always execute the fetch — "
-        "do not just suggest code.\n"
-        "\n"
-        "Workflow: discover (MCP tool) → fetch and execute (client) → analyze.\n"
-        "For SDMX: list_datasets → dsd → codelist → series_keys → fetch.\n"
-    )
-
-    def to_llm(self, context: str = "code") -> str:
+    def to_llm(self, *, header: str = "", heading: str = "Connectors") -> str:
         """Return an LLM-ready prompt section describing all connectors.
 
-        Compact format inspired by parsimony's ``enhanced_description``
-        pattern: full descriptions with output columns appended, structured
-        parameter lists, no decorative separators.  Designed to be injected
-        into an agent's system prompt.
+        Pure composition: emits ``header``, a ``## {heading} (N)`` line,
+        then each connector's ``to_llm()`` separated by blank lines. The
+        host (MCP server, agent runtime, …) owns the prose that frames
+        what these connectors are for — this method does not.
 
         Parameters
         ----------
-        context:
-            ``"code"`` (default) — header explains ``client["name"](...)`` usage
-            for code-execution agents.
-            ``"mcp"`` — header explains MCP discovery workflow and directs bulk
-            retrieval to code execution.
+        header:
+            Host-supplied prose prepended to the output. Typically explains
+            how the agent should invoke connectors in its runtime.
+        heading:
+            Section heading for the list (``"Tools"`` for MCP,
+            ``"Connectors"`` for a code-execution host, …).
         """
         parts: list[str] = []
-
-        if context == "mcp":
-            parts.append(self._MCP_HEADER)
-        else:
-            parts.append(self._CODE_HEADER)
+        if header:
+            parts.append(header)
 
         if not self._items:
             parts.append("No connectors available.\n")
         else:
-            label = "Tools" if context == "mcp" else "Connectors"
-            parts.append(f"## {label} ({len(self._items)})\n")
+            parts.append(f"## {heading} ({len(self._items)})\n")
             for c in self._items:
                 parts.append(c.to_llm())
                 parts.append("")  # single blank line separator

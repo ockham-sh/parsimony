@@ -585,12 +585,17 @@ class TestCallback:
 
 
 class TestConnectorsToLlm:
-    def test_includes_usage_guide(self) -> None:
+    def test_caller_header_prepended(self) -> None:
+        c = _fake_connectors()
+        text = c.to_llm(header="## USAGE GUIDE\n`await client[name](...)`")
+        assert "## USAGE GUIDE" in text
+        assert "await client" in text
+
+    def test_default_is_bare(self) -> None:
+        """No product-specific prose in the kernel — host owns the header."""
         c = _fake_connectors()
         text = c.to_llm()
-        assert "# Data connectors" in text
-        assert "await client" in text
-        assert "Result" in text
+        assert "# Data connectors" not in text
 
     def test_includes_all_connector_names(self) -> None:
         c = _fake_connectors()

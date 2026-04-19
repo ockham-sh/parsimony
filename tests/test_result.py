@@ -1,8 +1,6 @@
-"""Tests for Result, OutputConfig, and Parquet/Arrow round-trip."""
+"""Tests for Result and OutputConfig."""
 
 from __future__ import annotations
-
-from datetime import UTC, datetime
 
 import pandas as pd
 import pytest
@@ -52,31 +50,6 @@ def test_build_table_result_wildcard() -> None:
     )
     r = cfg.build_table_result(raw, provenance=Provenance(), params={})
     assert set(r.data.columns) == {"a", "b"}
-
-
-def test_result_parquet_roundtrip(tmp_path) -> None:
-    df = pd.DataFrame({"x": [1, 2], "y": [3.0, 4.0]})
-    cols = [
-        Column(name="x", role=ColumnRole.DATA, dtype="numeric"),
-        Column(name="y", role=ColumnRole.DATA, dtype="numeric"),
-    ]
-    prov = Provenance(
-        source="fred",
-        params={"series_id": "GDP"},
-        fetched_at=datetime(2024, 1, 1, tzinfo=UTC),
-        title="T",
-        properties={"metadata": [{"name": "n", "value": "v"}]},
-    )
-    res = SemanticTableResult(data=df, output_schema=OutputConfig(columns=cols), provenance=prov)
-    path = tmp_path / "out.parquet"
-    res.to_parquet(path)
-    back = Result.from_parquet(path)
-    assert isinstance(back, SemanticTableResult)
-    pd.testing.assert_frame_equal(back.data.reset_index(drop=True), df)
-    assert back.provenance.source == "fred"
-    assert back.provenance.params["series_id"] == "GDP"
-    assert back.provenance.properties["metadata"][0]["name"] == "n"
-    assert len(back.columns) == 2
 
 
 def test_column_kind_alias_maps_to_role() -> None:
@@ -147,28 +120,6 @@ def test_key_without_title_output_config_valid_for_loader() -> None:
 def test_column_namespace_only_on_key() -> None:
     with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
         Column(name="x", role=ColumnRole.DATA, namespace="fred")
-
-
-def test_column_namespace_on_key_roundtrip_parquet(tmp_path) -> None:
-    df = pd.DataFrame({"k": ["a"], "title": ["A"], "v": [1]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="k", role=ColumnRole.KEY, namespace="fred"),
-            Column(name="title", role=ColumnRole.TITLE),
-            Column(name="v", role=ColumnRole.DATA),
-        ]
-    )
-    t = SemanticTableResult(
-        data=df,
-        output_schema=cfg,
-        provenance=Provenance(source="t"),
-    )
-    path = tmp_path / "t.parquet"
-    t.to_parquet(path)
-    back = Result.from_parquet(path)
-    assert isinstance(back, SemanticTableResult)
-    key_col = next(c for c in back.output_schema.columns if c.role == ColumnRole.KEY)
-    assert key_col.namespace == "fred"
 
 
 def test_result_from_dataframe_infers_data_columns() -> None:

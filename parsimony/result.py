@@ -11,23 +11,17 @@ __all__ = [
     "SemanticTableResult",
 ]
 
-import json
 import logging
 import re
 from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
-
-_RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
 #: Regex matching ``{placeholder}`` segments in a namespace template.
 #: Placeholders must be valid Python identifiers (letters, digits, underscore;
@@ -280,47 +274,6 @@ class Result(BaseModel):
     @property
     def metadata_columns(self) -> list[Column]:
         return [c for c in self.columns if c.role == ColumnRole.METADATA]
-
-    # ------------------------------------------------------------------
-    # Arrow / Parquet serialization (tabular data only)
-    # ------------------------------------------------------------------
-
-    def to_arrow(self) -> pa.Table:
-        """Serialize to Arrow with embedded schema + provenance metadata.
-
-        Requires ``data`` to be a DataFrame and :attr:`output_schema` to be set.
-        """
-        table = pa.Table.from_pandas(self.df, preserve_index=False)
-        payload = {
-            "columns": [c.model_dump(mode="json") for c in self.columns],
-            "provenance": self.provenance.model_dump(mode="json"),
-        }
-        meta = dict(table.schema.metadata or {})
-        meta[_RESULT_SCHEMA_META_KEY] = json.dumps(payload, default=str).encode("utf-8")
-        return table.replace_schema_metadata(meta)
-
-    @classmethod
-    def from_arrow(cls, table: pa.Table) -> SemanticTableResult:
-        raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
-        if not raw:
-            raise ValueError("Arrow table missing parsimony.result metadata")
-        payload = json.loads(raw.decode("utf-8"))
-        df = table.to_pandas()
-        columns = [Column.model_validate(c) for c in payload["columns"]]
-        provenance = Provenance.model_validate(payload["provenance"])
-        output_schema = OutputConfig(columns=columns)
-        return SemanticTableResult(data=df, provenance=provenance, output_schema=output_schema)
-
-    def to_parquet(self, path: str | Path) -> None:
-        """Write Parquet with embedded column schema and provenance."""
-        table = self.to_arrow()
-        pq.write_table(table, path)
-
-    @classmethod
-    def from_parquet(cls, path: str | Path) -> SemanticTableResult:
-        table = pq.read_table(path)
-        return cls.from_arrow(table)
-
 
 class OutputConfig(BaseModel):
     """Declarative schema: maps raw data frames into :class:`SemanticTableResult` instances."""

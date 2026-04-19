@@ -44,13 +44,14 @@ jobs:
       - run: pytest tests/ -v -m "not integration" --cov=parsimony --cov-report=term-missing --cov-fail-under=80
 
   audit:
-    # Supply-chain audit — moved torch + faiss-cpu + sentence-transformers
-    # into base deps, so every CVE in that chain is a parsimony CVE. Required
-    # for every PR; treat as a hard gate, not a dev-only concern (Hunt R2 / R10).
+    # Supply-chain audit against the full [standard,litellm] surface (the
+    # dev extra pulls both). Required gate — treat as a hard gate, not
+    # dev-only, because every CVE in torch/faiss/huggingface_hub/litellm
+    # becomes a parsimony CVE.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

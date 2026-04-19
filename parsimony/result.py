@@ -9,17 +9,26 @@ __all__ = [
     "Provenance",
     "Result",
     "SemanticTableResult",
+    "namespace_placeholders",
+    "resolve_namespace_template",
 ]
 
+import json
 import logging
 import re
 from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, Field, model_validator
+
+#: Key under which Result embeds its schema+provenance payload in Arrow table metadata.
+_RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +283,64 @@ class Result(BaseModel):
     @property
     def metadata_columns(self) -> list[Column]:
         return [c for c in self.columns if c.role == ColumnRole.METADATA]
+
+    # ------------------------------------------------------------------
+    # Arrow / Parquet serialization (tabular data only)
+    # ------------------------------------------------------------------
+
+    def to_arrow(self) -> pa.Table:
+        """Serialize to Arrow with embedded provenance and optional schema metadata.
+
+        Requires ``data`` to be a DataFrame. The :attr:`output_schema` is embedded
+        only when set; a schemaless :class:`Result` round-trips as a plain tabular
+        result with provenance.
+        """
+        table = pa.Table.from_pandas(self.df, preserve_index=False)
+        payload: dict[str, Any] = {
+            "provenance": self.provenance.model_dump(mode="json"),
+        }
+        if self.output_schema is not None:
+            payload["columns"] = [c.model_dump(mode="json") for c in self.output_schema.columns]
+        meta = dict(table.schema.metadata or {})
+        meta[_RESULT_SCHEMA_META_KEY] = json.dumps(payload, default=str).encode("utf-8")
+        return table.replace_schema_metadata(meta)
+
+    @classmethod
+    def from_arrow(cls, table: pa.Table) -> Result:
+        """Deserialize an Arrow table written by :meth:`to_arrow`.
+
+        Returns a :class:`SemanticTableResult` when the embedded payload includes
+        a non-empty column schema; otherwise a plain :class:`Result` carrying the
+        DataFrame and (possibly empty) provenance. Tables with no parsimony
+        metadata are also accepted — useful for reading vanilla Parquet files.
+        """
+        df = table.to_pandas()
+        raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
+        if not raw:
+            return Result(data=df, provenance=Provenance())
+        payload = json.loads(raw.decode("utf-8"))
+        provenance = Provenance.model_validate(payload.get("provenance", {}))
+        cols_raw = payload.get("columns") or []
+        if cols_raw:
+            columns = [Column.model_validate(c) for c in cols_raw]
+            return SemanticTableResult(
+                data=df,
+                provenance=provenance,
+                output_schema=OutputConfig(columns=columns),
+            )
+        return Result(data=df, provenance=provenance)
+
+    def to_parquet(self, path: str | Path) -> None:
+        """Write Parquet with embedded column schema and provenance."""
+        table = self.to_arrow()
+        pq.write_table(table, path)
+
+    @classmethod
+    def from_parquet(cls, path: str | Path) -> Result:
+        """Read Parquet written by :meth:`to_parquet`. See :meth:`from_arrow` for the return contract."""
+        table = pq.read_table(path)
+        return cls.from_arrow(table)
+
 
 class OutputConfig(BaseModel):
     """Declarative schema: maps raw data frames into :class:`SemanticTableResult` instances."""

@@ -19,11 +19,12 @@ from parsimony.catalog.catalog import _url_scheme
 
 if TYPE_CHECKING:
     from parsimony._standard.catalog import Catalog
+    from parsimony._standard.embedder import EmbeddingProvider
 
 
-async def load_from_url(url: str) -> Catalog:
+async def load_from_url(url: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
     handler = _handler(_url_scheme(url))
-    return cast("Catalog", await handler.load(url))
+    return cast("Catalog", await handler.load(url, embedder=embedder))
 
 
 async def push_to_url(catalog: Catalog, url: str) -> None:

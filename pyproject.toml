@@ -38,6 +38,7 @@ dependencies = [
 # lazily, so absence does not break kernel import.
 catalog = [
     "faiss-cpu>=1.8.0",
+    "rank-bm25>=0.2",
     "sentence-transformers>=3.0.0",
     "huggingface_hub>=0.25.0",
 ]

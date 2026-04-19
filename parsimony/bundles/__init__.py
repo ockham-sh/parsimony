@@ -22,10 +22,13 @@ lives on :mod:`parsimony.errors` with the other public exceptions.
 
 from __future__ import annotations
 
+from parsimony.bundles.lazy_catalog import BundleLoader, LazyNamespaceCatalog
 from parsimony.bundles.spec import CatalogPlan, CatalogSpec, to_async
 
 __all__ = [
+    "BundleLoader",
     "CatalogPlan",
     "CatalogSpec",
+    "LazyNamespaceCatalog",
     "to_async",
 ]

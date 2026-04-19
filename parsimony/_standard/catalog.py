@@ -271,11 +271,16 @@ class Catalog(BaseCatalog):
     # ------------------------------------------------------------------
 
     @classmethod
-    async def from_url(cls, url: str) -> Catalog:
-        """Load from *url*. Schemes: ``file://``, ``hf://`` (``s3://`` planned)."""
+    async def from_url(cls, url: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
+        """Load from *url*. Schemes: ``file://``, ``hf://`` (``s3://`` planned).
+
+        Pass *embedder* to override the embedder recorded in the snapshot's
+        ``meta.json`` — useful for tests and for swapping in a local model
+        when the recorded one is unavailable.
+        """
         from parsimony._standard.sources import load_from_url
 
-        return await load_from_url(url)
+        return await load_from_url(url, embedder=embedder)
 
     async def push(self, url: str) -> None:
         """Publish to *url*. Schemes: ``file://``, ``hf://`` (``s3://`` planned)."""

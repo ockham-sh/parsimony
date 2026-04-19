@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from parsimony._standard.catalog import Catalog
+    from parsimony._standard.embedder import EmbeddingProvider
 
 REPO_TYPE = "dataset"
 
@@ -25,12 +26,12 @@ def _strip(url: str) -> str:
     return url[len(prefix) :]
 
 
-async def load(url: str) -> Catalog:
+async def load(url: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
     from parsimony._standard.catalog import Catalog
 
     repo_id = _strip(url)
     local = await asyncio.to_thread(_snapshot_download, repo_id)
-    return await Catalog.load(local)
+    return await Catalog.load(local, embedder=embedder)
 
 
 async def push(catalog: Catalog, url: str) -> None:

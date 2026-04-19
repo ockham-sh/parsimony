@@ -12,9 +12,10 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from parsimony._standard.catalog import Catalog
+    from parsimony._standard.embedder import EmbeddingProvider
 
 
-async def load(url: str) -> Catalog:
+async def load(url: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
     raise NotImplementedError(
         "s3:// catalog loading is not yet implemented. Track support in the parsimony issue tracker."
     )

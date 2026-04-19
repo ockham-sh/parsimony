@@ -2,17 +2,14 @@
 
 The only network boundary stubbed is :func:`parsimony.bundles.targets._upload_blocking`
 plus the ``huggingface_hub`` whoami probe and the anonymous shrink-guard
-manifest fetch. Everything else (``_is_retryable``, ``_retry_after_seconds``,
-``_backoff_delay``) runs unmocked so a regression in classification, scrub
-hygiene, or semaphore semantics is caught here.
+manifest fetch. ``_is_retryable`` runs unmocked so regressions in status
+classification, scrub hygiene, or semaphore semantics are caught here.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime, timedelta
-from email.utils import format_datetime
 from pathlib import Path
 
 import pytest
@@ -23,12 +20,7 @@ from parsimony.bundles.format import (
     INDEX_FILENAME,
     MANIFEST_FILENAME,
 )
-from parsimony.bundles.targets import (
-    HFBundleTarget,
-    _backoff_delay,
-    _is_retryable,
-    _retry_after_seconds,
-)
+from parsimony.bundles.targets import HFBundleTarget, _is_retryable
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -136,72 +128,13 @@ class TestIsRetryable:
         exc = _make_hf_hub_http_error(status_code=code)
         assert _is_retryable(exc) is False
 
-    def test_substring_fallback_does_not_match_inside_request_id(self):
-        """A request-id like '5040abc' must not classify as retryable."""
-        exc = _make_hf_hub_http_error(status_code=None, message="request-id 5040abc failed")
-        assert _is_retryable(exc) is False
-
-    def test_substring_fallback_matches_anchored_status_word(self):
-        """Anchored status code in plain text is still retryable."""
+    def test_status_none_is_not_retryable(self):
+        """Without a parseable status code, don't retry — message-regex fallback is noise."""
         exc = _make_hf_hub_http_error(status_code=None, message="upstream returned 502 bad gateway")
-        assert _is_retryable(exc) is True
+        assert _is_retryable(exc) is False
 
     def test_unrelated_exception_not_retryable(self):
         assert _is_retryable(ValueError("nothing to see here")) is False
-
-
-# ---------------------------------------------------------------------------
-# _retry_after_seconds (HTTP-date support)
-# ---------------------------------------------------------------------------
-
-
-class TestRetryAfterSeconds:
-    def test_integer_seconds(self):
-        exc = _make_hf_hub_http_error(headers={"Retry-After": "7"})
-        assert _retry_after_seconds(exc) == 7.0
-
-    def test_negative_value_ignored(self):
-        exc = _make_hf_hub_http_error(headers={"Retry-After": "-3"})
-        assert _retry_after_seconds(exc) is None
-
-    def test_capped_at_two_minutes(self):
-        exc = _make_hf_hub_http_error(headers={"Retry-After": "9999"})
-        result = _retry_after_seconds(exc)
-        assert result is not None
-        assert result <= 120.0
-
-    def test_http_date_form_is_honored(self):
-        future = datetime.now(UTC) + timedelta(seconds=15)
-        exc = _make_hf_hub_http_error(
-            headers={"Retry-After": format_datetime(future, usegmt=True)},
-        )
-        result = _retry_after_seconds(exc)
-        assert result is not None
-        assert 0.0 < result <= 120.0
-
-    def test_garbage_value_returns_none(self):
-        exc = _make_hf_hub_http_error(headers={"Retry-After": "tomorrow maybe"})
-        assert _retry_after_seconds(exc) is None
-
-    def test_no_response_returns_none(self):
-        assert _retry_after_seconds(ValueError("plain")) is None
-
-
-# ---------------------------------------------------------------------------
-# _backoff_delay (sanity bounds)
-# ---------------------------------------------------------------------------
-
-
-class TestBackoffDelay:
-    def test_first_attempt_within_base_window(self):
-        # base=1.0 with jitter [0.5, 1.0] → result in [0.5, 1.0]
-        delays = [_backoff_delay(1) for _ in range(50)]
-        assert all(0.5 <= d <= 1.0 for d in delays)
-
-    def test_capped_at_cap_delay(self):
-        # attempt=10 would otherwise be 1024 s; jitter caps to [8, 16].
-        delays = [_backoff_delay(10) for _ in range(50)]
-        assert all(8.0 <= d <= 16.0 for d in delays)
 
 
 # ---------------------------------------------------------------------------
@@ -234,14 +167,13 @@ class TestPublishHappyPath:
 
 @pytest.mark.asyncio
 class TestPublishRetryPolicy:
-    async def test_429_with_retry_after_is_honored(
+    async def test_429_retries_then_succeeds(
         self, monkeypatch, tmp_path, fake_token, stubbed_whoami, disabled_shrink_guard
     ):
         bundle = _write_bundle_dir(tmp_path, namespace="snb")
-        sleeps: list[float] = []
 
         async def fake_sleep(delay):
-            sleeps.append(delay)
+            return None
 
         monkeypatch.setattr(targets_module.asyncio, "sleep", fake_sleep)
 
@@ -257,7 +189,7 @@ class TestPublishRetryPolicy:
         target = HFBundleTarget()
         sha = await target.publish(bundle, namespace="snb")
         assert sha == "f" * 40
-        assert sleeps == [3.0]
+        assert attempts["n"] == 2
 
     async def test_401_is_not_retried(
         self, monkeypatch, tmp_path, fake_token, stubbed_whoami, disabled_shrink_guard

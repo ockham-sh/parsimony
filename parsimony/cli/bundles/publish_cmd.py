@@ -15,11 +15,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from parsimony.bundles import (
-    BundleError,
-    DiscoveredSpec,
-    fetch_published_entry_count,
-)
+from parsimony.bundles.discovery import DiscoveredSpec
+from parsimony.bundles.errors import BundleError
+from parsimony.bundles.safety import fetch_published_entry_count
 from parsimony.cli.bundles._shared import _materialize_with_timeout
 from parsimony.cli.bundles.fanout import (
     _add_failure_flags,

@@ -10,7 +10,7 @@ import asyncio
 import os
 from typing import Any
 
-from parsimony.bundles import CatalogPlan, materialize
+from parsimony.bundles.spec import CatalogPlan, materialize
 from parsimony.catalog.models import EmbeddingProvider
 
 # Per-plan generator timeout — cap a hostile or stuck plan callable so it

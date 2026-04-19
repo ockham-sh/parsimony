@@ -104,17 +104,15 @@ def _enforce_size_cap(
     namespace: str,
     label: str,
 ) -> None:
-    """Post-write ``stat`` check; raise :class:`~parsimony.bundles.errors.BundleTooLargeError` if over cap."""
-    from parsimony.bundles.errors import BundleTooLargeError
+    """Post-write ``stat`` check; raise :class:`~parsimony.bundles.errors.BundleError` if over cap."""
+    from parsimony.bundles.errors import BundleError
 
     size = path.stat().st_size
     if size > cap:
-        raise BundleTooLargeError(
+        raise BundleError(
             f"{label} size {size} bytes exceeds cap {cap} bytes",
             namespace=namespace,
             resource=str(path),
-            actual_bytes=size,
-            cap_bytes=cap,
         )
 
 

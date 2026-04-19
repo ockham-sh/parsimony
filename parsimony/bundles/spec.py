@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import inspect
 import re
-import sys
 from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -127,9 +126,9 @@ class CatalogSpec:
     ) -> CatalogSpec:
         """Build a one-namespace spec whose plan yields a single bare ``CatalogPlan``.
 
-        The plan callable is generated here; its ``__module__`` is set to the
-        caller's module so the plan-provenance check at the decorator
-        boundary passes.
+        The plan callable is synthesised in this kernel module; because
+        ``static_namespace`` is set, the plan-provenance check at the
+        decorator boundary skips this (the synthesised plan is trusted).
         """
         _validate_namespace(namespace, field_name="CatalogSpec.static.namespace")
         ns = namespace
@@ -137,12 +136,6 @@ class CatalogSpec:
         async def _one_shot() -> AsyncIterator[CatalogPlan]:
             yield CatalogPlan(namespace=ns)
 
-        # Attribute the synthetic plan to the caller so plan-provenance check
-        # treats it as originating from the same plugin as the connector.
-        frame = sys._getframe(1)
-        caller_module = frame.f_globals.get("__name__")
-        if isinstance(caller_module, str):
-            _one_shot.__module__ = caller_module
         return cls(plan=_one_shot, target=target, embed=embed, static_namespace=namespace)
 
 
@@ -158,9 +151,11 @@ def from_decorator_kwargs(
 ) -> CatalogSpec:
     """Validate a ``catalog=`` decorator kwarg.
 
-    Requires a typed :class:`CatalogSpec` instance and verifies the plan
-    callable originates from the same plugin top-level package as the
-    connector (eliminates cross-plugin plan substitution).
+    Requires a typed :class:`CatalogSpec` instance. For user-supplied plan
+    callables (non-static), verifies the plan originates from the same
+    plugin top-level package as the connector (eliminates cross-plugin
+    plan substitution). Kernel-synthesised plans (from
+    :meth:`CatalogSpec.static`) are trusted by construction.
     """
     if not isinstance(value, CatalogSpec):
         raise BundleSpecError(
@@ -169,7 +164,8 @@ def from_decorator_kwargs(
             "or CatalogSpec.static(namespace=...)",
             next_action="construct the typed dataclass at the @enumerator call site",
         )
-    _validate_plan_provenance(value.plan, connector_module=connector_module)
+    if value.static_namespace is None:
+        _validate_plan_provenance(value.plan, connector_module=connector_module)
     return value
 
 

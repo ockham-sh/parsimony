@@ -1,6 +1,6 @@
 """HuggingFace Hub bundle target — uploads + retry/backoff + parallel control.
 
-What this owns (only this module):
+What this owns:
 
 - :class:`HFBundleTarget` exposes :meth:`publish` which:
 
@@ -11,11 +11,10 @@ What this owns (only this module):
      enumerator outage can't atomically replace a 100 k-row bundle with a
      10-row bundle.
   4. Uploads via ``HfApi.upload_folder`` inside :func:`asyncio.to_thread`.
-  5. Wraps the upload in a retry policy: 5 attempts, exponential backoff
-     (1/2/4/8/16 s with jitter), honoring server-supplied ``Retry-After``
-     when the header is present (integer seconds or HTTP-date). Retries
-     429/5xx + connection/read timeouts. Auth (401/403) and not-found (404)
-     are NOT retried — those are operator config bugs.
+  5. Wraps the upload with :mod:`tenacity` — 5 attempts, exponential
+     backoff with jitter, retrying only on transient HTTP + connection
+     errors. Auth (401/403) and not-found (404) are NOT retried — those
+     are operator config bugs.
   6. Token-scrubs every error message via
      :func:`~parsimony.bundles.safety.scrub_token` before propagation.
 
@@ -23,22 +22,23 @@ Concurrency control: a single :class:`asyncio.Semaphore` instance per
 :class:`HFBundleTarget` caps in-flight uploads (default 8, configurable
 via ``PARSIMONY_PUBLISH_CONCURRENCY``). Build remains sequential —
 parallelism is upload-only.
-
-The semaphore is created lazily on first use inside a running event loop;
-the module is safe to import without a loop.
 """
 
 from __future__ import annotations
 
 import asyncio
-import email.utils
 import logging
 import os
-import random
-import re
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from tenacity import (
+    AsyncRetrying,
+    RetryError,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 
 from parsimony.bundles.format import BUNDLE_FILENAMES, hf_repo_id
 from parsimony.bundles.safety import (
@@ -49,24 +49,14 @@ from parsimony.bundles.safety import (
 
 logger = logging.getLogger(__name__)
 
-
+_RETRY_MAX_ATTEMPTS: int = 5
 _RETRY_BASE_DELAY_S: float = 1.0
 _RETRY_CAP_DELAY_S: float = 16.0
-_RETRY_MAX_ATTEMPTS: int = 5
-# Status codes that warrant a retry. 401/403/404 are operator config bugs
-# and DO NOT belong in this set.
+
+# Status codes that warrant a retry. 401/403/404 are operator config bugs.
 _RETRYABLE_STATUS_CODES: frozenset[int] = frozenset({429, 500, 502, 503, 504})
-# Cap on Retry-After to prevent a hostile or buggy server stalling the
-# pipeline indefinitely.
-_RETRY_AFTER_CAP_S: float = 120.0
 
 _DEFAULT_PUBLISH_CONCURRENCY: int = 8
-
-# Anchored matcher for retryable status codes when only the message text is
-# available. Word boundaries prevent "401" matching inside "5040…" or "/v1/500-…".
-_STATUS_TEXT_RE: re.Pattern[str] = re.compile(
-    r"\b(?:" + "|".join(str(c) for c in sorted(_RETRYABLE_STATUS_CODES)) + r")\b"
-)
 
 
 def _publish_concurrency_from_env() -> int:
@@ -83,11 +73,7 @@ def _read_token_from_env() -> str | None:
 
 
 def _is_retryable(exc: BaseException) -> bool:
-    """Decide whether *exc* came from a transient HF/HTTP failure.
-
-    Imports are deferred so the read-side store doesn't pay the
-    huggingface_hub cost on import.
-    """
+    """True iff *exc* is a transient HF/HTTP failure worth retrying."""
     try:
         from huggingface_hub.utils import HfHubHTTPError
     except ImportError:
@@ -100,57 +86,34 @@ def _is_retryable(exc: BaseException) -> bool:
     if HfHubHTTPError is not None and isinstance(exc, HfHubHTTPError):
         response = getattr(exc, "response", None)
         code = getattr(response, "status_code", None) if response is not None else None
-        if isinstance(code, int):
-            return code in _RETRYABLE_STATUS_CODES
-        # No parseable status — fall back to anchored regex on the message.
-        return bool(_STATUS_TEXT_RE.search(str(exc)))
+        return isinstance(code, int) and code in _RETRYABLE_STATUS_CODES
 
     return requests is not None and isinstance(
         exc, requests.ConnectionError | requests.ReadTimeout
     )
 
 
-def _retry_after_seconds(exc: BaseException) -> float | None:
-    """Extract a server-supplied ``Retry-After`` value from *exc*, if any.
+def _operational_upload_exc_types() -> tuple[type[BaseException], ...]:
+    """Operational exception classes from the upload path.
 
-    Accepts either RFC 7231 forms: a non-negative integer (seconds) or an
-    HTTP-date. Capped at :data:`_RETRY_AFTER_CAP_S`.
+    These are the errors whose messages need token-scrubbing and
+    RuntimeError wrapping (HF auth/http, network, filesystem). Programmer
+    bugs — AttributeError, KeyError, TypeError, ImportError, … — MUST
+    propagate untouched so misconfigured call sites crash loudly instead
+    of being silently reported as a failed bundle.
     """
-    response = getattr(exc, "response", None)
-    if response is None:
-        return None
-    headers = getattr(response, "headers", None)
-    if headers is None:
-        return None
-    value = headers.get("Retry-After")
-    if value is None:
-        return None
+    types: list[type[BaseException]] = [OSError]
     try:
-        seconds = float(value)
-        if seconds < 0:
-            return None
-        return min(_RETRY_AFTER_CAP_S, seconds)
-    except (TypeError, ValueError):
+        from huggingface_hub.utils import HfHubHTTPError
+        types.append(HfHubHTTPError)
+    except ImportError:
         pass
     try:
-        parsed = email.utils.parsedate_to_datetime(str(value))
-    except (TypeError, ValueError):
-        return None
-    if parsed is None:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    delta = (parsed - datetime.now(UTC)).total_seconds()
-    if delta <= 0:
-        return 0.0
-    return min(_RETRY_AFTER_CAP_S, delta)
-
-
-def _backoff_delay(attempt: int) -> float:
-    """Decorrelated exponential backoff: ``base * 2**(attempt-1)`` + jitter."""
-    expo = _RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
-    capped = min(_RETRY_CAP_DELAY_S, expo)
-    return float(capped * (0.5 + random.random() * 0.5))  # noqa: S311 — jitter, not crypto
+        import requests
+        types.append(requests.RequestException)
+    except ImportError:
+        pass
+    return tuple(types)
 
 
 class HFBundleTarget:
@@ -162,7 +125,6 @@ class HFBundleTarget:
         max_concurrency: int | None = None,
     ) -> None:
         self._max_concurrency = max_concurrency or _publish_concurrency_from_env()
-        # Created lazily inside a running loop so import-time has no asyncio dep.
         self._upload_sem: asyncio.Semaphore | None = None
 
     def _get_sem(self) -> asyncio.Semaphore:
@@ -179,13 +141,10 @@ class HFBundleTarget:
     ) -> str:
         """Atomically replace the published bundle for ``namespace``.
 
-        Returns the HF commit SHA from ``upload_folder``. Raises:
-
-        - :class:`RuntimeError` if no ``HF_TOKEN`` is set, if shrink_guard
-          rejects the publish, if the token-scope probe surfaces an auth
-          error, or if every retry attempt fails.
-        - Other huggingface_hub errors only on non-retryable failures
-          (404, 401/403, malformed repo).
+        Returns the HF commit SHA from ``upload_folder``. Raises
+        :class:`RuntimeError` on token / shrink-guard / retry-exhaustion
+        failures; other huggingface_hub errors on non-retryable failures
+        (404, 401/403, malformed repo).
         """
         token = _read_token_from_env()
         if not token:
@@ -194,9 +153,6 @@ class HFBundleTarget:
                 "(the write-scoped token for parsimony-dev)"
             )
 
-        # Refuse extra files in bundle_dir before *any* network call so a
-        # misbehaving builder can't ship a junk file under the
-        # ``allow_patterns`` filter via a future regression.
         extras = [
             p.name for p in bundle_dir.iterdir() if p.is_file() and p.name not in BUNDLE_FILENAMES
         ]
@@ -207,9 +163,6 @@ class HFBundleTarget:
 
         await _assert_token_scope(token)
 
-        # Read the manifest's entry_count to feed shrink_guard. Manifest
-        # parse failures here are programmer errors (the build path just
-        # wrote it) — let them propagate.
         from parsimony.bundles.format import MANIFEST_FILENAME, BundleManifest
 
         manifest_text = (bundle_dir / MANIFEST_FILENAME).read_text(encoding="utf-8")
@@ -235,45 +188,46 @@ class HFBundleTarget:
         namespace: str,
         token: str,
     ) -> str:
-        attempts = 0
-        last_exc: BaseException | None = None
-        while attempts < _RETRY_MAX_ATTEMPTS:
-            attempts += 1
-            try:
-                return await asyncio.to_thread(
-                    _upload_blocking,
-                    bundle_dir=bundle_dir,
-                    namespace=namespace,
-                    token=token,
-                )
-            except Exception as exc:
-                last_exc = exc
-                if not _is_retryable(exc) or attempts >= _RETRY_MAX_ATTEMPTS:
-                    scrubbed = scrub_token(format_exc_chain(exc), token)
-                    if attempts >= _RETRY_MAX_ATTEMPTS and _is_retryable(exc):
-                        raise RuntimeError(
-                            f"HF upload exhausted {_RETRY_MAX_ATTEMPTS} attempts: {scrubbed}"
-                        ) from None
-                    raise RuntimeError(scrubbed) from None
-                delay = _retry_after_seconds(exc)
-                if delay is None:
-                    delay = _backoff_delay(attempts)
-                logger.warning(
-                    "hf_bundle.upload.retry namespace=%s attempt=%d/%d delay_s=%.2f cause=%s",
-                    namespace,
-                    attempts,
-                    _RETRY_MAX_ATTEMPTS,
-                    delay,
-                    type(exc).__name__,
-                )
-                await asyncio.sleep(delay)
-        # Defensive: the loop always either returns or raises above. The
-        # ``assert`` keeps mypy happy — last_exc must be set after >=1 attempt.
-        assert last_exc is not None
-        raise RuntimeError(
-            f"HF upload failed after {attempts} attempts: "
-            f"{scrub_token(format_exc_chain(last_exc), token)}"
+        retryer = AsyncRetrying(
+            retry=retry_if_exception(_is_retryable),
+            stop=stop_after_attempt(_RETRY_MAX_ATTEMPTS),
+            wait=wait_exponential_jitter(
+                initial=_RETRY_BASE_DELAY_S, max=_RETRY_CAP_DELAY_S
+            ),
+            reraise=False,
         )
+        try:
+            async for attempt in retryer:
+                with attempt:
+                    attempt_no = attempt.retry_state.attempt_number
+                    if attempt_no > 1:
+                        logger.warning(
+                            "hf_bundle.upload.retry namespace=%s attempt=%d/%d",
+                            namespace,
+                            attempt_no,
+                            _RETRY_MAX_ATTEMPTS,
+                        )
+                    return await asyncio.to_thread(
+                        _upload_blocking,
+                        bundle_dir=bundle_dir,
+                        namespace=namespace,
+                        token=token,
+                    )
+        except RetryError as exc:
+            cause = exc.last_attempt.exception() if exc.last_attempt else exc
+            scrubbed = scrub_token(format_exc_chain(cause or exc), token)
+            raise RuntimeError(
+                f"HF upload exhausted {_RETRY_MAX_ATTEMPTS} attempts: {scrubbed}"
+            ) from None
+        except _operational_upload_exc_types() as exc:
+            # Non-retryable operational failure (HF auth/http, network, FS).
+            # Programmer errors (AttributeError, KeyError, …) are NOT in this
+            # tuple and propagate to the fan-out, which also excludes them
+            # from its operational allowlist.
+            scrubbed = scrub_token(format_exc_chain(exc), token)
+            raise RuntimeError(scrubbed) from None
+        # Unreachable — AsyncRetrying either returns from the with-block or raises.
+        raise RuntimeError(f"HF upload failed for {namespace}: no attempts ran")
 
 
 def _upload_blocking(

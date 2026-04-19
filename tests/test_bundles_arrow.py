@@ -5,7 +5,7 @@ from __future__ import annotations
 import pyarrow as pa
 import pytest
 
-from parsimony.bundles.errors import BundleIntegrityError
+from parsimony.bundles.errors import BundleError
 from parsimony.bundles.format import ENTRIES_PARQUET_SCHEMA
 from parsimony.catalog.arrow_adapters import (
     arrow_rows_to_entries,
@@ -64,12 +64,12 @@ class TestAlignmentGuard:
             "row_id",
             pa.array([0, 2, 4], type=pa.int64()),
         )
-        with pytest.raises(BundleIntegrityError):
+        with pytest.raises(BundleError):
             arrow_table_to_entries(tampered, namespace="snb")
 
     def test_strict_rejects_namespace_mismatch(self):
         base = entries_to_arrow_table(_entries(2))
-        with pytest.raises(BundleIntegrityError, match="namespace"):
+        with pytest.raises(BundleError, match="namespace"):
             arrow_table_to_entries(base, namespace="other")
 
     def test_arrow_rows_allows_arbitrary_row_ids(self):
@@ -84,7 +84,7 @@ class TestAlignmentGuard:
 class TestSchemaValidation:
     def test_missing_column_raises(self):
         table = pa.table({"namespace": ["snb"], "code": ["c"]})
-        with pytest.raises(BundleIntegrityError, match="missing required columns"):
+        with pytest.raises(BundleError, match="missing required columns"):
             arrow_table_to_entries(table, namespace="snb")
 
     def test_wrong_column_type_raises(self):
@@ -94,5 +94,5 @@ class TestSchemaValidation:
             "row_id",
             pa.array(["0"], type=pa.string()),
         )
-        with pytest.raises(BundleIntegrityError, match="type"):
+        with pytest.raises(BundleError, match="type"):
             arrow_table_to_entries(tampered, namespace="snb")

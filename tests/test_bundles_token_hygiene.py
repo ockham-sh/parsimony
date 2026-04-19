@@ -24,7 +24,7 @@ async def test_snapshot_download_receives_token_false_and_no_sentinel(monkeypatc
     1. ``token`` is the literal ``False`` (anonymous access)
     2. The HF_TOKEN sentinel never appears in any captured kwarg value
     """
-    from parsimony.bundles.errors import BundleIntegrityError, BundleNotFoundError
+    from parsimony.bundles.errors import BundleError, BundleNotFoundError
     from parsimony.stores.hf_bundle import HFBundleCatalogStore
     from tests.bundles_helpers import FakeEmbeddingProvider
 
@@ -48,7 +48,7 @@ async def test_snapshot_download_receives_token_false_and_no_sentinel(monkeypatc
 
     # Any exception is fine here — we only care that snapshot_download was
     # invoked with the right kwargs. The precise wrapping varies.
-    with pytest.raises((RuntimeError, BundleIntegrityError, BundleNotFoundError)):
+    with pytest.raises((RuntimeError, BundleError, BundleNotFoundError)):
         await store.try_load_remote("nonexistent_namespace")
 
     assert captured_calls, "snapshot_download must have been invoked"

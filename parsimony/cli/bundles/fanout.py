@@ -15,8 +15,10 @@ import time
 from pathlib import Path
 from typing import Any
 
-from parsimony.bundles import BundleError, CatalogPlan, DiscoveredSpec
 from parsimony.bundles.build import PlanRunner, build_bundle_dir
+from parsimony.bundles.discovery import DiscoveredSpec
+from parsimony.bundles.errors import BundleError
+from parsimony.bundles.spec import CatalogPlan
 from parsimony.cli.bundles._shared import (
     _PLAN_GEN_TIMEOUT_S,
     _build_provider_from_env,

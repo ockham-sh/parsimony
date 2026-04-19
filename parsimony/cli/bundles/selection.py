@@ -10,7 +10,8 @@ import difflib
 import fnmatch
 import sys
 
-from parsimony.bundles import CatalogSpec, DiscoveredSpec, iter_specs
+from parsimony.bundles.discovery import DiscoveredSpec, iter_specs
+from parsimony.bundles.spec import CatalogSpec
 
 
 def _spec_namespace(spec: CatalogSpec) -> str:

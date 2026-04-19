@@ -7,7 +7,7 @@ Coverage:
 - Connectors **with** a catalog declaration are yielded once each.
 - Yield order is deterministic (provider order × connector order).
 
-Strategy: stub :func:`parsimony.plugins.discovery.discovered_providers` so
+Strategy: stub :func:`parsimony.discovery.discovered_providers` so
 the test depends only on the spec-shape contract, not on which plugins
 happen to be installed.
 """
@@ -25,7 +25,7 @@ from parsimony.bundles.spec import (
     CatalogSpec,
 )
 from parsimony.connector import Connectors, connector
-from parsimony.plugins.discovery import DiscoveredProvider
+from parsimony.discovery import DiscoveredProvider
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 _OUTPUT = OutputConfig(

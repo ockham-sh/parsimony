@@ -22,7 +22,7 @@ from parsimony.bundles.spec import (
 )
 from parsimony.cli import bundles as cli
 from parsimony.connector import Connectors, enumerator
-from parsimony.plugins.discovery import DiscoveredProvider
+from parsimony.discovery import DiscoveredProvider
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 # ---------------------------------------------------------------------------
@@ -371,7 +371,7 @@ def test_emit_event_prints_next_action_line(capsys):
         "namespace": "alpha",
         "status": "failed",
         "elapsed_s": 0.1,
-        "error_message": "BundleTooLargeError: oops",
+        "error_message": "BundleError: oops",
         "next_action": "Split the namespace via a fan-out plan generator",
     }
     from parsimony.cli.bundles.fanout import _emit_event

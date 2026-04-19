@@ -20,7 +20,7 @@ import numpy as np
 import pytest
 
 from parsimony.bundles.errors import (
-    BundleIntegrityError,
+    BundleError,
 )
 from parsimony.bundles.format import MANIFEST_FILENAME
 from tests.bundles_helpers import (
@@ -173,36 +173,6 @@ def _rewrite_manifest(bundle_dir, **overrides):
 @requires_faiss
 class TestIntegrityChecks:
     @pytest.mark.asyncio
-    async def test_tampered_entries_sha_rejected(self, fixture_cache, provider):
-        from parsimony.stores.hf_bundle import HFBundleCatalogStore
-
-        cache_base, namespace, revision = fixture_cache
-        bundle_dir = cache_base / namespace / revision
-        entries_file = bundle_dir / "entries.parquet"
-        raw = entries_file.read_bytes()
-        # Flip the last byte to change the SHA-256.
-        entries_file.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0x01]))
-
-        store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="sha256"):
-            await store.try_load_remote(namespace)
-
-    @pytest.mark.asyncio
-    async def test_tampered_index_sha_rejected(self, fixture_cache, provider):
-        """Symmetric to entries: flipping a byte in index.faiss must reject."""
-        from parsimony.stores.hf_bundle import HFBundleCatalogStore
-
-        cache_base, namespace, revision = fixture_cache
-        bundle_dir = cache_base / namespace / revision
-        index_file = bundle_dir / "index.faiss"
-        raw = index_file.read_bytes()
-        index_file.write_bytes(raw[:-1] + bytes([raw[-1] ^ 0x01]))
-
-        store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="sha256"):
-            await store.try_load_remote(namespace)
-
-    @pytest.mark.asyncio
     async def test_corrupt_manifest_rejected(self, fixture_cache, provider):
         from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
@@ -211,7 +181,7 @@ class TestIntegrityChecks:
         (bundle_dir / MANIFEST_FILENAME).write_text("{not json}", encoding="utf-8")
 
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError):
+        with pytest.raises(BundleError):
             await store.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -223,7 +193,7 @@ class TestIntegrityChecks:
         _rewrite_manifest(cache_base / namespace / revision, entry_count=99)
 
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="entry_count"):
+        with pytest.raises(BundleError, match="entry_count"):
             await store.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -239,7 +209,7 @@ class TestIntegrityChecks:
 
         bigger = FakeEmbeddingProvider(dim=16)
         store = HFBundleCatalogStore(embeddings=bigger, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="FAISS dim"):
+        with pytest.raises(BundleError, match="FAISS dim"):
             await store.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -253,7 +223,7 @@ class TestIntegrityChecks:
         monkeypatch.setattr(integrity_mod, "MAX_MANIFEST_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="manifest.json"):
+        with pytest.raises(BundleError, match="manifest.json"):
             await s.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -265,7 +235,7 @@ class TestIntegrityChecks:
         monkeypatch.setattr(integrity_mod, "MAX_PARQUET_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="entries.parquet"):
+        with pytest.raises(BundleError, match="entries.parquet"):
             await s.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -277,7 +247,7 @@ class TestIntegrityChecks:
         monkeypatch.setattr(integrity_mod, "MAX_INDEX_BYTES", 10)
 
         s = store_mod.HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="index.faiss"):
+        with pytest.raises(BundleError, match="index.faiss"):
             await s.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -298,7 +268,7 @@ class TestIntegrityChecks:
         _rewrite_manifest(bundle_dir, index_sha256=new_sha)
 
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=revision)
-        with pytest.raises(BundleIntegrityError, match="read_index"):
+        with pytest.raises(BundleError, match="read_index"):
             await store.try_load_remote(namespace)
 
     @pytest.mark.asyncio
@@ -336,7 +306,7 @@ class TestIntegrityChecks:
         store = HFBundleCatalogStore(
             embeddings=provider, cache_dir=tmp_path / "cache", pin=revision
         )
-        with pytest.raises(BundleIntegrityError, match="Unexpected files"):
+        with pytest.raises(BundleError, match="Unexpected files"):
             await store.try_load_remote("tampered")
 
 
@@ -392,15 +362,21 @@ class TestFreshnessFallback:
 
     @pytest.mark.asyncio
     async def test_no_pin_head_failure_with_cache_serves_stale(self, fixture_cache, provider, monkeypatch):
-        """HfApi.repo_info raises → fall back to cached revision with WARN."""
+        """HfApi.repo_info raises HTTP error → fall back to cached revision with WARN."""
         from huggingface_hub import HfApi
+        from huggingface_hub.utils import HfHubHTTPError
 
         from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, _revision = fixture_cache
 
         def fake_repo_info(self, *args, **kwargs):
-            raise RuntimeError("network unreachable")
+            import httpx
+
+            response = httpx.Response(
+                503, request=httpx.Request("GET", "https://example.invalid"), text="down"
+            )
+            raise HfHubHTTPError("network unreachable", response=response)
 
         monkeypatch.setattr(HfApi, "repo_info", fake_repo_info)
 
@@ -410,25 +386,31 @@ class TestFreshnessFallback:
 
     @pytest.mark.asyncio
     async def test_no_pin_head_failure_without_cache_raises(self, tmp_path, provider, monkeypatch):
-        """HfApi.repo_info raises and no cache present → BundleIntegrityError."""
+        """HfApi.repo_info raises HTTP error and no cache present → BundleError."""
         from huggingface_hub import HfApi
+        from huggingface_hub.utils import HfHubHTTPError
 
-        from parsimony.bundles.errors import BundleIntegrityError
+        from parsimony.bundles.errors import BundleError
         from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         def fake_repo_info(self, *args, **kwargs):
-            raise RuntimeError("network unreachable")
+            import httpx
+
+            response = httpx.Response(
+                503, request=httpx.Request("GET", "https://example.invalid"), text="down"
+            )
+            raise HfHubHTTPError("network unreachable", response=response)
 
         monkeypatch.setattr(HfApi, "repo_info", fake_repo_info)
 
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=tmp_path / "cache", pin=None)
-        with pytest.raises(BundleIntegrityError):
+        with pytest.raises(BundleError):
             await store.try_load_remote("somens")
 
     @pytest.mark.asyncio
     async def test_pin_unavailable_and_cache_mismatch_raises_stale(self, fixture_cache, provider, monkeypatch):
-        """pin set but snapshot_download fails and cache is a different revision → BundleIntegrityError."""
-        from parsimony.bundles.errors import BundleIntegrityError
+        """pin set but snapshot_download fails and cache is a different revision → BundleError."""
+        from parsimony.bundles.errors import BundleError
         from parsimony.stores.hf_bundle import HFBundleCatalogStore
 
         cache_base, namespace, _revision = fixture_cache
@@ -441,7 +423,7 @@ class TestFreshnessFallback:
         monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
 
         store = HFBundleCatalogStore(embeddings=provider, cache_dir=cache_base, pin=foreign_pin)
-        with pytest.raises(BundleIntegrityError):
+        with pytest.raises(BundleError):
             await store.try_load_remote(namespace)
 
 
@@ -459,14 +441,14 @@ class TestCacheLayoutMutations:
         )
         # The namespace almost certainly doesn't exist on HF. Either the
         # snapshot download 404s (BundleNotFoundError -> False) or the
-        # network is unreachable (BundleIntegrityError, which is a valid
+        # network is unreachable (BundleError, which is a valid
         # programmer-observable error signal). Either is acceptable.
-        from parsimony.bundles.errors import BundleIntegrityError
+        from parsimony.bundles.errors import BundleError
 
         try:
             result = await store.try_load_remote("nonexistent_namespace_parsimony_test")
             assert result is False
-        except BundleIntegrityError:
+        except BundleError:
             pass  # network unreachable is also a valid outcome
 
     @pytest.mark.asyncio

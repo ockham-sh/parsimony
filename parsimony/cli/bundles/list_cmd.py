@@ -13,7 +13,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, TextIO
 
-from parsimony.bundles import DiscoveredSpec, iter_specs
+from parsimony.bundles.discovery import DiscoveredSpec, iter_specs
 
 
 def _add_list(subs: argparse._SubParsersAction[Any]) -> None:

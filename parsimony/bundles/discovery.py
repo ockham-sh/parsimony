@@ -6,11 +6,11 @@ declare ``properties["catalog"]`` (i.e. were decorated with
 connector.
 
 **No cache.** Every :func:`iter_specs` call re-walks the underlying
-:func:`parsimony.plugins.discovery.discovered_providers` — which is
-itself cached at the right layer (memoized per process by the plugins
-package). Caching here would only cache a *projection* of that data and
-create a stale-spec failure mode the moment a plugin is reloaded during
-a test or hot-reload session.
+:func:`parsimony.discovery.discovered_providers` — which is itself cached
+at the right layer (memoized per process by the discovery module). Caching
+here would only cache a *projection* of that data and create a stale-spec
+failure mode the moment a plugin is reloaded during a test or hot-reload
+session.
 
 Sync function (the upstream :func:`discovered_providers` is sync), so
 this is callable from CLI top-level code without an event loop.
@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from parsimony.bundles.spec import CatalogSpec
 from parsimony.connector import Connector
-from parsimony.plugins.discovery import DiscoveredProvider, discovered_providers
+from parsimony.discovery import DiscoveredProvider, discovered_providers
 
 
 @dataclass(frozen=True)

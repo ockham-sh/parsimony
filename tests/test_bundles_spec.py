@@ -135,13 +135,13 @@ def test_from_decorator_kwargs_rejects_dict_sugar():
     with pytest.raises(BundleSpecError, match="CatalogSpec"):
         from_decorator_kwargs(
             {"namespace": "treasury"},  # type: ignore[arg-type]
-            connector_module="parsimony.connectors.treasury",
+            connector_module="parsimony_example.connector",
         )
 
 
 def test_from_decorator_kwargs_rejects_unsupported_value_type():
     with pytest.raises(BundleSpecError, match="CatalogSpec"):
-        from_decorator_kwargs(42, connector_module="parsimony.connectors.x")  # type: ignore[arg-type]
+        from_decorator_kwargs(42, connector_module="parsimony_example.connector")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +240,7 @@ def test_enumerator_rejects_dict_sugar():
 
 def test_connector_rejects_catalog_kwarg():
     """@connector(catalog=...) raises — the spec belongs on @enumerator only."""
-    with pytest.raises(BundleSpecError, match="@enumerator"):
+    with pytest.raises(TypeError, match="@enumerator"):
 
         @connector(catalog=CatalogSpec.static(namespace="example"))
         async def fetch(params: _NoParams) -> Result:

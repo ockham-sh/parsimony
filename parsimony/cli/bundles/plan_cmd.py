@@ -8,7 +8,7 @@ import json
 import sys
 from typing import Any
 
-from parsimony.bundles import BundleError
+from parsimony.bundles.errors import BundleError
 from parsimony.cli.bundles._shared import _PLAN_GEN_TIMEOUT_S, _materialize_with_timeout
 from parsimony.cli.bundles.selection import _did_you_mean_connector, _find_by_connector
 

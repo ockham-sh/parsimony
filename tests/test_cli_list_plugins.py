@@ -40,7 +40,7 @@ def _make_module(path: str, **attrs: Any) -> ModuleType:
 
 def test_list_plugins_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli.list_plugins import run
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     mod = _make_module(
         "pkg_foo_cli",
@@ -77,7 +77,7 @@ def test_list_plugins_reports_missing_env_vars(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli.list_plugins import run
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     mod = _make_module(
         "pkg_missing_env",
@@ -101,7 +101,7 @@ def test_list_plugins_reports_missing_env_vars(
 
 def test_list_plugins_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli.list_plugins import run
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     mod = _make_module(
         "pkg_table_test",
@@ -125,7 +125,7 @@ def test_list_plugins_empty_when_no_providers(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli.list_plugins import run
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()
@@ -141,7 +141,7 @@ def test_list_plugins_reports_conformance_failure(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli.list_plugins import run
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     # Broken: ENV_VARS key has no matching dep
     mod = _make_module(
@@ -160,8 +160,9 @@ def test_list_plugins_reports_conformance_failure(
     payload = json.loads(captured.out)
 
     assert payload[0]["conformance"] == "fail"
-    # non-zero exit signals failure for CI gating
-    assert exit_code != 0
+    # list-plugins is inventory-only; conformance failures are reported in
+    # the payload but do NOT affect exit code. Use `conformance verify` for gating.
+    assert exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +172,7 @@ def test_list_plugins_reports_conformance_failure(
 
 def test_main_dispatches_to_list_plugins(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli import main
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()
@@ -185,7 +186,7 @@ def test_main_dispatches_to_list_plugins(monkeypatch: pytest.MonkeyPatch, capsys
 
 def test_main_json_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli import main
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()

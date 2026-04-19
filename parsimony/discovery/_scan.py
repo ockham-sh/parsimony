@@ -1,31 +1,32 @@
-"""Entry-point based discovery for ``parsimony`` plugins.
+"""Entry-point scanning for ``parsimony.providers`` plugins.
 
 Plugins declare themselves by adding an entry point in the
 ``parsimony.providers`` group that points at a module satisfying the plugin
-contract (see ``docs/plugin-contract.md``).
+contract (see ``docs/contract.md``).
 
 At discovery time we:
 
 1. Enumerate entry points in the ``parsimony.providers`` group.
-2. Import each target module.
-3. Validate it exports a ``Connectors`` instance.
-4. Record optional ``ENV_VARS`` and ``PROVIDER_METADATA``.
+2. Import the target module and validate it exports ``CONNECTORS``.
 
-Results are cached per-process. Call :func:`_clear_cache` (e.g. from tests,
-or after ``importlib.invalidate_caches()``) to force rediscovery.
+Trust is delegated to the user: ``pip install`` is the trust boundary. If
+a distribution isn't wanted, don't install it. Contract violations raise;
+import failures raise. Results are cached per-process. Call
+:func:`_clear_cache` to force rediscovery.
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.metadata
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from types import ModuleType
 from typing import Any
 
 from parsimony.connector import Connectors
-from parsimony.plugins.errors import PluginContractError, PluginImportError
+from parsimony.discovery.errors import PluginContractError, PluginImportError
 
 __all__ = [
     "DiscoveredProvider",
@@ -36,6 +37,8 @@ __all__ = [
 
 
 ENTRY_POINT_GROUP = "parsimony.providers"
+
+_logger = logging.getLogger("parsimony.discovery")
 
 
 # ---------------------------------------------------------------------------
@@ -196,14 +199,14 @@ def load_provider(ep: importlib.metadata.EntryPoint) -> DiscoveredProvider:
 def discovered_providers() -> tuple[DiscoveredProvider, ...]:
     """Return every discovered & validated provider. Cached per-process.
 
-    Entry points that fail the contract raise at discovery time — we do not
-    silently drop them. If you need best-effort behavior, iterate
-    :func:`iter_entry_points` + :func:`load_provider` yourself and catch
-    :class:`~parsimony.plugins.errors.PluginError`.
+    Contract violations raise :class:`PluginContractError`. Arbitrary failures
+    during plugin module import surface as :class:`PluginImportError`.
     """
     global _cache
     if _cache is not None:
         return _cache
-    providers = tuple(load_provider(ep) for ep in iter_entry_points())
+
+    out = [load_provider(ep) for ep in iter_entry_points()]
+    providers = tuple(out)
     _cache = providers
     return providers

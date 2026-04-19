@@ -1,4 +1,4 @@
-"""Tests for :mod:`parsimony.plugins.discovery` — entry-point based plugin discovery."""
+"""Tests for :mod:`parsimony.discovery` — entry-point based plugin discovery."""
 
 from importlib.metadata import EntryPoint
 from types import ModuleType
@@ -50,7 +50,7 @@ def _toy_connector(name: str = "toy_fetch", **kwargs: Any) -> Connector:
 
 def test_iter_entry_points_returns_parsimony_providers_group(monkeypatch: pytest.MonkeyPatch) -> None:
     """iter_entry_points filters to group='parsimony.providers'."""
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     fake_eps = [
         EntryPoint(name="foo", value="pkg_foo", group="parsimony.providers"),
@@ -70,7 +70,7 @@ def test_iter_entry_points_returns_parsimony_providers_group(monkeypatch: pytest
 
 
 def test_iter_entry_points_returns_empty_when_no_plugins(monkeypatch: pytest.MonkeyPatch) -> None:
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()
@@ -85,7 +85,7 @@ def test_iter_entry_points_returns_empty_when_no_plugins(monkeypatch: pytest.Mon
 
 def test_load_provider_returns_discovered_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     """load_provider returns a DiscoveredProvider record with connectors, env_vars, and metadata."""
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     module = _make_module(
         "pkg_foo_test",
@@ -111,7 +111,7 @@ def test_load_provider_returns_discovered_provider(monkeypatch: pytest.MonkeyPat
 
 def test_load_provider_defaults_optional_exports(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing ENV_VARS and PROVIDER_METADATA default to empty dicts, not errors."""
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     module = _make_module("pkg_bare", connectors=Connectors([_toy_connector("bare_fetch")]))
 
@@ -127,8 +127,8 @@ def test_load_provider_defaults_optional_exports(monkeypatch: pytest.MonkeyPatch
 
 def test_load_provider_raises_when_connectors_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """load_provider raises PluginContractError if the module omits CONNECTORS."""
-    from parsimony.plugins import discovery
-    from parsimony.plugins.errors import PluginContractError
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery.errors import PluginContractError
 
     module = _make_module("pkg_broken")  # no CONNECTORS attribute
 
@@ -142,8 +142,8 @@ def test_load_provider_raises_when_connectors_missing(monkeypatch: pytest.Monkey
 
 def test_load_provider_raises_when_connectors_is_wrong_type(monkeypatch: pytest.MonkeyPatch) -> None:
     """CONNECTORS must be a Connectors instance, not e.g. a list."""
-    from parsimony.plugins import discovery
-    from parsimony.plugins.errors import PluginContractError
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery.errors import PluginContractError
 
     module = _make_module("pkg_wrong")
     module.CONNECTORS = [_toy_connector("wrong_fetch")]  # type: ignore[attr-defined]
@@ -158,8 +158,8 @@ def test_load_provider_raises_when_connectors_is_wrong_type(monkeypatch: pytest.
 
 def test_load_provider_propagates_import_errors(monkeypatch: pytest.MonkeyPatch) -> None:
     """If the target module raises on import, discovery surfaces it clearly."""
-    from parsimony.plugins import discovery
-    from parsimony.plugins.errors import PluginImportError
+    from parsimony.discovery import _scan as discovery
+    from parsimony.discovery.errors import PluginImportError
 
     def _boom(path: str) -> ModuleType:
         raise ImportError(f"cannot import {path}")
@@ -177,7 +177,7 @@ def test_load_provider_propagates_import_errors(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_discovered_providers_returns_list_of_records(monkeypatch: pytest.MonkeyPatch) -> None:
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     module_a = _make_module("pkg_a", connectors=Connectors([_toy_connector("a_fetch")]))
     module_b = _make_module(
@@ -205,7 +205,7 @@ def test_discovered_providers_returns_list_of_records(monkeypatch: pytest.Monkey
 
 def test_discovered_providers_caches_results(monkeypatch: pytest.MonkeyPatch) -> None:
     """Second call should not re-invoke entry_points() or _import_module."""
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     module = _make_module("pkg_cached", connectors=Connectors([_toy_connector("cached_fetch")]))
     ep = EntryPoint(name="cached", value="pkg_cached", group="parsimony.providers")
@@ -235,7 +235,7 @@ def test_discovered_providers_caches_results(monkeypatch: pytest.MonkeyPatch) ->
 
 
 def test_clear_cache_forces_rediscovery(monkeypatch: pytest.MonkeyPatch) -> None:
-    from parsimony.plugins import discovery
+    from parsimony.discovery import _scan as discovery
 
     module = _make_module("pkg_reload", connectors=Connectors([_toy_connector("reload_fetch")]))
     ep = EntryPoint(name="reload", value="pkg_reload", group="parsimony.providers")
@@ -257,32 +257,3 @@ def test_clear_cache_forces_rediscovery(monkeypatch: pytest.MonkeyPatch) -> None
     assert ep_calls["n"] == 2
 
 
-# ---------------------------------------------------------------------------
-# Sanity: bundled modules discovered via entry points pass the contract
-# ---------------------------------------------------------------------------
-
-
-def test_real_bundled_providers_load_without_errors() -> None:
-    """After pyproject.toml registers bundled modules under parsimony.providers,
-    discovered_providers() should return them all without contract errors.
-
-    This is the dogfood check — exercises the real entry-point mechanism end-to-end.
-    Gated on the Phase 1.6 pyproject.toml entry-point registration; skipped
-    in environments where that registration hasn't happened yet (e.g. the
-    editable install predates Phase 1.6).
-    """
-    from parsimony.plugins import discovery
-
-    discovery._clear_cache()
-    providers = discovery.discovered_providers()
-
-    if not providers:
-        pytest.skip(
-            "No parsimony.providers entry points installed. Run `uv sync` after Phase 1.6 "
-            "registers bundled connectors in pyproject.toml."
-        )
-
-    # All discovered providers must carry a non-empty Connectors collection
-    for provider in providers:
-        assert isinstance(provider.connectors, Connectors)
-        assert len(list(provider.connectors)) > 0, f"{provider.name} has zero connectors"

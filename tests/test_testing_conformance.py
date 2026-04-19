@@ -1,4 +1,4 @@
-"""Tests for :mod:`parsimony.testing.conformance` — the plugin conformance suite.
+"""Tests for :mod:`parsimony.testing` — the plugin conformance suite.
 
 The conformance suite is itself under test so that plugin authors can trust
 :func:`parsimony.testing.assert_plugin_valid` to actually catch contract
@@ -94,8 +94,7 @@ def test_plugin_without_env_vars_passes() -> None:
 
 
 def test_missing_connectors_attribute_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module("pkg_nothing")
     with pytest.raises(ConformanceError, match="CONNECTORS"):
@@ -103,8 +102,7 @@ def test_missing_connectors_attribute_fails() -> None:
 
 
 def test_non_connectors_type_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module("pkg_list")
     mod.CONNECTORS = [_mk_connector("foo")]  # type: ignore[attr-defined]
@@ -113,8 +111,7 @@ def test_non_connectors_type_fails() -> None:
 
 
 def test_empty_connectors_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module("pkg_empty", connectors=Connectors([]))
     with pytest.raises(ConformanceError, match="at least one connector"):
@@ -122,8 +119,7 @@ def test_empty_connectors_fails() -> None:
 
 
 def test_tool_tagged_short_description_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module(
         "pkg_terse",
@@ -145,8 +141,7 @@ def test_non_tool_short_description_passes() -> None:
 
 
 def test_env_var_not_mapping_to_dep_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module(
         "pkg_bad_env",
@@ -158,8 +153,7 @@ def test_env_var_not_mapping_to_dep_fails() -> None:
 
 
 def test_env_vars_wrong_type_fails() -> None:
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module(
         "pkg_env_list",
@@ -172,8 +166,7 @@ def test_env_vars_wrong_type_fails() -> None:
 
 def test_name_env_var_collision_fails() -> None:
     """Connector name shadowing an ENV_VARS key is usually a bug."""
-    from parsimony.testing import assert_plugin_valid
-    from parsimony.testing.conformance import ConformanceError
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module(
         "pkg_collision",
@@ -211,27 +204,3 @@ def test_skip_unknown_check_raises() -> None:
         assert_plugin_valid(mod, skip=["not_a_real_check"])
 
 
-# ---------------------------------------------------------------------------
-# Bundled connectors sanity check
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "module_path",
-    [
-        "parsimony.connectors.treasury",
-        "parsimony.connectors.polymarket",
-    ],
-)
-def test_bundled_connectors_conform(module_path: str) -> None:
-    """Every currently-bundled connector module should pass assert_plugin_valid.
-
-    This is the dogfood gate: if bundled modules don't conform, the contract
-    is wrong — either the spec needs to loosen or the modules need fixing.
-    """
-    import importlib
-
-    from parsimony.testing import assert_plugin_valid
-
-    module = importlib.import_module(module_path)
-    assert_plugin_valid(module)

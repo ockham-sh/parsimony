@@ -1,4 +1,4 @@
-"""Entry-point shim so ``python -m parsimony.cli`` works."""
+"""Module entry point for ``python -m parsimony.cli``."""
 
 from __future__ import annotations
 

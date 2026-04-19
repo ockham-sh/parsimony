@@ -1,11 +1,13 @@
-"""``parsimony list-plugins`` subcommand.
+"""``parsimony list-plugins`` subcommand — inventory only.
 
 Inspects the ``parsimony.providers`` entry-point group and prints a table
 (or JSON) describing each plugin: distribution, version, connector count,
-env var resolution status, and a conformance pass/fail flag.
+env var resolution status, and a conformance pass/fail flag for information.
 
-Exit code: 0 when all discovered plugins pass conformance; 1 when at least
-one plugin fails. A clean empty installation (no plugins discovered) exits 0.
+Exit code: ``0`` whenever discovery itself succeeds, regardless of
+conformance failures. Use ``parsimony conformance verify <dist>`` when
+you need a non-zero exit code on contract violations — that verb is the
+gate; this one is the listing.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, TextIO
 
-from parsimony.plugins import discovered_providers
+from parsimony.discovery import discovered_providers
 from parsimony.testing import ConformanceError, assert_plugin_valid
 
 __all__ = ["run"]
@@ -91,7 +93,7 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
             "Install one to get started, e.g. `pip install parsimony-fred` "
-            "or see the plugin contract in `docs/plugin-contract.md`.",
+            "or see the plugin contract in `docs/contract.md`.",
             file=stream,
         )
         return
@@ -140,8 +142,9 @@ def run(*, json_output: bool = False, env: Mapping[str, str] | None = None) -> i
     Returns
     -------
     int
-        Process exit code. ``0`` if all plugins pass conformance (or none are
-        installed); ``1`` if any plugin fails conformance.
+        Process exit code. Always ``0`` when discovery succeeds; conformance
+        failures are reported in the output but do not affect the exit code.
+        Use ``parsimony conformance verify <dist>`` to gate on conformance.
     """
     resolved_env = env if env is not None else os.environ
 
@@ -153,5 +156,4 @@ def run(*, json_output: bool = False, env: Mapping[str, str] | None = None) -> i
     else:
         _render_table(rows, sys.stdout)
 
-    any_fail = any(r.conformance == "fail" for r in rows)
-    return 1 if any_fail else 0
+    return 0

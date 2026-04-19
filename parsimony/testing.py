@@ -3,7 +3,7 @@
 Every official plugin is expected to pass :func:`assert_plugin_valid`
 against its own module, and CI is expected to treat failure as release-
 blocking. The checks implemented here encode the contract documented in
-``docs/plugin-contract.md``.
+``docs/contract.md``.
 
 Each check is an independent callable registered in :data:`_CHECKS`. An
 author can opt out of a specific check by name via ``skip=[...]`` — useful
@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from types import ModuleType
+from typing import Any
 
 from parsimony.connector import Connector, Connectors
 
@@ -30,12 +31,33 @@ class ConformanceError(AssertionError):
     """Raised when a plugin module fails a conformance check.
 
     Inherits from ``AssertionError`` so it surfaces cleanly in pytest runs.
+    Exposes the same ``to_report_dict()`` shape as :class:`PluginError`
+    subclasses so the CLI can render one consistent report structure across
+    import, contract, and conformance failures.
     """
 
-    def __init__(self, check: str, reason: str) -> None:
+    def __init__(
+        self,
+        check: str,
+        reason: str,
+        *,
+        module_path: str | None = None,
+        next_action: str | None = None,
+    ) -> None:
         self.check = check
         self.reason = reason
+        self.module_path = module_path
+        self.next_action = next_action
         super().__init__(f"[{check}] {reason}")
+
+    def to_report_dict(self) -> dict[str, Any]:
+        """Structured fields for JSON-report consumers (CLI, CI)."""
+        return {
+            "check": self.check,
+            "module_path": self.module_path,
+            "reason": self.reason,
+            "next_action": self.next_action,
+        }
 
 
 # ---------------------------------------------------------------------------

@@ -2,9 +2,6 @@
 
 Subcommands live in sibling modules; :func:`main` dispatches to them based
 on ``sys.argv``. Entry point wired in ``pyproject.toml`` as ``parsimony``.
-
-``bundles`` subcommand is on hold pending Phase 2.6 — build pipeline is
-being rewritten against the new :class:`~parsimony.Catalog` surface.
 """
 
 from __future__ import annotations
@@ -12,6 +9,8 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 
+from parsimony.cli.bundles import add_subparser as add_bundles_subparser
+from parsimony.cli.bundles import run as run_bundles
 from parsimony.cli.conformance import run as run_conformance
 from parsimony.cli.list_plugins import run as run_list_plugins
 
@@ -66,6 +65,8 @@ def _build_parser() -> argparse.ArgumentParser:
         help="PyPI distribution name (e.g. 'parsimony-fred').",
     )
 
+    add_bundles_subparser(subparsers)
+
     return parser
 
 
@@ -82,6 +83,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             return run_conformance(distribution_name=args.distribution_name)
         parser.error(f"unknown conformance subcommand: {args.conformance_command!r}")
         return 2
+
+    if args.command == "bundles":
+        return run_bundles(args)
 
     parser.error(f"unknown command: {args.command!r}")
     return 2  # unreachable — parser.error exits

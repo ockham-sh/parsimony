@@ -59,11 +59,12 @@ GOLDEN: dict[str, list[tuple[str, str, float]]] = {
 @pytest.fixture(scope="module")
 def live_catalog():
     """Construct a live Catalog wired to HF bundles for all Tier A namespaces."""
-    from parsimony.catalog.catalog import Catalog
     from parsimony.embeddings.sentence_transformers import (
         SentenceTransformersEmbeddingProvider,
     )
     from parsimony.stores.hf_bundle import HFBundleCatalogStore
+
+    from parsimony.catalog.catalog import Catalog
 
     provider = SentenceTransformersEmbeddingProvider(
         model_id="sentence-transformers/all-MiniLM-L6-v2",

@@ -15,10 +15,9 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel
 
-from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.connector import Connectors, connector
+from parsimony.result import Provenance, Result
 from parsimony.testing import ConformanceError, ProviderTestSuite
-
 
 # ---------------------------------------------------------------------------
 # Fixture plugin modules
@@ -50,8 +49,13 @@ def _make_connector(
     )(_demo_fn)
 
 
-def _make_module(name: str, *, connectors: list[Any], env_vars: dict[str, str] | None = None,
-                 provider_metadata: dict[str, Any] | None = None) -> types.ModuleType:
+def _make_module(
+    name: str,
+    *,
+    connectors: list[Any],
+    env_vars: dict[str, str] | None = None,
+    provider_metadata: dict[str, Any] | None = None,
+) -> types.ModuleType:
     mod = types.ModuleType(name)
     mod.CONNECTORS = Connectors(connectors)
     if env_vars is not None:

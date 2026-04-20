@@ -53,9 +53,7 @@ def test_not_installed_emits_json_and_exits_2(
     def _raise(_name: str) -> Any:
         raise importlib.metadata.PackageNotFoundError(_name)
 
-    monkeypatch.setattr(
-        "parsimony.cli.conformance.importlib.metadata.distribution", _raise
-    )
+    monkeypatch.setattr("parsimony.cli.conformance.importlib.metadata.distribution", _raise)
 
     buf = io.StringIO()
     code = run(distribution_name="parsimony-missing", stream=buf)
@@ -195,5 +193,3 @@ def test_no_entry_points_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     report = json.loads(buf.getvalue())
     assert report["passed"] is False
     assert report["entry_points"] == []
-
-

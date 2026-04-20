@@ -231,6 +231,7 @@ def test_enumerator_accepts_typed_static_catalog():
 def test_enumerator_rejects_dict_sugar():
     """The decorator boundary requires a typed CatalogSpec instance."""
     with pytest.raises(ValueError, match="CatalogSpec"):
+
         @enumerator(output=_ENUM_OUTPUT, catalog={"namespace": "example"})  # type: ignore[arg-type]
         async def bad_enum(params: _NoParams) -> Result:
             """Bad."""

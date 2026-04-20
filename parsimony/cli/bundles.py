@@ -140,10 +140,7 @@ def _run_list(*, only: Sequence[str]) -> int:
         return 0
     for s in specs:
         ns = s.spec.static_namespace or "(dynamic)"
-        print(
-            f"{s.provider.name}/{s.connector.name}"
-            f"  namespace={ns}  target={s.spec.target}"
-        )
+        print(f"{s.provider.name}/{s.connector.name}  namespace={ns}  target={s.spec.target}")
     return 0
 
 

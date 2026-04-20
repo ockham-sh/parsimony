@@ -244,7 +244,7 @@ def test_clear_cache_forces_rediscovery(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         discovery,
         "_entry_points",
-        lambda *, group: (ep_calls.update(n=ep_calls["n"] + 1) or [ep]),
+        lambda *, group: ep_calls.update(n=ep_calls["n"] + 1) or [ep],
     )
     monkeypatch.setattr(discovery, "_import_module", lambda path: module)
     monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-reload", "0.1.0"))
@@ -255,5 +255,3 @@ def test_clear_cache_forces_rediscovery(monkeypatch: pytest.MonkeyPatch) -> None
     discovery.discovered_providers()
 
     assert ep_calls["n"] == 2
-
-

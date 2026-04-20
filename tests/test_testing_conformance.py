@@ -202,5 +202,3 @@ def test_skip_unknown_check_raises() -> None:
     )
     with pytest.raises(ValueError, match="unknown"):
         assert_plugin_valid(mod, skip=["not_a_real_check"])
-
-

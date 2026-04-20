@@ -158,4 +158,3 @@ def testentries_from_table_result_template_null_placeholder_raises() -> None:
     )
     with pytest.raises(ValueError, match="is null for row with key"):
         entries_from_table_result(_make_table(cfg, df))
-

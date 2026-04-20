@@ -73,9 +73,7 @@ def test_list_plugins_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytes
     assert entry["conformance"] == "pass"
 
 
-def test_list_plugins_reports_missing_env_vars(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
+def test_list_plugins_reports_missing_env_vars(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli.list_plugins import run
     from parsimony.discovery import _scan as discovery
 
@@ -121,9 +119,7 @@ def test_list_plugins_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pyte
     assert "pkg_table_test" in captured.out
 
 
-def test_list_plugins_empty_when_no_providers(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
+def test_list_plugins_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli.list_plugins import run
     from parsimony.discovery import _scan as discovery
 

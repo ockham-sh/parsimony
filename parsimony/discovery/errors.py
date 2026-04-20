@@ -59,9 +59,7 @@ class PluginImportError(PluginError):
             f"Failed to import plugin module {module_path!r}: {original}",
             module_path=module_path,
             reason=str(original),
-            next_action=(
-                "run `python -c 'import " + module_path + "'` locally to see the full traceback"
-            ),
+            next_action=("run `python -c 'import " + module_path + "'` locally to see the full traceback"),
         )
 
 

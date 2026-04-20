@@ -57,4 +57,6 @@ jobs:
           python-version: "3.12"
       - run: uv pip install --system -e ".[dev]"
       - name: pip-audit on resolved environment
-        run: uv tool run pip-audit --strict --disable-pip
+        # --disable-pip only applies with -r requirements.txt. Audit the
+        # installed environment (which includes the [dev] extra) instead.
+        run: uv tool run pip-audit --strict

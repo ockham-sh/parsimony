@@ -642,9 +642,7 @@ def enumerator(
 
         connector_module = getattr(fn, "__module__", "") or ""
         merged_properties: dict[str, Any] = dict(properties or {})
-        merged_properties["catalog"] = from_decorator_kwargs(
-            catalog, connector_module=connector_module
-        )
+        merged_properties["catalog"] = from_decorator_kwargs(catalog, connector_module=connector_module)
         return connector(
             name=name,
             description=description,

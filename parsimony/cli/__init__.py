@@ -45,8 +45,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "conformance",
         help="Run the plugin conformance suite.",
         description=(
-            "Conformance tooling for parsimony plugins. See 'docs/contract.md' "
-            "for the spec this suite enforces."
+            "Conformance tooling for parsimony plugins. See 'docs/contract.md' for the spec this suite enforces."
         ),
     )
     conf_sub = conformance.add_subparsers(dest="conformance_command", required=True)

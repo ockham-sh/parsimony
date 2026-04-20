@@ -20,8 +20,7 @@ from parsimony.cli import bundles as cli_bundles
 from parsimony.cli import main as cli_main
 from parsimony.connector import Connectors, enumerator
 from parsimony.discovery import DiscoveredProvider
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
-
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 # ---------------------------------------------------------------------------
 # Fixture plugin
@@ -103,17 +102,13 @@ def test_list_reports_empty_when_nothing_discovered(
 # ---------------------------------------------------------------------------
 
 
-def test_build_requires_namespace_placeholder(
-    capsys: pytest.CaptureFixture[str], patched_iter_specs: None
-) -> None:
+def test_build_requires_namespace_placeholder(capsys: pytest.CaptureFixture[str], patched_iter_specs: None) -> None:
     rc = cli_main(["bundles", "build", "--target", "file:///tmp/static"])
     assert rc == 2
     assert "{namespace}" in capsys.readouterr().err
 
 
-def test_build_dry_run_skips_enumeration(
-    capsys: pytest.CaptureFixture[str], patched_iter_specs: None
-) -> None:
+def test_build_dry_run_skips_enumeration(capsys: pytest.CaptureFixture[str], patched_iter_specs: None) -> None:
     rc = cli_main(["bundles", "build", "--target", "file:///tmp/{namespace}", "--dry-run"])
     assert rc == 0
     out = capsys.readouterr().out
@@ -159,8 +154,6 @@ def test_build_writes_catalog_to_file_url(
 
     async def _patched_build_one(connector: Any, plan: Any, target_url: str, catalog_cls: Any) -> None:
         await orig_build_one(connector, plan, target_url, _TestCatalog)
-
-    import types
 
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(bundles_mod, "_build_one", _patched_build_one)

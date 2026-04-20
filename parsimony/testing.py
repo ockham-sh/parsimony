@@ -205,10 +205,7 @@ def _validate_skip_list(skip: Iterable[str]) -> set[str]:
     skip_set = set(skip)
     unknown = skip_set - set(_CHECKS)
     if unknown:
-        raise ValueError(
-            f"unknown conformance check(s) in skip=: {sorted(unknown)}. "
-            f"Known checks: {sorted(_CHECKS)}"
-        )
+        raise ValueError(f"unknown conformance check(s) in skip=: {sorted(unknown)}. Known checks: {sorted(_CHECKS)}")
     return skip_set
 
 
@@ -329,10 +326,7 @@ class ProviderTestSuite:
             import importlib
 
             return importlib.import_module(cls.module_path)
-        raise TypeError(
-            f"{cls.__name__} must set either `module = <module>` "
-            "or `module_path = 'package.submodule'`"
-        )
+        raise TypeError(f"{cls.__name__} must set either `module = <module>` or `module_path = 'package.submodule'`")
 
     def test_connectors_exported(self) -> None:
         _check_connectors_exported(self._resolve_module())

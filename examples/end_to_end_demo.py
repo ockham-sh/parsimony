@@ -28,12 +28,12 @@ from __future__ import annotations
 import asyncio
 
 import pandas as pd
+from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 from pydantic import BaseModel, Field
 
 from parsimony.catalog.catalog import Catalog
 from parsimony.connector import Connector, Connectors, connector
 from parsimony.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
-from parsimony.stores.sqlite_catalog import SQLiteCatalogStore
 
 # ---------------------------------------------------------------------------
 # Shared demo identity: KEY column must declare namespace for catalog indexing.

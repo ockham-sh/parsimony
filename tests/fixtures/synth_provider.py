@@ -77,9 +77,7 @@ async def synth_fetch(params: SynthFetchParams) -> Result:
 @enumerator(output=SYNTH_ENUMERATE_OUTPUT, tags=["synth"])
 async def enumerate_synth(params: SynthEnumerateParams) -> pd.DataFrame:
     """Enumerate up to ``limit`` synthetic catalog entries."""
-    return pd.DataFrame(
-        [{"key": f"k{i}", "title": f"Item {i}"} for i in range(params.limit)]
-    )
+    return pd.DataFrame([{"key": f"k{i}", "title": f"Item {i}"} for i in range(params.limit)])
 
 
 CONNECTORS = Connectors([synth_fetch, enumerate_synth])

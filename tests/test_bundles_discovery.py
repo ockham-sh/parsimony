@@ -114,6 +114,7 @@ def test_iter_specs_order_is_deterministic(stub_providers):
     async def list_alpha(params: _NoParams) -> Result:
         """List."""
         import pandas as pd
+
         return Result.from_dataframe(
             pd.DataFrame({"code": ["a"], "title": ["A"]}),
             Provenance(source="alpha"),
@@ -123,6 +124,7 @@ def test_iter_specs_order_is_deterministic(stub_providers):
     async def list_beta(params: _NoParams) -> Result:
         """List."""
         import pandas as pd
+
         return Result.from_dataframe(
             pd.DataFrame({"code": ["b"], "title": ["B"]}),
             Provenance(source="beta"),
@@ -132,6 +134,7 @@ def test_iter_specs_order_is_deterministic(stub_providers):
     async def list_gamma(params: _NoParams) -> Result:
         """List."""
         import pandas as pd
+
         return Result.from_dataframe(
             pd.DataFrame({"code": ["c"], "title": ["C"]}),
             Provenance(source="gamma"),
@@ -161,6 +164,7 @@ def test_iter_specs_yields_dynamic_specs(stub_providers):
     async def list_dyn(params: _NoParams) -> Result:
         """List."""
         import pandas as pd
+
         return Result.from_dataframe(
             pd.DataFrame({"code": ["x"], "title": ["X"]}),
             Provenance(source="dyn"),

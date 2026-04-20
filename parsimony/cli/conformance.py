@@ -53,9 +53,7 @@ class _Report:
 
     @property
     def passed(self) -> bool:
-        return bool(self.entry_points) and all(
-            ep.status == "pass" for ep in self.entry_points
-        )
+        return bool(self.entry_points) and all(ep.status == "pass" for ep in self.entry_points)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -138,9 +136,7 @@ def _build_report(distribution_name: str) -> _Report | None:
     except importlib.metadata.PackageNotFoundError:
         return None
 
-    entry_points = [
-        ep for ep in dist.entry_points if ep.group == "parsimony.providers"
-    ]
+    entry_points = [ep for ep in dist.entry_points if ep.group == "parsimony.providers"]
 
     reports = [_verify_entry_point(ep) for ep in entry_points]
     return _Report(

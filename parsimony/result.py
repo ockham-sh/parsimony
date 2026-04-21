@@ -8,15 +8,10 @@ __all__ = [
     "OutputConfig",
     "Provenance",
     "Result",
-    "SemanticTableResult",
-    "namespace_placeholders",
-    "resolve_namespace_template",
 ]
 
 import json
 import logging
-import re
-from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -31,45 +26,6 @@ from pydantic import AliasChoices, BaseModel, Field, model_validator
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
 
 logger = logging.getLogger(__name__)
-
-#: Regex matching ``{placeholder}`` segments in a namespace template.
-#: Placeholders must be valid Python identifiers (letters, digits, underscore;
-#: cannot start with a digit) — this matches the column-name contract and
-#: ensures the reverse-resolution regex in ``_find_enumerator`` stays
-#: unambiguous (no nested braces, no empty placeholders).
-_NAMESPACE_PLACEHOLDER_RE: re.Pattern[str] = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
-
-
-def namespace_placeholders(template: str) -> list[str]:
-    """Return ordered, de-duplicated placeholder names in *template*.
-
-    ``"sdmx-series-{agency}-{dataset_id}"`` → ``["agency", "dataset_id"]``.
-    A static namespace with no ``{...}`` segments returns ``[]``.
-    """
-    seen: dict[str, None] = {}
-    for match in _NAMESPACE_PLACEHOLDER_RE.finditer(template):
-        seen.setdefault(match.group(1), None)
-    return list(seen)
-
-
-def resolve_namespace_template(template: str, values: Mapping[str, Any]) -> str:
-    """Substitute ``{placeholder}`` segments in *template* with *values*.
-
-    Missing keys raise :class:`KeyError` with an actionable message — the
-    caller is expected to have validated placeholder columns upstream at
-    :class:`OutputConfig` construction time.
-    """
-
-    def _sub(match: re.Match[str]) -> str:
-        name = match.group(1)
-        if name not in values:
-            raise KeyError(
-                f"namespace template {template!r} references placeholder {name!r} "
-                f"not present in row values (available: {sorted(values)})"
-            )
-        return str(values[name])
-
-    return _NAMESPACE_PLACEHOLDER_RE.sub(_sub, template)
 
 
 class ColumnRole(StrEnum):
@@ -95,14 +51,10 @@ class Column(BaseModel):
     description: str | None = None
     exclude_from_llm_view: bool = False
     #: Catalog namespace for the entity code when ``role`` is :attr:`ColumnRole.KEY`.
-    #: Set when using :meth:`~parsimony.catalog.Catalog.index_result` so the table is self-describing.
     #:
-    #: May be a **static** string (``"sdmx-datasets"``) or a **template**
-    #: containing ``{placeholder}`` segments that reference sibling columns
-    #: in the same :class:`OutputConfig` (``"sdmx-series-{agency}-{dataset_id}"``).
-    #: Templates are resolved per row during catalog indexing and reverse-resolved
-    #: by :func:`~parsimony.catalog.catalog._find_enumerator` when Catalog.search
-    #: needs to locate a live-fallback enumerator for a fully-resolved namespace.
+    #: When omitted on a KEY column, :meth:`~parsimony.catalog.Catalog.add_from_result`
+    #: uses the catalog's own ``name`` as the default. Static plain strings only —
+    #: plugins that need dynamic namespaces build the :class:`OutputConfig` per call.
     namespace: str | None = None
 
     @model_validator(mode="after")
@@ -116,26 +68,7 @@ class Column(BaseModel):
                 raise ValueError("namespace is only allowed on KEY columns")
             if not str(self.namespace).strip():
                 raise ValueError("namespace must be non-empty when set")
-            # Reject unbalanced braces early — `namespace_placeholders` tolerates
-            # malformed input silently, so we check here.
-            open_braces = self.namespace.count("{")
-            close_braces = self.namespace.count("}")
-            if open_braces != close_braces:
-                raise ValueError(
-                    f"namespace template {self.namespace!r} has unbalanced braces "
-                    f"({open_braces} '{{' vs {close_braces} '}}')"
-                )
         return self
-
-    @property
-    def namespace_placeholders(self) -> list[str]:
-        """Placeholder names in :attr:`namespace` (empty when static or unset)."""
-        return namespace_placeholders(self.namespace) if self.namespace else []
-
-    @property
-    def namespace_is_template(self) -> bool:
-        """True iff :attr:`namespace` is set and contains at least one placeholder."""
-        return bool(self.namespace_placeholders)
 
 
 def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
@@ -180,14 +113,12 @@ class Result(BaseModel):
     """Free-form connector output: any data plus provenance and optional tabular schema.
 
     ``data`` can be anything the connector returns — a pandas DataFrame,
-    a string, a dict, a Polars frame, etc.  The framework wraps connector
+    a string, a dict, a Polars frame, etc. The framework wraps connector
     return values automatically; connectors never need to construct this
     directly.
 
-    A raw DataFrame/Series can still live in :class:`Result.data`, but it does not
-    become a :class:`SemanticTableResult` until a tabular :class:`OutputConfig` is applied.
-    :meth:`to_table` is the canonical late schema-application path (same as
-    connector ``output=``).
+    A raw DataFrame/Series can live in :attr:`data`; applying an
+    :class:`OutputConfig` via :meth:`to_table` adds the semantic schema.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -197,7 +128,7 @@ class Result(BaseModel):
     output_schema: OutputConfig | None = Field(default=None)
 
     # ------------------------------------------------------------------
-    # Factory classmethods
+    # Factories
     # ------------------------------------------------------------------
 
     @classmethod
@@ -206,26 +137,15 @@ class Result(BaseModel):
         df: pd.DataFrame | pd.Series,
         provenance: Provenance | None = None,
     ) -> Result:
-        """Build a raw :class:`Result` that happens to contain tabular data.
-
-        Preferred over constructing ``Result`` manually when the connector has
-        no ``OutputConfig`` and returns a plain DataFrame. This does *not*
-        apply semantic table roles; use :meth:`to_table` for that transition.
-        """
+        """Build a raw :class:`Result` containing tabular data with no schema applied."""
         frame = pd.DataFrame(df)
         if frame.empty:
             raise ValueError("Returned an empty DataFrame.")
         prov = provenance.model_copy(deep=True) if provenance is not None else Provenance()
         return Result(data=frame, provenance=prov)
 
-    def to_table(
-        self,
-        output: OutputConfig,
-    ) -> SemanticTableResult:
-        """Apply an :class:`OutputConfig` to tabular data; same contract as ``@connector(output=...)``.
-
-        Requires ``data`` to be a DataFrame or Series. Unmapped columns become ``DATA`` automatically.
-        """
+    def to_table(self, output: OutputConfig) -> Result:
+        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
         if not isinstance(self.data, (pd.DataFrame, pd.Series)):
             raise TypeError(f"Result.to_table requires tabular data, got {type(self.data).__name__}")
         return output.build_table_result(
@@ -241,14 +161,14 @@ class Result(BaseModel):
 
     @property
     def columns(self) -> list[Column]:
-        """Column schema (delegates to ``output_schema.columns``; empty list if no schema)."""
+        """Column schema (empty list if no schema set)."""
         if self.output_schema is None:
             return []
         return self.output_schema.columns
 
     @property
     def df(self) -> pd.DataFrame:
-        """Return ``data`` as a :class:`~pandas.DataFrame`, raising if incompatible."""
+        """Return :attr:`data` as a :class:`~pandas.DataFrame`, raising if incompatible."""
         if isinstance(self.data, pd.DataFrame):
             return self.data
         if isinstance(self.data, pd.Series):
@@ -259,14 +179,12 @@ class Result(BaseModel):
 
     @property
     def text(self) -> str:
-        """Return ``data`` as a string."""
         if isinstance(self.data, str):
             return self.data
         return str(self.data)
 
     @property
     def entity_keys(self) -> pd.DataFrame:
-        """Subset of :attr:`data` containing columns with ``role == key``."""
         key_names = [c.mapped_name or c.name for c in self.columns if c.role == ColumnRole.KEY]
         if not key_names:
             return pd.DataFrame()
@@ -289,12 +207,7 @@ class Result(BaseModel):
     # ------------------------------------------------------------------
 
     def to_arrow(self) -> pa.Table:
-        """Serialize to Arrow with embedded provenance and optional schema metadata.
-
-        Requires ``data`` to be a DataFrame. The :attr:`output_schema` is embedded
-        only when set; a schemaless :class:`Result` round-trips as a plain tabular
-        result with provenance.
-        """
+        """Serialize to Arrow with embedded provenance and optional schema metadata."""
         table = pa.Table.from_pandas(self.df, preserve_index=False)
         payload: dict[str, Any] = {
             "provenance": self.provenance.model_dump(mode="json"),
@@ -307,13 +220,7 @@ class Result(BaseModel):
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> Result:
-        """Deserialize an Arrow table written by :meth:`to_arrow`.
-
-        Returns a :class:`SemanticTableResult` when the embedded payload includes
-        a non-empty column schema; otherwise a plain :class:`Result` carrying the
-        DataFrame and (possibly empty) provenance. Tables with no parsimony
-        metadata are also accepted — useful for reading vanilla Parquet files.
-        """
+        """Deserialize an Arrow table written by :meth:`to_arrow`."""
         df = table.to_pandas()
         raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
         if not raw:
@@ -323,7 +230,7 @@ class Result(BaseModel):
         cols_raw = payload.get("columns") or []
         if cols_raw:
             columns = [Column.model_validate(c) for c in cols_raw]
-            return SemanticTableResult(
+            return Result(
                 data=df,
                 provenance=provenance,
                 output_schema=OutputConfig(columns=columns),
@@ -332,18 +239,16 @@ class Result(BaseModel):
 
     def to_parquet(self, path: str | Path) -> None:
         """Write Parquet with embedded column schema and provenance."""
-        table = self.to_arrow()
-        pq.write_table(table, path)
+        pq.write_table(self.to_arrow(), path)
 
     @classmethod
     def from_parquet(cls, path: str | Path) -> Result:
-        """Read Parquet written by :meth:`to_parquet`. See :meth:`from_arrow` for the return contract."""
-        table = pq.read_table(path)
-        return cls.from_arrow(table)
+        """Read Parquet written by :meth:`to_parquet`."""
+        return cls.from_arrow(pq.read_table(path))
 
 
 class OutputConfig(BaseModel):
-    """Declarative schema: maps raw data frames into :class:`SemanticTableResult` instances."""
+    """Declarative schema: maps raw data frames into schema-applied :class:`Result` instances."""
 
     columns: list[Column]
 
@@ -357,30 +262,10 @@ class OutputConfig(BaseModel):
             raise ValueError(f"Output config must have at most one TITLE column, found {len(titles)}: {titles}")
         if not any(c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE) for c in self.columns):
             raise ValueError("Output config must define at least one data, key, or title column")
-        # Validate namespace-template placeholders reference sibling columns so that
-        # per-row resolution in Catalog.index_result can never KeyError at runtime.
-        column_names = {c.name for c in self.columns}
-        for col in self.columns:
-            if col.namespace_is_template:
-                missing = [p for p in col.namespace_placeholders if p not in column_names]
-                if missing:
-                    raise ValueError(
-                        f"namespace template {col.namespace!r} on column {col.name!r} references "
-                        f"placeholders not declared as columns in the same OutputConfig: {missing}. "
-                        f"Declared columns: {sorted(column_names)}."
-                    )
         return self
 
     def validate_columns(self, df: pd.DataFrame) -> list[str]:
-        """Return declared column names absent from *df* (excludes wildcards).
-
-        Useful for diagnosing schema mismatches — a non-empty return value
-        means some config columns will be silently skipped during
-        :meth:`build_table_result`::
-
-            missing = config.validate_columns(sample_df)
-            # missing == ['close'] → typo? API renamed the column?
-        """
+        """Return declared column names absent from *df* (excludes wildcards)."""
         declared = {c.name for c in self.columns if c.name != "*"}
         return sorted(declared - set(df.columns))
 
@@ -389,10 +274,6 @@ class OutputConfig(BaseModel):
         df: pd.DataFrame,
         params: dict[str, Any],
     ) -> tuple[pd.DataFrame, list[tuple[Column, str]], set[str]]:
-        """Match config columns, coerce dtypes, rename.
-
-        Returns processed frame, column info, and consumed input column names.
-        """
         processed_series: list[tuple[Column, pd.Series]] = []
         consumed: set[str] = set()
 
@@ -440,12 +321,8 @@ class OutputConfig(BaseModel):
         provenance: Provenance | None = None,
         params: dict[str, Any] | None = None,
         merge_unmapped_as_data: bool = True,
-    ) -> SemanticTableResult:
-        """Apply column schema; unmapped input columns become DATA when ``merge_unmapped_as_data`` is True.
-
-        Empty tables are allowed when the frame declares column names that match the schema
-        (e.g. zero search hits with the expected columns).
-        """
+    ) -> Result:
+        """Apply column schema to *df*; unmapped columns become DATA when requested."""
         if not isinstance(df, (pd.DataFrame, pd.Series)):
             raise TypeError(f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}")
         frame = pd.DataFrame(df)
@@ -457,10 +334,7 @@ class OutputConfig(BaseModel):
         if merge_params and not p.params:
             p.params = dict(merge_params)
 
-        full_df, columns_info, consumed = self._apply_columns(
-            frame,
-            merge_params,
-        )
+        full_df, columns_info, consumed = self._apply_columns(frame, merge_params)
 
         declared = {c.name for c in self.columns if c.name != "*"}
         unmatched = sorted(declared - consumed)
@@ -492,10 +366,4 @@ class OutputConfig(BaseModel):
         new_df = pd.concat([s for _, s in processed_series], axis=1)
         resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
         resolved_config = OutputConfig(columns=resolved_schema)
-        return SemanticTableResult(data=new_df, provenance=p, output_schema=resolved_config)
-
-
-class SemanticTableResult(Result):
-    """Tabular connector output with a required :attr:`output_schema`."""
-
-    output_schema: OutputConfig
+        return Result(data=new_df, provenance=p, output_schema=resolved_config)

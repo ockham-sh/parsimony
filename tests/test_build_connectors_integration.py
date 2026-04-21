@@ -54,7 +54,7 @@ def test_baseline_empty_when_no_plugins_installed(monkeypatch: pytest.MonkeyPatc
     needs connectors in the surface must install an entry-point plugin or
     monkeypatch one in.
     """
-    from parsimony.discovery import _scan as discovery
+    import parsimony.discovery as discovery
     from parsimony.discovery import build_connectors_from_env
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
@@ -77,7 +77,7 @@ def test_discovered_provider_appears_in_build_output(monkeypatch: pytest.MonkeyP
     :func:`test_baseline_provider_set_unchanged` and
     :func:`test_connector_names_snapshot_matches_pre_refactor`).
     """
-    from parsimony.discovery import _scan as discovery
+    import parsimony.discovery as discovery
     from parsimony.discovery import build_connectors_from_env
 
     fake_module = _make_module(
@@ -102,7 +102,7 @@ def test_discovered_provider_appears_in_build_output(monkeypatch: pytest.MonkeyP
 
 def test_discovered_provider_silently_skipped_when_env_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing env var for a discovered plugin silently skips it — no raise."""
-    from parsimony.discovery import _scan as discovery
+    import parsimony.discovery as discovery
     from parsimony.discovery import build_connectors_from_env
 
     fake_module = _make_module(
@@ -130,7 +130,7 @@ def test_discovered_single_entry_no_duplicates(monkeypatch: pytest.MonkeyPatch) 
     contains provider-specific modules — every connector lives in its own
     ``parsimony_<name>`` package (freeze §6).
     """
-    from parsimony.discovery import _scan as discovery
+    import parsimony.discovery as discovery
     from parsimony.discovery import build_connectors_from_env
 
     ep = EntryPoint(

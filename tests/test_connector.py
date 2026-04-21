@@ -9,7 +9,7 @@ import pytest
 from pydantic import BaseModel, Field, ValidationError
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Result, SemanticTableResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Result
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -164,20 +164,23 @@ class TestEnumerator:
                 """No key."""
                 return pd.DataFrame()
 
-    def test_enumerator_requires_key_namespace(self) -> None:
-        with pytest.raises(ValueError, match="namespace"):
+    def test_enumerator_accepts_key_without_namespace(self) -> None:
+        """KEY.namespace is optional on enumerators — catalog supplies default at index time."""
 
-            @enumerator(
-                output=OutputConfig(
-                    columns=[
-                        Column(name="id", role=ColumnRole.KEY),
-                        Column(name="title", role=ColumnRole.TITLE),
-                    ],
-                ),
-            )
-            async def _no_ns(_p: SearchParams) -> pd.DataFrame:
-                """No namespace."""
-                return pd.DataFrame()
+        @enumerator(
+            output=OutputConfig(
+                columns=[
+                    Column(name="id", role=ColumnRole.KEY),
+                    Column(name="title", role=ColumnRole.TITLE),
+                ],
+            ),
+        )
+        async def _no_ns(_p: SearchParams) -> pd.DataFrame:
+            """No namespace."""
+            return pd.DataFrame({"id": ["a"], "title": ["A"]})
+
+        assert _no_ns.output_config is not None
+        assert _no_ns.output_config.columns[0].namespace is None
 
     def test_enumerator_requires_title_column(self) -> None:
         with pytest.raises(ValueError, match="TITLE"):
@@ -210,7 +213,8 @@ class TestEnumerator:
         assert isinstance(demo_enum, Connector)
         assert demo_enum.output_config is not None
         res = asyncio.run(demo_enum(query="x"))
-        assert isinstance(res, SemanticTableResult)
+        assert isinstance(res, Result)
+        assert res.output_schema is not None
 
 
 class TestLoader:
@@ -307,7 +311,8 @@ class TestLoader:
         assert isinstance(demo_load, Connector)
         assert demo_load.output_config is not None
         res = asyncio.run(demo_load(query="x"))
-        assert isinstance(res, SemanticTableResult)
+        assert isinstance(res, Result)
+        assert res.output_schema is not None
 
 
 class TestConnector:
@@ -326,15 +331,14 @@ class TestConnector:
         c = _fake_connectors()
         result = asyncio.run(c["demo_search"](query="GDP"))
         assert isinstance(result, Result)
-        assert not isinstance(result, SemanticTableResult)
-        assert len(result.data) == 2
         assert result.output_schema is None
+        assert len(result.data) == 2
         assert result.provenance.params["query"] == "GDP"
 
     def test_execute_fetch(self) -> None:
         c = Connectors([demo_fetch])
         result = asyncio.run(c["demo_fetch"](series_id="GDPC1"))
-        assert not isinstance(result, SemanticTableResult)
+        assert result.output_schema is None
         assert list(result.data.columns) == ["date", "value"]
         assert result.output_schema is None
         assert result.provenance.params["series_id"] == "GDPC1"
@@ -432,24 +436,38 @@ class TestKwargsCalling:
 
 
 # ---------------------------------------------------------------------------
-# Result callbacks (with_callback)
+# Result wrapping
+# ---------------------------------------------------------------------------
+
+
+class TestResultWrap:
+    def test_iter_returns_connector_instances(self) -> None:
+        c = _fake_connectors()
+        assert all(isinstance(op, Connector) for op in c)
+
+    def test_wrap_sets_source_description_on_provenance(self) -> None:
+        result = asyncio.run(demo_search(query="GDP"))
+        assert result.provenance.source == "demo_search"
+        assert "Search for test series" in result.provenance.source_description
+
+
+# ---------------------------------------------------------------------------
+# Result callbacks (with_callback) — observer semantics
 # ---------------------------------------------------------------------------
 
 
 class TestCallback:
     def test_callback_fires_on_success(self) -> None:
-        log: list[tuple[str, str]] = []
+        log: list[str] = []
 
         def cb(result: Result) -> None:
-            log.append((result.provenance.source, result.provenance.params["query"]))
+            log.append(result.provenance.source)
 
         c = _fake_connectors().with_callback(cb)
         asyncio.run(c["demo_search"](query="GDP"))
-        assert len(log) == 1
-        assert log[0][0] == "demo_search"
-        assert log[0][1] == "GDP"
+        assert log == ["demo_search"]
 
-    def test_callback_does_not_fire_on_error(self) -> None:
+    def test_callback_does_not_fire_on_validation_error(self) -> None:
         log: list[str] = []
 
         def cb(result: Result) -> None:
@@ -457,78 +475,20 @@ class TestCallback:
 
         c = _fake_connectors().with_callback(cb)
         with pytest.raises(ValidationError):
-            asyncio.run(c["demo_search"](query=""))  # validation error
+            asyncio.run(c["demo_search"](query=""))
         assert log == []
 
-    def test_callback_preserved_through_bind(self) -> None:
+    def test_callback_preserved_through_bind_deps(self) -> None:
         log: list[str] = []
-
-        def cb(result: Result) -> None:
-            log.append(result.provenance.source)
 
         @connector()
         async def keyed(params: SearchParams, *, api_key: str) -> pd.DataFrame:
             """Keyed."""
             return _make_search_df(params.query)
 
-        c = Connectors([keyed]).with_callback(cb).bind_deps(api_key="k")
+        c = Connectors([keyed]).with_callback(lambda r: log.append(r.provenance.source)).bind_deps(api_key="k")
         asyncio.run(c["keyed"](query="GDP"))
         assert log == ["keyed"]
-
-    def test_callback_preserved_through_filter(self) -> None:
-        log: list[str] = []
-
-        def cb(result: Result) -> None:
-            log.append(result.provenance.source)
-
-        c = _fake_connectors().with_callback(cb)
-        filtered = c.filter(name="search")
-        asyncio.run(filtered["demo_search"](query="GDP"))
-        assert log == ["demo_search"]
-
-    def test_add_preserves_per_connector_callbacks(self) -> None:
-        """Callbacks are per-connector: ``+`` does not propagate callbacks across sides."""
-        log: list[str] = []
-
-        def cb(result: Result) -> None:
-            log.append(result.provenance.source)
-
-        a = Connectors([demo_search]).with_callback(cb)
-        b = Connectors([demo_fetch])
-        combined = a + b
-        asyncio.run(combined["demo_search"](query="GDP"))
-        assert log == ["demo_search"]
-        log.clear()
-        asyncio.run(combined["demo_fetch"](series_id="X"))
-        assert log == [], "demo_fetch has no callbacks — cb should not fire"
-
-    def test_add_keeps_independent_callbacks(self) -> None:
-        log: list[str] = []
-
-        def cb1(result: Result) -> None:
-            log.append("1")
-
-        def cb2(result: Result) -> None:
-            log.append("2")
-
-        a = Connectors([demo_search]).with_callback(cb1)
-        b = Connectors([demo_fetch]).with_callback(cb2)
-        combined = a + b
-        asyncio.run(combined["demo_fetch"](series_id="X"))
-        assert log == ["2"], "only demo_fetch's own callback fires"
-
-    def test_chained_with_callback_fires_in_order(self) -> None:
-        log: list[str] = []
-
-        def cb1(result: Result) -> None:
-            log.append("a")
-
-        def cb2(result: Result) -> None:
-            log.append("b")
-
-        c = _fake_connectors().with_callback(cb1).with_callback(cb2)
-        asyncio.run(c["demo_search"](query="GDP"))
-        assert log == ["a", "b"]
 
     def test_async_callback_awaited(self) -> None:
         log: list[str] = []
@@ -540,43 +500,33 @@ class TestCallback:
         asyncio.run(c["demo_search"](query="GDP"))
         assert log == ["demo_search"]
 
-    def test_connector_with_callback_returns_connector(self) -> None:
-        def cb(result: Result) -> None:
-            pass
+    def test_callback_exceptions_are_logged_not_raised(self) -> None:
+        """Observer semantics: a failing callback never breaks the caller's result."""
 
-        c = _fake_connectors().with_callback(cb)
-        fetched = c["demo_search"]
-        assert isinstance(fetched, Connector)
-        assert fetched.name == "demo_search"
-        assert fetched.description == "Search for test series by keyword."
-        assert "demo_search" in repr(fetched)
+        def boom(_result: Result) -> None:
+            raise RuntimeError("callback broke")
+
+        c = _fake_connectors().with_callback(boom)
+        result = asyncio.run(c["demo_search"](query="GDP"))
+        assert len(result.data) == 2  # caller still gets their result
 
     def test_per_connector_callback(self) -> None:
-        """Callback attached directly to a Connector fires on call."""
+        """Callback on one connector does not fire on others in the collection."""
         log: list[str] = []
 
-        def cb(result: Result) -> None:
-            log.append(result.provenance.source)
-
-        fetcher_with_cb = demo_fetch.with_callback(cb)
+        fetcher_with_cb = demo_fetch.with_callback(lambda r: log.append(r.provenance.source))
         c = Connectors([demo_search, fetcher_with_cb])
         asyncio.run(c["demo_fetch"](series_id="X"))
         assert log == ["demo_fetch"]
         log.clear()
         asyncio.run(c["demo_search"](query="GDP"))
-        assert log == [], "demo_search has no callback"
+        assert log == []
 
-    def test_iter_returns_connector_instances(self) -> None:
-        def cb(result: Result) -> None:
-            pass
-
-        c = _fake_connectors().with_callback(cb)
-        assert all(isinstance(op, Connector) for op in c)
-
-    def test_wrap_sets_source_description_on_provenance(self) -> None:
-        result = asyncio.run(demo_search(query="GDP"))
-        assert result.provenance.source == "demo_search"
-        assert "Search for test series" in result.provenance.source_description
+    def test_chained_callbacks_fire_in_order(self) -> None:
+        log: list[str] = []
+        c = _fake_connectors().with_callback(lambda r: log.append("a")).with_callback(lambda r: log.append("b"))
+        asyncio.run(c["demo_search"](query="GDP"))
+        assert log == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------

@@ -9,7 +9,6 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Query param names whose values must never appear in logs (lowercase, underscores).
 _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
     {
         "api_key",
@@ -44,8 +43,7 @@ def _safe_redirect_url(url: httpx.URL) -> str:
 
 
 class HttpClient:
-    """
-    Async HTTP client with base URL, default headers/query params, and redacted logging.
+    """Async HTTP client with base URL, default headers/query params, and redacted logging.
 
     By default each request creates a short-lived ``httpx.AsyncClient`` so that
     TCP connections are never shared across different ``asyncio.run()`` event
@@ -174,3 +172,6 @@ class HttpClient:
             },
         )
         return response
+
+
+__all__ = ["HttpClient"]

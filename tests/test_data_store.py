@@ -1,4 +1,4 @@
-"""Tests for DataStore and load_result."""
+"""Tests for InMemoryDataStore and load_result."""
 
 from __future__ import annotations
 
@@ -7,14 +7,8 @@ import pytest
 from pydantic import BaseModel
 
 from parsimony.connector import Connectors, loader
-from parsimony.result import (
-    Column,
-    ColumnRole,
-    OutputConfig,
-    Provenance,
-    SemanticTableResult,
-)
-from parsimony.stores.data_store import DataStore, LoadResult, _data_from_table_result
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
 
 
 class _Params(BaseModel):
@@ -35,13 +29,13 @@ async def demo_loader(_p: _Params) -> pd.DataFrame:
     return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
 
 
-def test_data_from_table_result_extracts_data_columns_only() -> None:
-    table = SemanticTableResult(
+def test_data_from_result_extracts_data_columns_only() -> None:
+    table = Result(
         data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
         provenance=Provenance(source="t"),
         output_schema=LOAD_SCHEMA,
     )
-    rows = _data_from_table_result(table)
+    rows = _data_from_result(table)
     assert len(rows) == 1
     ns, code, df = rows[0]
     assert ns == "test_ns"
@@ -50,8 +44,8 @@ def test_data_from_table_result_extracts_data_columns_only() -> None:
     assert df["obs"].iloc[0] == 42.0
 
 
-def test_data_from_table_result_groups_by_key() -> None:
-    table = SemanticTableResult(
+def test_data_from_result_groups_by_key() -> None:
+    table = Result(
         data=pd.DataFrame(
             {
                 "code_col": ["A", "B", "A"],
@@ -61,7 +55,7 @@ def test_data_from_table_result_groups_by_key() -> None:
         provenance=Provenance(source="t"),
         output_schema=LOAD_SCHEMA,
     )
-    rows = _data_from_table_result(table)
+    rows = _data_from_result(table)
     assert len(rows) == 2
     by_code = {code: df for _, code, df in rows}
     assert len(by_code["A"]) == 2
@@ -69,8 +63,8 @@ def test_data_from_table_result_groups_by_key() -> None:
     assert list(by_code["A"].columns) == ["obs"]
 
 
-def test_data_from_table_result_requires_key_namespace() -> None:
-    table = SemanticTableResult(
+def test_data_from_result_requires_key_namespace() -> None:
+    table = Result(
         data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
         provenance=Provenance(source="t"),
         output_schema=OutputConfig(
@@ -81,15 +75,15 @@ def test_data_from_table_result_requires_key_namespace() -> None:
         ),
     )
     with pytest.raises(ValueError, match="namespace"):
-        _data_from_table_result(table)
+        _data_from_result(table)
 
 
 @pytest.mark.asyncio
 async def test_load_result_skips_existing_keys() -> None:
-    store = DataStore()
+    store = InMemoryDataStore()
     await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
-    table = SemanticTableResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t"),
         output_schema=LOAD_SCHEMA,
@@ -106,10 +100,10 @@ async def test_load_result_skips_existing_keys() -> None:
 
 @pytest.mark.asyncio
 async def test_load_result_force_upserts_existing() -> None:
-    store = DataStore()
+    store = InMemoryDataStore()
     await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
-    table = SemanticTableResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t"),
         output_schema=LOAD_SCHEMA,
@@ -123,10 +117,11 @@ async def test_load_result_force_upserts_existing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_result_as_callback() -> None:
-    store = DataStore()
-    wired = demo_loader.with_callback(store.load_result)
-    await wired(q="x")
+async def test_load_result_directly() -> None:
+    """Userland pattern: call store.load_result(result) after the connector returns."""
+    store = InMemoryDataStore()
+    result = await demo_loader(q="x")
+    await store.load_result(result)
     df = await store.get("test_ns", "A")
     assert df is not None
     assert list(df.columns) == ["obs"]
@@ -134,17 +129,18 @@ async def test_load_result_as_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_load_result_via_connectors_with_callback() -> None:
-    store = DataStore()
-    c = Connectors([demo_loader.with_callback(store.load_result)])
-    await c["demo_loader"](q="x")
+async def test_load_result_via_connectors() -> None:
+    store = InMemoryDataStore()
+    c = Connectors([demo_loader])
+    result = await c["demo_loader"](q="x")
+    await store.load_result(result)
     df = await store.get("test_ns", "A")
     assert df is not None
 
 
 @pytest.mark.asyncio
 async def test_data_store_crud() -> None:
-    store = DataStore()
+    store = InMemoryDataStore()
     df = pd.DataFrame({"x": [1, 2]})
     await store.upsert("ns", "c1", df)
     assert await store.exists([("ns", "c1")]) == {("ns", "c1")}

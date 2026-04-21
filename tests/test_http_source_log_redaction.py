@@ -1,6 +1,6 @@
 """Ensure HTTP source logging never emits credential query parameters."""
 
-from parsimony.transport.http import _redact_params_for_logging
+from parsimony.http import _redact_params_for_logging
 
 
 def test_redact_api_key_and_apikey() -> None:

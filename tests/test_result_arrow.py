@@ -13,7 +13,6 @@ from parsimony.result import (
     OutputConfig,
     Provenance,
     Result,
-    SemanticTableResult,
 )
 
 
@@ -42,27 +41,26 @@ def test_to_arrow_embeds_provenance_metadata() -> None:
 
 
 def test_arrow_roundtrip_schemaless_result() -> None:
-    """A schemaless Result round-trips as a plain Result with provenance preserved."""
     prov = Provenance(source="fred", params={"k": "v"})
     result = Result(data=_df(), provenance=prov)
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
-    assert type(roundtrip) is Result  # not SemanticTableResult
+    assert roundtrip.output_schema is None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"k": "v"}
     pd.testing.assert_frame_equal(roundtrip.df, _df())
 
 
-def test_arrow_roundtrip_semantic_table_result() -> None:
-    """When output_schema is set, from_arrow returns a SemanticTableResult."""
-    result = SemanticTableResult(
+def test_arrow_roundtrip_with_schema() -> None:
+    """When output_schema is set, from_arrow restores it."""
+    result = Result(
         data=_df(),
         provenance=Provenance(source="fred"),
         output_schema=_schema(),
     )
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
-    assert isinstance(roundtrip, SemanticTableResult)
+    assert roundtrip.output_schema is not None
     cols = roundtrip.output_schema.columns
     assert [c.name for c in cols] == ["code", "title"]
     assert [c.role for c in cols] == [ColumnRole.KEY, ColumnRole.TITLE]
@@ -70,10 +68,9 @@ def test_arrow_roundtrip_semantic_table_result() -> None:
 
 
 def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
-    """A table with no parsimony.result metadata returns a schemaless Result."""
     table = pa.Table.from_pandas(_df(), preserve_index=False)
     result = Result.from_arrow(table)
-    assert type(result) is Result
+    assert result.output_schema is None
     pd.testing.assert_frame_equal(result.df, _df())
 
 
@@ -83,7 +80,7 @@ def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
 
 
 def test_parquet_roundtrip(tmp_path: Path) -> None:
-    result = SemanticTableResult(
+    result = Result(
         data=_df(),
         provenance=Provenance(source="fred", params={"q": "unemployment"}),
         output_schema=_schema(),
@@ -91,7 +88,7 @@ def test_parquet_roundtrip(tmp_path: Path) -> None:
     path = tmp_path / "data.parquet"
     result.to_parquet(path)
     roundtrip = Result.from_parquet(path)
-    assert isinstance(roundtrip, SemanticTableResult)
+    assert roundtrip.output_schema is not None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"q": "unemployment"}
     pd.testing.assert_frame_equal(roundtrip.df, _df())

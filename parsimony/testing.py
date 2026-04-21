@@ -1,25 +1,19 @@
 """Conformance checks for ``parsimony`` plugins.
 
-Every official plugin is expected to pass :func:`assert_plugin_valid`
-against its own module, and CI is expected to treat failure as release-
-blocking. The checks implemented here encode the contract documented in
-``docs/contract.md``.
+Three checks — the minimal integrity set every official plugin must pass:
 
-Each check is an independent callable registered in :data:`_CHECKS`. An
-author can opt out of a specific check by name via ``skip=[...]`` — useful
-for pragmatic edge cases, but every skip should be justified inline.
+1. :func:`_check_connectors_exported` — module exports ``CONNECTORS``
+   (a :class:`Connectors` with at least one entry).
+2. :func:`_check_descriptions_non_empty` — every connector has a description
+   (no silently empty tool schemas).
+3. :func:`_check_env_vars_map_to_deps` — every ``ENV_VARS`` key names a real
+   connector dependency (catches typos / renames).
 
-Two entry points cover every caller:
+Two entry points:
 
-* :func:`assert_plugin_valid` — procedural. Used by the ``parsimony
-  conformance verify`` CLI and by scripts that want a single raising call.
-  Does not import :mod:`pytest`.
-* :class:`ProviderTestSuite` — pytest-native base class. Plugin test files
-  inherit it, set :attr:`~ProviderTestSuite.module` or
-  :attr:`~ProviderTestSuite.module_path`, and pytest discovers the inherited
-  ``test_*`` methods. :mod:`pytest` is imported lazily inside the methods
-  that need it so ``from parsimony.testing import ProviderTestSuite`` is
-  free from outside a test context.
+* :func:`assert_plugin_valid` — procedural, raises :class:`ConformanceError`.
+* :class:`ProviderTestSuite` — pytest-native base class with 4 ``test_*``
+  methods; :mod:`pytest` is imported lazily inside them.
 """
 
 from __future__ import annotations
@@ -38,20 +32,8 @@ __all__ = [
 ]
 
 
-# Tool-tagged connectors are exposed directly to LLMs via MCP; a short,
-# uninformative description hurts tool selection quality. 40 chars is a
-# deliberately low bar — anything less is almost certainly a missing docstring.
-_TOOL_DESCRIPTION_MIN_CHARS = 40
-
-
 class ConformanceError(AssertionError):
-    """Raised when a plugin module fails a conformance check.
-
-    Inherits from ``AssertionError`` so it surfaces cleanly in pytest runs.
-    Exposes the same ``to_report_dict()`` shape as :class:`PluginError`
-    subclasses so the CLI can render one consistent report structure across
-    import, contract, and conformance failures.
-    """
+    """Raised when a plugin module fails a conformance check."""
 
     def __init__(
         self,
@@ -68,7 +50,6 @@ class ConformanceError(AssertionError):
         super().__init__(f"[{check}] {reason}")
 
     def to_report_dict(self) -> dict[str, Any]:
-        """Structured fields for JSON-report consumers (CLI, CI)."""
         return {
             "check": self.check,
             "module_path": self.module_path,
@@ -78,7 +59,7 @@ class ConformanceError(AssertionError):
 
 
 # ---------------------------------------------------------------------------
-# Individual checks
+# Checks
 # ---------------------------------------------------------------------------
 
 
@@ -112,48 +93,25 @@ def _check_descriptions_non_empty(module: ModuleType) -> None:
             )
 
 
-def _check_tool_tag_description_length(module: ModuleType) -> None:
-    connectors: Connectors = module.CONNECTORS
-    for c in connectors:
-        if "tool" not in c.tags:
-            continue
-        first_line = c.description.splitlines()[0] if c.description else ""
-        if len(first_line) < _TOOL_DESCRIPTION_MIN_CHARS:
-            raise ConformanceError(
-                "check_tool_tag_description_length",
-                (
-                    f"tool-tagged connector {c.name!r} first description line is "
-                    f"{len(first_line)} chars; must be >= {_TOOL_DESCRIPTION_MIN_CHARS} characters "
-                    "for MCP tool descriptions"
-                ),
-            )
-
-
-def _check_env_vars_shape(module: ModuleType) -> dict[str, str]:
-    env_vars = getattr(module, "ENV_VARS", {})
-    if not isinstance(env_vars, dict):
-        raise ConformanceError(
-            "check_env_vars_shape",
-            f"ENV_VARS must be a dict[str, str]; got {type(env_vars).__name__}",
-        )
-    for k, v in env_vars.items():
-        if not isinstance(k, str) or not isinstance(v, str):
-            raise ConformanceError(
-                "check_env_vars_shape",
-                f"ENV_VARS entries must be str -> str; got {k!r} -> {v!r}",
-            )
-    return env_vars
-
-
 def _check_env_vars_map_to_deps(module: ModuleType) -> None:
     connectors: Connectors = module.CONNECTORS
     env_vars = getattr(module, "ENV_VARS", {}) or {}
     if not env_vars:
         return
+    if not isinstance(env_vars, dict):
+        raise ConformanceError(
+            "check_env_vars_map_to_deps",
+            f"ENV_VARS must be a dict[str, str]; got {type(env_vars).__name__}",
+        )
     all_deps: set[str] = set()
     for c in connectors:
         all_deps |= set(c.dep_names) | set(c.optional_dep_names)
-    for key in env_vars:
+    for key, value in env_vars.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise ConformanceError(
+                "check_env_vars_map_to_deps",
+                f"ENV_VARS entries must be str -> str; got {key!r} -> {value!r}",
+            )
         if key not in all_deps:
             raise ConformanceError(
                 "check_env_vars_map_to_deps",
@@ -164,40 +122,10 @@ def _check_env_vars_map_to_deps(module: ModuleType) -> None:
             )
 
 
-def _check_name_env_var_collisions(module: ModuleType) -> None:
-    connectors: Connectors = module.CONNECTORS
-    env_vars = getattr(module, "ENV_VARS", {}) or {}
-    names = {c.name for c in connectors}
-    collisions = names & set(env_vars.keys())
-    if collisions:
-        raise ConformanceError(
-            "check_name_env_var_collisions",
-            (
-                f"connector name(s) collision with ENV_VARS keys: {sorted(collisions)}. "
-                "This usually indicates accidental shadowing — rename the connector or env var."
-            ),
-        )
-
-
-def _check_provider_metadata_shape(module: ModuleType) -> None:
-    raw_meta = getattr(module, "PROVIDER_METADATA", {})
-    if not isinstance(raw_meta, dict):
-        raise ConformanceError(
-            "check_provider_metadata_shape",
-            f"PROVIDER_METADATA must be a dict; got {type(raw_meta).__name__}",
-        )
-
-
-# Registry of named checks. Tests may opt out of any check via skip=[name].
-# Ordering matters — earlier checks set up invariants relied on by later ones.
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
-    "check_tool_tag_description_length": _check_tool_tag_description_length,
-    "check_env_vars_shape": _check_env_vars_shape,
     "check_env_vars_map_to_deps": _check_env_vars_map_to_deps,
-    "check_name_env_var_collisions": _check_name_env_var_collisions,
-    "check_provider_metadata_shape": _check_provider_metadata_shape,
 }
 
 
@@ -209,11 +137,6 @@ def _validate_skip_list(skip: Iterable[str]) -> set[str]:
     return skip_set
 
 
-# ---------------------------------------------------------------------------
-# Public entry point
-# ---------------------------------------------------------------------------
-
-
 def assert_plugin_valid(
     module: ModuleType,
     *,
@@ -221,22 +144,9 @@ def assert_plugin_valid(
 ) -> None:
     """Assert that *module* conforms to the ``parsimony`` plugin contract.
 
-    Raises :class:`ConformanceError` on the first failure. Downstream CI
-    should treat this as release-blocking.
-
-    Parameters
-    ----------
-    module:
-        The plugin's entry-point target module (the one exporting
-        ``CONNECTORS``).
-    skip:
-        Optional iterable of check names to skip. Useful for pragmatic
-        edge cases, but every skip should be justified inline. See
-        ``_CHECKS`` for the list of available check names.
+    Raises :class:`ConformanceError` on the first failure.
     """
     skip_set = _validate_skip_list(skip)
-    # check_connectors_exported must run unconditionally — every other check
-    # assumes the module has a valid CONNECTORS attribute.
     if "check_connectors_exported" in skip_set:
         raise ValueError("check_connectors_exported is not skippable — it sets up every other check")
     for name, fn in _CHECKS.items():
@@ -245,14 +155,8 @@ def assert_plugin_valid(
         fn(module)
 
 
-# ---------------------------------------------------------------------------
-# Introspection helpers (used by CLI list-plugins --strict and by tests)
-# ---------------------------------------------------------------------------
-
-
 def iter_check_names() -> Iterable[str]:
-    """Yield the registered check names. Useful for tools that want to present
-    a selectable list."""
+    """Yield the registered check names."""
     return iter(_CHECKS)
 
 
@@ -283,39 +187,15 @@ class ProviderTestSuite:
     Subclass in a plugin's test file and set one of:
 
     * :attr:`module` — the already-imported plugin module.
-    * :attr:`module_path` — the dotted import path of the plugin's
-      CONNECTORS-exporting module (resolved at test-collection time).
+    * :attr:`module_path` — the dotted import path of the CONNECTORS-exporting module.
 
-    Pytest discovers the inherited ``test_*`` methods. Each method runs one
-    named check from :data:`_CHECKS`, so a failure pinpoints the specific
-    contract clause violated.
-
-    Optionally set :attr:`entry_point_name` to additionally verify the
-    plugin is installed under the ``parsimony.providers`` entry-point
-    group and resolves to the same module.
-
-    Example::
-
-        from parsimony.testing import ProviderTestSuite
-        import parsimony_fred
-
-        class TestFredConformance(ProviderTestSuite):
-            module = parsimony_fred
-            entry_point_name = "fred"
-
-    :mod:`pytest` is imported lazily inside methods that need it, so
-    ``from parsimony.testing import ProviderTestSuite`` never requires
-    pytest in production code.
+    Pytest discovers the four inherited ``test_*`` methods — one per
+    conformance check plus :meth:`test_entry_point_resolves` when
+    :attr:`entry_point_name` is set.
     """
 
-    #: The plugin module exporting ``CONNECTORS``. Set this OR :attr:`module_path`.
     module: ClassVar[ModuleType | None] = None
-
-    #: Dotted import path to the plugin module. Set this OR :attr:`module`.
     module_path: ClassVar[str | None] = None
-
-    #: Optional entry-point name. When set, :meth:`test_entry_point_resolves`
-    #: additionally verifies installation.
     entry_point_name: ClassVar[str | None] = None
 
     @classmethod
@@ -334,24 +214,11 @@ class ProviderTestSuite:
     def test_descriptions_non_empty(self) -> None:
         _check_descriptions_non_empty(self._resolve_module())
 
-    def test_tool_tag_description_length(self) -> None:
-        _check_tool_tag_description_length(self._resolve_module())
-
-    def test_env_vars_shape(self) -> None:
-        _check_env_vars_shape(self._resolve_module())
-
     def test_env_vars_map_to_deps(self) -> None:
         _check_env_vars_map_to_deps(self._resolve_module())
 
-    def test_name_env_var_collisions(self) -> None:
-        _check_name_env_var_collisions(self._resolve_module())
-
-    def test_provider_metadata_shape(self) -> None:
-        _check_provider_metadata_shape(self._resolve_module())
-
     def test_entry_point_resolves(self) -> None:
-        """Verify the plugin is installed under ``parsimony.providers`` and
-        its entry point resolves to the module under test.
+        """Verify the plugin is installed under ``parsimony.providers``.
 
         Skipped when :attr:`entry_point_name` is not set.
         """

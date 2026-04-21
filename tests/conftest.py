@@ -12,6 +12,6 @@ def _reset_plugin_discovery_cache() -> None:
     Monkeypatched entry-points in some tests can otherwise leak cached
     mock results into subsequent tests that expect the real registry.
     """
-    from parsimony.discovery import _scan
+    import parsimony.discovery as _discovery
 
-    _scan._clear_cache()
+    _discovery._clear_cache()

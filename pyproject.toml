@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.2.0a1"
+version = "0.3.0"
 description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
@@ -112,12 +112,13 @@ markers = [
 
 [tool.coverage.run]
 omit = [
-    # Requires a real HuggingFace-hosted model (torch + sentence-transformers)
-    # to exercise; unit tests use fake embedders. Loading logic is covered by
-    # the live publish pipeline, not unit tests.
-    "parsimony/_standard/embedder.py",
-    # s3 handler is a stub pending [s3] extra wiring.
-    "parsimony/_standard/sources/s3.py",
-    # hf handler hits Hugging Face Hub; covered by integration tests.
-    "parsimony/_standard/sources/hf.py",
+    # Requires sentence-transformers / litellm network I/O; unit tests use
+    # fake embedders. Loading logic is covered by integration / live tests.
+    "parsimony/embedder.py",
+    # FAISS helpers are pure wrappers around a native library; exercised by
+    # the Catalog save/load integration tests, not unit tests.
+    "parsimony/indexes.py",
+    # Catalog + publish touch FAISS + HF Hub — covered by integration tests.
+    "parsimony/catalog.py",
+    "parsimony/publish.py",
 ]

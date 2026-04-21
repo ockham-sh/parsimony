@@ -6,15 +6,26 @@
 [![CI](https://github.com/ockham-sh/parsimony/actions/workflows/test.yml/badge.svg)](https://github.com/ockham-sh/parsimony/actions)
 [![Docs](https://img.shields.io/badge/docs-parsimony.dev-blue)](https://docs.parsimony.dev)
 
-Typed, composable data connectors for Python. A small kernel; every data source is a separate package discovered through the entry-point contract.
+Typed, composable data connectors for Python. A small kernel; every data
+source is a separate package discovered through the entry-point contract.
 
 ## Why parsimony
 
-- **Light kernel.** `parsimony` ships as a small package (primitives, discovery, conformance, scaffolding). Data sources are separate PyPI distributions that plug in through a public contract.
-- **One calling convention.** `await connectors["name"](params)` across every data source. Parameters are Pydantic models; results carry provenance.
-- **Install what you need.** `pip install parsimony parsimony-fred parsimony-sdmx` — the kernel composes whatever is installed.
-- **Private connectors as a first-class path.** Customer-private and vendor-published plugins use the same entry-point contract as official ones; the kernel cannot tell them apart.
-- **MCP-ready.** Connectors are agent-addressable via the [Model Context Protocol](https://modelcontextprotocol.io/) — the server lives in the separate [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp) distribution.
+- **Light kernel.** `parsimony-core` ships as a small package (primitives,
+  discovery, conformance, catalog). Data sources are separate PyPI
+  distributions that plug in through a public contract.
+- **One calling convention.** `await connectors["name"](params)` across
+  every data source. Parameters are Pydantic models; results carry
+  provenance.
+- **Install what you need.** `pip install parsimony-core parsimony-fred
+  parsimony-sdmx` — the kernel composes whatever is installed.
+- **Private connectors as a first-class path.** Customer-private and
+  vendor-published plugins use the same entry-point contract as official
+  ones; the kernel cannot tell them apart.
+- **MCP-ready.** Connectors are agent-addressable via the
+  [Model Context Protocol](https://modelcontextprotocol.io/) — the server
+  lives in the separate [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp)
+  distribution.
 
 ## Install
 
@@ -29,11 +40,13 @@ pip install 'parsimony-core[standard,litellm]'   # + LiteLLMEmbeddingProvider (O
 pip install parsimony-mcp                        # MCP server (separate distribution)
 ```
 
-> Imports are always `from parsimony import ...`; the bare `parsimony` PyPI name is squatted, so the distribution ships as `parsimony-core`.
+> Imports are always `from parsimony import ...`; the bare `parsimony`
+> PyPI name is squatted, so the distribution ships as `parsimony-core`.
 
-Full list of officially-maintained connectors: [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
+Full list of officially-maintained connectors:
+[ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
 
-## 30-Second Example
+## 30-second example
 
 Fetch US unemployment rate from FRED:
 
@@ -53,15 +66,17 @@ asyncio.run(main())
 Or compose everything configured in the environment:
 
 ```python
-from parsimony import build_connectors_from_env
+from parsimony.discovery import build_connectors_from_env
 
 connectors = build_connectors_from_env()
 result = await connectors["fred_fetch"](series_id="UNRATE")
 ```
 
-`build_connectors_from_env()` walks every installed `parsimony.providers` entry point, binds dependencies from environment variables, and returns a single flat `Connectors` surface.
+`build_connectors_from_env()` walks every installed `parsimony.providers`
+entry point, binds dependencies from environment variables, and returns a
+single flat `Connectors` surface.
 
-## Core Primitives
+## Core primitives
 
 Three decorators, one runtime type:
 
@@ -75,7 +90,7 @@ Provenance on every result:
 result.provenance  # Provenance(source="fred", params={"series_id": "UNRATE"}, fetched_at=...)
 ```
 
-## The Plugin Contract
+## The plugin contract
 
 Every data source is a separate distribution implementing one contract:
 
@@ -83,18 +98,22 @@ Every data source is a separate distribution implementing one contract:
 # your-connector/pyproject.toml
 [project]
 name = "parsimony-yourname"
-dependencies = ["parsimony-core>=0.1.0,<0.3", "pydantic"]
-classifiers = ["Framework :: Parsimony :: Contract 1"]
+dependencies = ["parsimony-core>=0.3,<0.5", "pydantic"]
 
 [project.entry-points."parsimony.providers"]
 yourname = "parsimony_yourname"
 ```
 
-Your module exports `CONNECTORS` (required), plus optional `ENV_VARS` and `PROVIDER_METADATA`. The full spec is in [`docs/contract.md`](docs/contract.md) — it's the framework's load-bearing surface.
+Your module exports `CONNECTORS` (required), plus optional `ENV_VARS`,
+`PROVIDER_METADATA`, and `CATALOGS` / `RESOLVE_CATALOG` (if the plugin
+publishes catalogs). The full spec is in [`docs/contract.md`](docs/contract.md)
+— it's the framework's load-bearing surface.
 
-Building a private connector for your organisation? See [`docs/building-a-private-connector.md`](docs/building-a-private-connector.md) for the customer-private path.
+Building a private connector for your organisation? See
+[`docs/building-a-private-connector.md`](docs/building-a-private-connector.md)
+for the customer-private path.
 
-## Discovering Plugins
+## Discovering plugins
 
 ```python
 from parsimony.discovery import discovered_providers
@@ -106,23 +125,32 @@ for provider in discovered_providers():
 Or from the command line:
 
 ```bash
-parsimony list-plugins                  # what's installed
-parsimony conformance verify <package>  # validate against the contract
+parsimony list                  # what's installed + declared catalogs
+parsimony list --strict         # run conformance suite; exit non-zero on failure
+parsimony list --strict --json  # machine-readable artefact for security review
 ```
 
-`parsimony conformance verify` is the release-gate tool for every connector package and the security-review artefact for regulated-finance customers.
+`parsimony publish --provider NAME --target URL_TEMPLATE` builds one
+catalog per namespace declared on a plugin's `CATALOGS` export and pushes
+each to `URL_TEMPLATE.format(namespace=...)`. See
+[`docs/contract.md`](docs/contract.md) §6 for the publish shape.
 
 ## Security
 
-- **Allow-list by default.** Officially-maintained plugins (`parsimony-<name>` from [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)) load without opt-in. Non-official plugins require `PARSIMONY_TRUST_PLUGINS=<name1>,<name2>` to load, with a structured log entry for every decision.
-- **ABI gate.** The kernel reads each plugin's contract-version classifier before importing the module. Mismatches fail loudly rather than mid-fetch.
-- **Single trust root.** Official plugins publish from one signed manifest (`OFFICIAL_PLUGINS.json`) under one publishing identity.
+- **Credential redaction.** `parsimony.transport.HttpClient` redacts
+  sensitive query-param values (`api_key`, `token`, `password`, anything
+  ending in `_token`) in structured logs.
+- **No provenance leak.** Keyword-only dependencies bound via
+  `bind_deps()` are injected at the function-call boundary; they never
+  appear in `Provenance.params`, Parquet/Arrow serializations, or
+  `to_llm()` output.
 
 See [`SECURITY.md`](SECURITY.md) for disclosure.
 
-## MCP Server
+## MCP server
 
-The MCP server is a separate distribution, [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp):
+The MCP server is a separate distribution,
+[`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp):
 
 ```bash
 pip install parsimony-mcp
@@ -137,16 +165,20 @@ Full docs at [docs.parsimony.dev](https://docs.parsimony.dev):
 
 - [Quickstart](https://docs.parsimony.dev/quickstart/)
 - [Plugin contract (authoritative)](docs/contract.md)
+- [Building a new plugin](docs/guide-new-plugin.md)
 - [Building a private connector](docs/building-a-private-connector.md)
 - [Architecture](https://docs.parsimony.dev/architecture/)
-- [API Reference](https://docs.parsimony.dev/api-reference/)
+- [API reference](https://docs.parsimony.dev/api-reference/)
 
 ## Contributing
 
 - **Kernel changes** (this repo) — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
-- **New or updated connectors** — contribute to [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors). The conformance suite is the merge gate.
+- **New or updated connectors** — contribute to
+  [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
+  The conformance suite is the merge gate.
 
-The kernel does not accept provider-specific code. That's structurally enforced (see [`tests/test_kernel_purity.py`](tests/test_kernel_purity.py)).
+The kernel does not accept provider-specific code. That's structurally
+enforced (see [`tests/test_kernel_purity.py`](tests/test_kernel_purity.py)).
 
 ## License
 

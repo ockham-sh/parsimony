@@ -29,6 +29,13 @@ dependencies = [
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
     "tenacity>=9.0.0,<10",
+    # TOON encoder used by `parsimony.client` to emit a fetch summary to
+    # stderr, and by downstream agent contexts (parsimony-mcp bridge,
+    # parsimony-agents fetch_log) for token-efficient tabular previews.
+    "toon-format>=0.9.0b1,<0.10",
+    # `parsimony.load_dotenv()` applies a project-local .env so the agent's
+    # `python -c "..."` subprocess inherits API keys without `--env-file`.
+    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]

@@ -4,6 +4,60 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0]
+
+### Breaking changes (kernel refactor)
+
+- **Flat module layout.** Subpackages `bundles/`, `catalog/`, `_standard/`,
+  `discovery/`, `stores/`, `transport/`, `cli/` replaced by flat modules at
+  the `parsimony.*` top level: `catalog.py`, `embedder.py`, `indexes.py`,
+  `publish.py`, `discovery.py`, `stores.py`, `http.py`, `cli.py`.
+- **`BaseCatalog` ABC → `CatalogBackend` Protocol** (two methods:
+  `add(entries)` and `search(query, limit, namespaces=...)`). The
+  canonical `Catalog` class still ships but as the reference
+  implementation, not a nominal base.
+- **Catalog method renames.** `upsert()` → `add()`. `index_result()` →
+  `add_from_result()`. `entries_from_table_result()` → `entries_from_result()`.
+- **`Column(role=KEY).namespace` is now optional.** When omitted,
+  `Catalog.add_from_result()` uses the catalog's own `name` as the default.
+- **Catalog publishing.** `@enumerator(catalog=CatalogSpec(...))` replaced
+  by exporting `CATALOGS: list[(ns, fn)]` or `async def CATALOGS(): ...` on
+  the plugin module. Optional `RESOLVE_CATALOG(ns) -> fn | None` for
+  on-demand builds. `CatalogSpec` / `CatalogPlan` / `to_async` removed.
+- **`SemanticTableResult` merged into `Result`.** Results carry an optional
+  `output_schema: OutputConfig | None`; no separate subclass.
+- **Namespace templates removed.** `Column(namespace="x_{agency}")` and
+  `resolve_namespace_template()` are gone — plugin authors build namespace
+  strings directly in Python.
+- **`Namespace` annotation class removed.** Use
+  `Annotated[str, "ns:<name>"]` sentinel.
+- **`LazyNamespaceCatalog` removed.** Ships as a userland recipe instead.
+- **`ResultCallback` + `Connector.with_callback()` + `Connectors.with_callback()`
+  PRESERVED** — observer semantics unchanged (exceptions logged, not raised).
+- **Transport module removed.** `HttpClient` moves from
+  `parsimony.transport.http` to `parsimony.http`.
+  `parsimony.transport.json_helpers` deleted.
+- **CLI verbs: 4 → 2.** `parsimony list [--strict|--json]` (merges
+  `list-plugins` + `conformance verify` + `bundles list`) and
+  `parsimony publish --provider NAME --target 'url/{namespace}'` (replaces
+  `bundles build`). `--force` flag removed.
+- **Conformance checks: 7 → 3.** Kept: `connectors_exported`,
+  `descriptions_non_empty`, `env_vars_map_to_deps`. Dropped:
+  `tool_tag_description_length`, `env_vars_shape`,
+  `name_env_var_collisions`, `provider_metadata_shape`.
+- **Removed symbols.** `BundleNotFoundError`, `CONTRACT_VERSION`,
+  `parsimony-contract-v1` keyword reading, `ProviderCatalogURL`,
+  namespace manifest + resume + content hashing + upload retry.
+- **`EmbeddingProvider` ABC → Protocol.** Three bundled implementations
+  unchanged: `SentenceTransformerEmbedder`, `LiteLLMEmbeddingProvider`.
+- **`DataStore` alias removed.** Use `InMemoryDataStore` directly.
+
+### Metrics
+
+- Kernel LOC: ~4,035 (from ~5,838). 13 flat modules from 31 files across
+  8 subpackages.
+- Test suite: 215 tests, 87.97% coverage.
+
 ## [Unreleased]
 
 ### Breaking changes

@@ -1,8 +1,7 @@
 """Tests for :mod:`parsimony.testing` — the plugin conformance suite.
 
-The conformance suite is itself under test so that plugin authors can trust
-:func:`parsimony.testing.assert_plugin_valid` to actually catch contract
-violations.
+Three checks: ``check_connectors_exported``, ``check_descriptions_non_empty``,
+``check_env_vars_map_to_deps``.
 """
 
 from types import ModuleType
@@ -18,15 +17,10 @@ class _ToyParams(BaseModel):
     x: str = "y"
 
 
-# ---------------------------------------------------------------------------
-# Fixtures — build throw-away plugin modules
-# ---------------------------------------------------------------------------
-
-
 def _mk_connector(
     name: str,
     *,
-    doc: str = "Fetch a toy observation with a long enough description to please the tool-tag check.",
+    doc: str = "Fetch a toy observation.",
     tags: "list[str] | None" = None,
     has_dep: bool = True,
 ) -> Any:
@@ -50,15 +44,12 @@ def _make_module(
     *,
     connectors: Connectors | None = None,
     env_vars: dict[str, str] | None = None,
-    provider_metadata: dict[str, Any] | None = None,
 ) -> ModuleType:
     mod = ModuleType(name)
     if connectors is not None:
         mod.CONNECTORS = connectors  # type: ignore[attr-defined]
     if env_vars is not None:
         mod.ENV_VARS = env_vars  # type: ignore[attr-defined]
-    if provider_metadata is not None:
-        mod.PROVIDER_METADATA = provider_metadata  # type: ignore[attr-defined]
     return mod
 
 
@@ -72,7 +63,7 @@ def test_valid_plugin_passes() -> None:
 
     mod = _make_module(
         "pkg_good",
-        connectors=Connectors([_mk_connector("good_fetch", tags=["tool"])]),
+        connectors=Connectors([_mk_connector("good_fetch")]),
         env_vars={"api_key": "GOOD_API_KEY"},
     )
     assert_plugin_valid(mod)
@@ -89,7 +80,7 @@ def test_plugin_without_env_vars_passes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Contract violations
+# Check 1: connectors_exported
 # ---------------------------------------------------------------------------
 
 
@@ -118,26 +109,27 @@ def test_empty_connectors_fails() -> None:
         assert_plugin_valid(mod)
 
 
-def test_tool_tagged_short_description_fails() -> None:
+# ---------------------------------------------------------------------------
+# Check 2: descriptions_non_empty
+# ---------------------------------------------------------------------------
+
+
+def test_connector_with_empty_description_fails() -> None:
+    """A Connector with only whitespace in its description should fail."""
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
-    mod = _make_module(
-        "pkg_terse",
-        connectors=Connectors([_mk_connector("terse", doc="Too short.", tags=["tool"])]),
-    )
-    with pytest.raises(ConformanceError, match="40 characters"):
+    toy = _mk_connector("fine")
+    # Rewrite the frozen dataclass's description field through dict access —
+    # Connector is frozen so we go through object.__setattr__.
+    object.__setattr__(toy, "description", "   ")
+    mod = _make_module("pkg_blank", connectors=Connectors([toy]))
+    with pytest.raises(ConformanceError, match="empty description"):
         assert_plugin_valid(mod)
 
 
-def test_non_tool_short_description_passes() -> None:
-    """Only tool-tagged connectors enforce the ≥40 char rule."""
-    from parsimony.testing import assert_plugin_valid
-
-    mod = _make_module(
-        "pkg_fetch_terse",
-        connectors=Connectors([_mk_connector("terse", doc="Short.")]),
-    )
-    assert_plugin_valid(mod)
+# ---------------------------------------------------------------------------
+# Check 3: env_vars_map_to_deps
+# ---------------------------------------------------------------------------
 
 
 def test_env_var_not_mapping_to_dep_fails() -> None:
@@ -164,33 +156,20 @@ def test_env_vars_wrong_type_fails() -> None:
         assert_plugin_valid(mod)
 
 
-def test_name_env_var_collision_fails() -> None:
-    """Connector name shadowing an ENV_VARS key is usually a bug."""
-    from parsimony.testing import ConformanceError, assert_plugin_valid
-
-    mod = _make_module(
-        "pkg_collision",
-        connectors=Connectors([_mk_connector("api_key")]),
-        env_vars={"api_key": "API_KEY"},
-    )
-    with pytest.raises(ConformanceError, match="collision"):
-        assert_plugin_valid(mod)
-
-
 # ---------------------------------------------------------------------------
-# skip= escape hatch
+# skip=
 # ---------------------------------------------------------------------------
 
 
-def test_skip_allows_bypassing_specific_checks() -> None:
+def test_skip_env_vars_map_to_deps_allows_bypass() -> None:
     from parsimony.testing import assert_plugin_valid
 
     mod = _make_module(
-        "pkg_skip",
-        connectors=Connectors([_mk_connector("skip_me", doc="Short.", tags=["tool"])]),
+        "pkg_skip_envmap",
+        connectors=Connectors([_mk_connector("no_dep_fetch", has_dep=False)]),
+        env_vars={"api_key": "WHATEVER"},
     )
-    # Without skip this fails on tool-tag description length
-    assert_plugin_valid(mod, skip=["check_tool_tag_description_length"])
+    assert_plugin_valid(mod, skip=["check_env_vars_map_to_deps"])
 
 
 def test_skip_unknown_check_raises() -> None:
@@ -198,7 +177,15 @@ def test_skip_unknown_check_raises() -> None:
 
     mod = _make_module(
         "pkg_bad_skip",
-        connectors=Connectors([_mk_connector("good", tags=["tool"])]),
+        connectors=Connectors([_mk_connector("good")]),
     )
     with pytest.raises(ValueError, match="unknown"):
         assert_plugin_valid(mod, skip=["not_a_real_check"])
+
+
+def test_connectors_exported_not_skippable() -> None:
+    from parsimony.testing import assert_plugin_valid
+
+    mod = _make_module("pkg_skip_first", connectors=Connectors([_mk_connector("x")]))
+    with pytest.raises(ValueError, match="not skippable"):
+        assert_plugin_valid(mod, skip=["check_connectors_exported"])

@@ -1,7 +1,8 @@
 """Connector primitives and collection.
 
 :func:`connector` / :func:`enumerator` / :func:`loader` decorators produce
-:class:`Connector` instances.  :class:`Connectors` is an immutable composable collection.
+:class:`Connector` instances. :class:`Connectors` is an immutable composable
+collection.
 
 Typed exceptions live in :mod:`parsimony.errors`.
 """
@@ -11,7 +12,6 @@ from __future__ import annotations
 __all__ = [
     "Connector",
     "Connectors",
-    "Namespace",
     "ResultCallback",
     "connector",
     "enumerator",
@@ -27,42 +27,12 @@ from types import MappingProxyType
 from typing import Any, Union, get_type_hints
 
 import pandas as pd
-from pydantic import BaseModel, GetJsonSchemaHandler
-from pydantic_core import CoreSchema
+from pydantic import BaseModel
 
-from parsimony.catalog.models import normalize_code
 from parsimony.errors import ParseError
 from parsimony.result import ColumnRole, OutputConfig, Provenance, Result
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Namespace:
-    """Optional metadata on a connector param: valid values come from this catalog namespace.
-
-    Use with ``typing.Annotated``, e.g. ``Annotated[str, Namespace("fmp_symbols")]``.
-    The string is the catalog ``namespace`` field (lowercase snake_case).
-    """
-
-    name: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "name", normalize_code(self.name))
-
-    def __get_pydantic_core_schema__(self, source_type: Any, handler: Any) -> CoreSchema:
-        return handler(source_type)  # type: ignore[no-any-return]
-
-    def __get_pydantic_json_schema__(self, core_schema: CoreSchema, handler: GetJsonSchemaHandler) -> dict[str, Any]:
-        json_schema = handler(core_schema)
-        json_schema = handler.resolve_ref_schema(json_schema)
-        json_schema["namespace"] = self.name
-        return json_schema
-
-
-# ---------------------------------------------------------------------------
-# ResultCallback — post-fetch observer type, referenced by Connector below.
-# ---------------------------------------------------------------------------
 
 
 ResultCallback = Callable[[Result], Any]
@@ -70,11 +40,11 @@ ResultCallback = Callable[[Result], Any]
 
 **Observer semantics — exceptions are logged and swallowed.** The connector
 has already produced a valid :class:`Result`; a downstream side-effect
-failure (telemetry, audit log, notification) must not corrupt the caller's
-view. If you need fail-closed persistence (e.g. the caller must not see a
-successful ``Result`` when a write fails), call the persistence function
-directly from the connector or wrap the call site — do not rely on a
-post-hook.
+failure (telemetry, audit log, notification, agent summary) must not
+corrupt the caller's view. If you need fail-closed persistence (e.g. the
+caller must not see a successful :class:`Result` when a write fails), call
+the persistence function directly from the connector or wrap the call
+site — do not rely on a post-hook.
 """
 
 
@@ -93,7 +63,7 @@ async def _invoke_result_callbacks(
 
 
 # ---------------------------------------------------------------------------
-# Private helpers used by Connector and its factories.
+# Private helpers
 # ---------------------------------------------------------------------------
 
 
@@ -118,6 +88,21 @@ def _summarize_params(schema: Mapping[str, Any]) -> str:
         suffix = "" if name in required else "?"
         parts.append(f"{name}{suffix}: {typ}")
     return ", ".join(parts)
+
+
+def _namespace_hint_from_annotation(ann: Any) -> str | None:
+    """Extract a namespace hint from ``Annotated[str, "ns:<name>"]`` metadata.
+
+    Replaces the old ``Namespace`` annotation class with a plain string
+    sentinel. Returns ``None`` when no ``"ns:"``-prefixed metadata is present.
+    """
+    metadata = getattr(ann, "__metadata__", None)
+    if not metadata:
+        return None
+    for m in metadata:
+        if isinstance(m, str) and m.startswith("ns:"):
+            return m[3:] or None
+    return None
 
 
 def _parse_first_param_and_deps(
@@ -175,6 +160,27 @@ def _validate_bind_deps(
         raise TypeError(f"{name!r} received unexpected dependencies: {sorted(extra)}")
 
 
+def _namespace_hints_from_fn(fn: Callable[..., Any]) -> dict[str, str]:
+    """Return a mapping ``{param_name: namespace}`` from ``Annotated`` metadata.
+
+    Reads ``typing.get_type_hints(fn, include_extras=True)`` and looks for
+    ``"ns:<name>"`` strings in the metadata tuple (the new-shape successor to
+    ``Namespace("<name>")``).
+    """
+    hints = get_type_hints(fn, include_extras=True)
+    out: dict[str, str] = {}
+    for name, ann in hints.items():
+        ns = _namespace_hint_from_annotation(ann)
+        if ns is not None:
+            out[name] = ns
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Connector dataclass
+# ---------------------------------------------------------------------------
+
+
 @dataclass(frozen=True)
 class Connector:
     """Metadata + wrapped async function for a data connector (fetch/search/etc.).
@@ -194,6 +200,7 @@ class Connector:
     output_config: OutputConfig | None = None
     tags: tuple[str, ...] = ()
     properties: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
 
     def with_callback(self, callback: ResultCallback) -> Connector:
@@ -201,7 +208,7 @@ class Connector:
         return replace(self, _callbacks=(*self._callbacks, callback))
 
     def bind_deps(self, **deps: Any) -> Connector:
-        """Return a new :class:`Connector` with keyword-only dependencies pre-applied via :func:`functools.partial`."""
+        """Return a new :class:`Connector` with keyword-only dependencies pre-applied."""
         _validate_bind_deps(
             name=self.name,
             dep_names=self.dep_names,
@@ -221,15 +228,7 @@ class Connector:
         return await self.fn(params_model)
 
     def _wrap_result(self, raw: Any, params_model: BaseModel) -> Result:
-        """Wrap a bare return value in a :class:`Result`, applying output_config if set.
-
-        When the raw return is a DataFrame/Series with no ``output_config``,
-        it stays a raw :class:`Result` with tabular ``data`` but no
-        semantic table schema.
-
-        Always stamps provenance with the connector name and description so
-        downstream logging/UI shows which connector produced the result.
-        """
+        """Wrap a bare return value in a :class:`Result`, applying output_config if set."""
         if isinstance(raw, Result):
             return raw
         provenance = Provenance(
@@ -269,22 +268,7 @@ class Connector:
         params: BaseModel | None = None,
         **kwargs: Any,
     ) -> Result:
-        """Execute the connector with validated parameters.
-
-        Call with keyword arguments validated by the params model::
-
-            await conn(series_id="GDPC1")
-
-        Or pass an already-built Pydantic params instance::
-
-            await conn(FredFetchParams(series_id="GDPC1"))
-
-        Raw ``dict`` is not accepted at the boundary; use kwargs or a typed model.
-
-        If the underlying function returns a bare value (not a :class:`Result`),
-        the framework wraps it automatically with auto-constructed provenance.
-        Per-connector callbacks fire after a successful call.
-        """
+        """Execute the connector with validated parameters."""
         if self.dep_names:
             raise TypeError(
                 f"Connector {self.name!r} has unbound dependencies {sorted(self.dep_names)}; "
@@ -292,11 +276,6 @@ class Connector:
             )
         model = self._validate_params(params, **kwargs)
         raw = await self.call_raw(model)
-        # Narrow catch: ValueError from dtype coercion inside build_table_result
-        # is a legitimate "upstream data does not fit the declared schema"
-        # signal — ParseError is the right type. TypeError / AttributeError /
-        # etc. are programmer bugs in the connector's OutputConfig and
-        # propagate untouched so real tracebacks aren't masked.
         try:
             result = self._wrap_result(raw, model)
         except ValueError as exc:
@@ -306,11 +285,9 @@ class Connector:
         return result
 
     def describe(self) -> str:
-        """Multi-line human- and LLM-readable description. See :func:`describe_connector`."""
         return describe_connector(self)
 
     def to_llm(self) -> str:
-        """Compact token-efficient description for LLM system prompts. See :func:`llm_card`."""
         return llm_card(self)
 
     def __repr__(self) -> str:
@@ -318,17 +295,12 @@ class Connector:
 
 
 # ---------------------------------------------------------------------------
-# Presentation projections (pure functions of Connector state)
+# Presentation projections
 # ---------------------------------------------------------------------------
 
 
 def describe_connector(c: Connector) -> str:
-    """Multi-line human- and LLM-readable description of *c*.
-
-    Pure projection of the dataclass state — included description, parameters
-    with types and namespaces, unbound dependencies, output schema, tags,
-    properties. Used by documentation and tool introspection.
-    """
+    """Multi-line human- and LLM-readable description of *c*."""
     lines: list[str] = []
     header = f"Connector: {c.name}"
     lines.append(header)
@@ -347,7 +319,7 @@ def describe_connector(c: Connector) -> str:
             req_label = "required" if fname in required else "optional"
             line = f"  {fname}: {typ} ({req_label})"
             extras: list[str] = []
-            ns = spec.get("namespace")
+            ns = c.namespace_hints.get(fname)
             if ns:
                 extras.append(f"namespace={ns!r}")
             fdesc = spec.get("description")
@@ -387,11 +359,7 @@ def describe_connector(c: Connector) -> str:
 
 
 def llm_card(c: Connector) -> str:
-    """Compact token-efficient description of *c* for LLM system prompts.
-
-    Pure projection. No decorative separators — optimised for injection into
-    a system prompt.
-    """
+    """Compact token-efficient description of *c* for LLM system prompts."""
     lines: list[str] = []
     tag_suffix = f" [{', '.join(c.tags)}]" if c.tags else ""
     lines.append(f"### {c.name}{tag_suffix}")
@@ -409,7 +377,7 @@ def llm_card(c: Connector) -> str:
     for fname, spec in props.items():
         typ = _resolve_type(spec)
         opt = "?" if fname not in required else ""
-        ns = spec.get("namespace")
+        ns = c.namespace_hints.get(fname)
         ns_hint = f" [ns:{ns}]" if ns else ""
         fdesc = spec.get("description", "")
         desc_part = f" — {fdesc}" if fdesc else ""
@@ -439,7 +407,6 @@ def connector(
     output: OutputConfig | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
-    catalog: Any = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate an async data connector.
 
@@ -449,30 +416,9 @@ def connector(
         async def fred_search(params: FredSearchParams, *, api_key: str) -> Result:
             '''Keyword search for FRED economic time series.'''
 
-        @connector(output=FETCH_OUTPUT)
-        async def fred_fetch(params: FredFetchParams, *, api_key: str) -> Result:
-            '''Fetch FRED time series observations by series_id.'''
-
-    **Defaults:** ``name`` ← ``fn.__name__``; ``description`` ← stripped ``fn.__doc__`` (required:
-    set a docstring or pass ``description=``); param model ← type of the first parameter.
-
-    **Escape hatches:** ``name=`` / ``description=`` / ``params=`` when the implementation
-    function is internal (e.g. ``_fetch``) or when catalog-facing text must differ from the
-    docstring. ``tags`` and ``properties`` are optional registry metadata.
-
-    The wrapped function must be ``async``. Dependencies (HTTP clients, API keys) are
-    keyword-only after ``*`` and bound with :meth:`Connector.bind_deps`.
-
-    The ``catalog=`` kwarg is rejected here — only :func:`enumerator` may declare a
-    bundle catalog spec, since the wire format requires KEY+TITLE+METADATA shape.
+    **Defaults:** ``name`` ← ``fn.__name__``; ``description`` ← stripped
+    ``fn.__doc__`` (required); param model ← type of the first parameter.
     """
-    if catalog is not None:
-        # @connector must not accept catalog= — that kwarg is for @enumerator
-        # only. TypeError keeps connector.py decoupled from the bundles package.
-        raise TypeError(
-            "catalog= is only valid on @enumerator, not @connector. "
-            "Move the spec onto the enumerator that produces the catalog rows.",
-        )
 
     def decorator(fn: Callable[..., Any]) -> Connector:
         if not inspect.iscoroutinefunction(fn):
@@ -486,6 +432,7 @@ def connector(
         nm = name if name is not None else fn.__name__
         schema = _mapping_proxy(param_type.model_json_schema())
         tag_tup = tuple(tags) if tags else ()
+        ns_hints = _mapping_proxy(_param_namespace_hints(param_type))
         return Connector(
             name=nm,
             description=desc,
@@ -497,9 +444,27 @@ def connector(
             output_config=output,
             tags=tag_tup,
             properties=_mapping_proxy(properties),
+            namespace_hints=ns_hints,
         )
 
     return decorator
+
+
+def _param_namespace_hints(model: type[BaseModel]) -> dict[str, str]:
+    """Extract ``"ns:<name>"`` sentinels from field metadata on *model*.
+
+    Plugin authors write ``Annotated[str, "ns:fred"]`` on their param-model
+    fields; this surfaces that hint to the describe() / to_llm() projections.
+    """
+    out: dict[str, str] = {}
+    for field_name, field_info in model.model_fields.items():
+        for md in field_info.metadata:
+            if isinstance(md, str) and md.startswith("ns:"):
+                hint = md[3:]
+                if hint:
+                    out[field_name] = hint
+                break
+    return out
 
 
 def _validate_enumerator_output(output: OutputConfig) -> None:
@@ -514,11 +479,6 @@ def _validate_enumerator_output(output: OutputConfig) -> None:
     if len(key_cols) != 1:
         raise ValueError(
             f"Enumerator output must define exactly one KEY column for catalog indexing; found {len(key_cols)}"
-        )
-    key = key_cols[0]
-    if key.namespace is None or not str(key.namespace).strip():
-        raise ValueError(
-            "Enumerator KEY column must declare a non-empty namespace=... (required by Catalog.index_result)"
         )
     title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
     if len(title_cols) != 1:
@@ -556,15 +516,11 @@ def loader(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **loader** — same as :func:`connector`, with a stricter ``output`` contract.
+    """Decorate an async **loader** — stricter ``output`` contract than :func:`connector`.
 
-    Use for connectors whose job is to persist observation-level DATA columns keyed by
-    ``(namespace, code)`` from the KEY column, not catalog TITLE/METADATA. The returned value
-    is still a :class:`Connector` (``bind_deps``, ``with_callback``, ``Connectors`` composition).
-
-    **Validation:** ``output`` must have no TITLE or METADATA columns, at least one DATA column,
-    exactly one KEY column, and that KEY must set ``namespace=...`` for
-    :meth:`~parsimony.stores.data_store.InMemoryDataStore.load_result`.
+    **Validation:** ``output`` must have no TITLE or METADATA columns, at
+    least one DATA column, exactly one KEY column, and that KEY must set
+    ``namespace=...`` for :meth:`~parsimony.stores.InMemoryDataStore.load_result`.
     """
 
     _validate_loader_output(output)
@@ -587,72 +543,34 @@ def enumerator(
     params: type[BaseModel] | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
-    catalog: Any = None,
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **enumerator** — same as :func:`connector`, with a stricter ``output`` contract.
+    """Decorate an async **enumerator** — stricter ``output`` than :func:`connector`.
 
-    Use for connectors whose job is to list entities (key + title + metadata) for discovery
-    indexing, not to return observation-level DATA columns. The returned value is still a
-    :class:`Connector` (``bind_deps``, ``with_callback``, ``Connectors`` composition).
+    **Validation:** ``output`` must have no :attr:`~parsimony.result.ColumnRole.DATA`
+    columns, exactly one KEY column, and exactly one TITLE column. The KEY
+    column's ``namespace=`` may be omitted — the catalog supplies its own
+    ``name`` as the default at indexing time.
 
-    **Validation:** ``output`` must have no :attr:`~parsimony.result.ColumnRole.DATA` columns,
-    exactly one :attr:`~parsimony.result.ColumnRole.KEY` column, exactly one
-    :attr:`~parsimony.result.ColumnRole.TITLE` column, and that KEY must set
-    ``namespace=...`` for :meth:`~parsimony.catalog.catalog.Catalog.index_result`.
-
-    **Catalog publishing.** Pass ``catalog=`` to declare that this enumerator's output
-    should be packaged and published as an HF bundle. Accepts a typed
-    :class:`~parsimony.bundles.spec.CatalogSpec` instance::
-
-        @enumerator(
-            output=TREASURY_ENUMERATE_OUTPUT,
-            catalog=CatalogSpec.static(namespace="treasury"),
-        )
-        async def enumerate_treasury(params): ...
-
-    For dynamic plans (multiple namespaces), construct
-    ``CatalogSpec(plan=async_generator)`` directly. The spec is validated at
-    decorator import time (so plugin authors get fast feedback on malformed
-    declarations) and stored in ``properties["catalog"]`` for discovery by
-    ``parsimony.bundles``.
+    **Catalog publishing.** Publish this enumerator's output by exporting
+    ``CATALOGS = [("namespace", <this_enumerator>)]`` (or an async factory)
+    on the plugin module. See :func:`parsimony.publish.publish` for details.
     """
 
     _validate_enumerator_output(output)
     merged_tags = ["enumerator", *(tags or [])]
+    return connector(
+        name=name,
+        description=description,
+        params=params,
+        output=output,
+        tags=merged_tags,
+        properties=dict(properties or {}),
+    )
 
-    if catalog is None:
-        # No catalog spec — plain enumerator. Forward to `connector` directly;
-        # there is no per-call state, so `merged_properties` can be a single
-        # dict copy taken at decoration time.
-        return connector(
-            name=name,
-            description=description,
-            params=params,
-            output=output,
-            tags=merged_tags,
-            properties=dict(properties or {}),
-        )
 
-    def _wrap(fn: Callable[..., Any]) -> Connector:
-        # With a catalog spec we need the decorated function's module to
-        # validate plan provenance, so we resolve `from_decorator_kwargs`
-        # per-decoration (and build `merged_properties` fresh inside the
-        # closure to avoid leaking the catalog entry across decorations).
-        from parsimony.bundles.spec import from_decorator_kwargs
-
-        connector_module = getattr(fn, "__module__", "") or ""
-        merged_properties: dict[str, Any] = dict(properties or {})
-        merged_properties["catalog"] = from_decorator_kwargs(catalog, connector_module=connector_module)
-        return connector(
-            name=name,
-            description=description,
-            params=params,
-            output=output,
-            tags=merged_tags,
-            properties=merged_properties,
-        )(fn)
-
-    return _wrap
+# ---------------------------------------------------------------------------
+# Connectors collection
+# ---------------------------------------------------------------------------
 
 
 class Connectors:
@@ -660,10 +578,6 @@ class Connectors:
 
     Lookup by name: ``connectors["fred_fetch"]`` or ``connectors.get("fred_fetch")``.
     ``name in connectors`` is supported for membership checks.
-
-    :meth:`with_callback` adds a callback to every connector in the collection
-    (chainable). For per-connector hooks, call :meth:`Connector.with_callback`
-    before composing into a collection.
     """
 
     def __init__(self, items: Sequence[Connector]) -> None:
@@ -692,7 +606,6 @@ class Connectors:
         return len(self._items)
 
     def get(self, name: str) -> Connector | None:
-        """Return connector *name* if present, else ``None``."""
         for c in self._items:
             if c.name == name:
                 return c
@@ -711,46 +624,25 @@ class Connectors:
         return any(c.name == name for c in self._items)
 
     def names(self) -> list[str]:
-        """Sorted connector names."""
         return sorted(c.name for c in self._items)
 
     def __add__(self, other: Connectors) -> Connectors:
         return Connectors(list(self._items) + list(other._items))
 
     def describe(self) -> str:
-        """Return a table-of-contents summary of all connectors in this collection.
-
-        Shows name and one-line description for each connector. To get full
-        detail on an individual connector, call ``connectors["name"].describe()``.
-        """
         if not self._items:
             return "Connectors (empty)"
         lines: list[str] = [f"Connectors ({len(self._items)}):"]
         name_w = max(len(c.name) for c in self._items) + 2
         for i, c in enumerate(self._items, 1):
-            desc = c.description.splitlines()[0]  # first line only
+            desc = c.description.splitlines()[0]
             if len(desc) > 72:
                 desc = desc[:69] + "..."
             lines.append(f"  {i:2}. {c.name:<{name_w}} {desc}")
         return "\n".join(lines)
 
     def to_llm(self, *, header: str = "", heading: str = "Connectors") -> str:
-        """Return an LLM-ready prompt section describing all connectors.
-
-        Pure composition: emits ``header``, a ``## {heading} (N)`` line,
-        then each connector's ``to_llm()`` separated by blank lines. The
-        host (MCP server, agent runtime, …) owns the prose that frames
-        what these connectors are for — this method does not.
-
-        Parameters
-        ----------
-        header:
-            Host-supplied prose prepended to the output. Typically explains
-            how the agent should invoke connectors in its runtime.
-        heading:
-            Section heading for the list (``"Tools"`` for MCP,
-            ``"Connectors"`` for a code-execution host, …).
-        """
+        """Return an LLM-ready prompt section describing all connectors."""
         if not self._items and not header:
             return ""
 
@@ -761,7 +653,7 @@ class Connectors:
             parts.append(f"## {heading} ({len(self._items)})\n")
             for c in self._items:
                 parts.append(c.to_llm())
-                parts.append("")  # single blank line separator
+                parts.append("")
 
         return "\n".join(parts)
 
@@ -776,7 +668,7 @@ class Connectors:
         tags: Sequence[str] | None = None,
         **properties: Any,
     ) -> Connectors:
-        """Return connectors matching substring ``name`` and/or all ``tags`` and property key/values."""
+        """Return connectors matching substring ``name`` and/or all ``tags`` and property k/v."""
         out: list[Connector] = []
         for c in self._items:
             if name is not None and name.strip():

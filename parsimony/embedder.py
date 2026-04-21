@@ -1,9 +1,9 @@
 """Embedding providers used by the standard :class:`parsimony.Catalog`.
 
-:class:`EmbeddingProvider` is the contract every embedder satisfies. It is
-*not* a plugin axis — users instantiate one of the bundled implementations
-(or write their own) and pass it to ``Catalog("name", embedder=...)``. Two
-implementations ship out of the box:
+:class:`EmbeddingProvider` is the structural contract every embedder
+satisfies. It is *not* a plugin axis — users instantiate one of the bundled
+implementations (or write their own conforming class) and pass it to
+``Catalog("name", embedder=...)``. Two implementations ship out of the box:
 
 * :class:`SentenceTransformerEmbedder` — local model (``BAAI/bge-small-en-v1.5``
   by default). Requires ``parsimony-core[standard]``.
@@ -11,8 +11,8 @@ implementations ship out of the box:
   `litellm <https://github.com/BerriAI/litellm>`_ unified API (OpenAI,
   Gemini, Cohere, Voyage, …). Requires ``parsimony-core[litellm]``.
 
-Both modules import their heavy dependencies lazily so that ``import parsimony``
-does not pull torch or litellm into memory.
+Both classes import their heavy dependencies lazily so that
+``import parsimony`` does not pull torch or litellm into memory.
 """
 
 from __future__ import annotations
@@ -21,10 +21,9 @@ import asyncio
 import logging
 import math
 import time
-from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from parsimony.catalog.embedder_info import EmbedderInfo
+from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
     from sentence_transformers import SentenceTransformer
@@ -38,47 +37,47 @@ PARSIMONY_LITELLM_PACKAGE = "parsimony-core[litellm]"
 _LITELLM_BATCH_SIZE = 100
 
 
-class EmbeddingProvider(ABC):
+class EmbedderInfo(BaseModel):
+    """Persisted identity of an embedding model used for a catalog."""
+
+    model: str = Field(description="Model identifier (e.g. ``BAAI/bge-small-en-v1.5``).")
+    dim: int = Field(description="Vector dimension produced by the model.")
+    normalize: bool = Field(default=True, description="Whether vectors are L2-normalized at production time.")
+    package: str | None = Field(
+        default=None,
+        description=(
+            "Optional install hint surfaced in error messages when a catalog "
+            "is loaded without the dependencies needed to instantiate its "
+            "embedder (e.g. ``parsimony-core[standard]``). Not used for resolution."
+        ),
+    )
+
+
+@runtime_checkable
+class EmbeddingProvider(Protocol):
     """Text-to-vector embedding consumed by the standard catalog."""
 
     @property
-    @abstractmethod
     def dimension(self) -> int: ...
 
-    @abstractmethod
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embeddings for corpus documents (indexing)."""
         ...
 
-    @abstractmethod
     async def embed_query(self, query: str) -> list[float]:
         """Single embedding optimized for retrieval queries."""
         ...
 
-    @abstractmethod
     def info(self) -> EmbedderInfo:
         """Persisted identity for this embedder, used in catalog metadata."""
         ...
 
 
-class SentenceTransformerEmbedder(EmbeddingProvider):
+class SentenceTransformerEmbedder:
     """Wraps a :class:`sentence_transformers.SentenceTransformer` model.
 
     Default model is :data:`DEFAULT_MODEL`. The first attribute access that
     needs the model triggers loading; instantiation alone is cheap.
-
-    Parameters
-    ----------
-    model:
-        Hugging Face Hub identifier (``BAAI/bge-small-en-v1.5``,
-        ``intfloat/e5-small-v2``, etc.).
-    normalize:
-        L2-normalize output vectors. Recorded in :class:`EmbedderInfo` so the
-        loading catalog applies the same normalization at query time.
-    device:
-        Optional device override (``"cpu"``, ``"cuda"``, ``"mps"``, ...).
-    batch_size:
-        Encoding batch size.
     """
 
     def __init__(
@@ -106,7 +105,7 @@ class SentenceTransformerEmbedder(EmbeddingProvider):
     @property
     def dimension(self) -> int:
         dim = self._get_model().get_sentence_embedding_dimension()
-        if dim is None:  # pragma: no cover -- guard against models that don't report
+        if dim is None:  # pragma: no cover
             raise RuntimeError(
                 f"sentence-transformers model {self._model_name!r} did not report an embedding dimension"
             )
@@ -148,27 +147,12 @@ class SentenceTransformerEmbedder(EmbeddingProvider):
         return self._model
 
 
-class LiteLLMEmbeddingProvider(EmbeddingProvider):
+class LiteLLMEmbeddingProvider:
     """Hosted embeddings via the `litellm`_ unified API.
 
-    Use this when the catalog should call an embedding API (OpenAI,
-    Gemini, Cohere, Voyage, AWS Bedrock, …) instead of running a local
-    model. Identity (model + dimension) must be supplied at construction
-    time; this class does not introspect the remote endpoint.
-
-    Outputs are L2-normalized so they round-trip cleanly with the
-    inner-product FAISS index used by :class:`parsimony.Catalog`.
-
-    Parameters
-    ----------
-    model:
-        litellm model identifier (e.g. ``"openai/text-embedding-3-small"``,
-        ``"gemini/text-embedding-004"``, ``"cohere/embed-english-v3.0"``).
-    dimension:
-        Vector dimension produced by the model. Must match what the API
-        returns; mismatches raise :class:`ValueError`.
-    batch_size:
-        Maximum batch size per API call. Defaults to 100.
+    Identity (model + dimension) is supplied at construction time; this
+    class does not introspect the remote endpoint. Outputs are L2-normalized
+    so they round-trip cleanly with the inner-product FAISS index.
 
     .. _litellm: https://github.com/BerriAI/litellm
     """
@@ -220,8 +204,6 @@ class LiteLLMEmbeddingProvider(EmbeddingProvider):
             try:
                 response = await litellm.aembedding(**kwargs, dimensions=self._dimension)
             except TypeError:
-                # Some providers expose the parameter under a different name
-                # (Gemini accepts ``output_dimensionality``).
                 response = await litellm.aembedding(**kwargs, output_dimensionality=self._dimension)
         except Exception as exc:
             logger.error(
@@ -240,11 +222,6 @@ class LiteLLMEmbeddingProvider(EmbeddingProvider):
         return response
 
 
-# ----------------------------------------------------------------------
-# litellm helpers
-# ----------------------------------------------------------------------
-
-
 def _l2_normalize(vec: list[float]) -> list[float]:
     norm = math.sqrt(sum(x * x for x in vec))
     if norm <= 0:
@@ -253,12 +230,6 @@ def _l2_normalize(vec: list[float]) -> list[float]:
 
 
 def _validate_litellm_response(response: Any, expected_count: int, expected_dim: int) -> list[list[float]]:
-    """Extract and validate vectors from a litellm embedding response.
-
-    litellm normalizes responses to OpenAI shape: ``{"data": [{"embedding": [...]}]}``.
-    Newer versions return Pydantic ``Embedding`` objects; both attribute and
-    item access are supported here.
-    """
     items = response["data"] if isinstance(response, dict) else getattr(response, "data", None)
     if items is None:
         raise ValueError(f"Embedding response missing 'data'; got {type(response).__name__}")
@@ -276,3 +247,12 @@ def _validate_litellm_response(response: Any, expected_count: int, expected_dim:
             raise ValueError(f"Embedding item {i} has dimension {len(vec)}, expected {expected_dim}")
         out.append(list(vec))
     return out
+
+
+__all__ = [
+    "DEFAULT_MODEL",
+    "EmbedderInfo",
+    "EmbeddingProvider",
+    "LiteLLMEmbeddingProvider",
+    "SentenceTransformerEmbedder",
+]

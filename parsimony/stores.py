@@ -4,9 +4,6 @@ Single concrete implementation today, hence the explicit name. When a
 second implementation lands (SQLite, Parquet, …), extract a ``DataStore``
 Protocol from the public method set — Python's structural typing keeps
 that cheap and lets the Protocol reclaim the generic name.
-
-The ``DataStore`` alias below is kept for one cleanup cycle so downstream
-plugins importing ``from parsimony import DataStore`` keep working.
 """
 
 from __future__ import annotations
@@ -16,8 +13,8 @@ import logging
 import pandas as pd
 from pydantic import BaseModel
 
-from parsimony.catalog.models import catalog_key, normalize_code, normalize_entity_code
-from parsimony.result import ColumnRole, SemanticTableResult
+from parsimony.catalog import catalog_key, normalize_code, normalize_entity_code
+from parsimony.result import ColumnRole, Result
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +28,14 @@ class LoadResult(BaseModel):
     errors: int = 0
 
 
-def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, pd.DataFrame]]:
+def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
     """Extract (namespace, code, data_frame) per distinct KEY value.
 
-    Namespace comes from the KEY column's ``namespace=...``. The returned DataFrame contains
-    only DATA columns; KEY is consumed for identity.
+    Namespace comes from the KEY column's ``namespace=...``. The returned
+    DataFrame contains only DATA columns; KEY is consumed for identity.
     """
+    if table.output_schema is None:
+        raise ValueError("Result must have an output_schema for data loading")
     if not isinstance(table.data, (pd.DataFrame, pd.Series)):
         raise TypeError(f"load expected tabular data, got {type(table.data).__name__}")
     df = table.df
@@ -47,22 +46,21 @@ def _data_from_table_result(table: SemanticTableResult) -> list[tuple[str, str, 
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
         raise ValueError(
-            "SemanticTableResult must have exactly one KEY column in output_schema for "
-            f"data loading, found {len(key_cols)}"
+            f"Result must have exactly one KEY column in output_schema for data loading, found {len(key_cols)}"
         )
     key_col = key_cols[0]
     if not key_col.namespace:
         raise ValueError("KEY column must declare namespace=... on the schema for DataStore.load_result")
     key_name = key_col.name
     if key_name not in df.columns:
-        raise ValueError(f"SemanticTableResult missing KEY column {key_name!r}. Available: {list(df.columns)}")
+        raise ValueError(f"Result missing KEY column {key_name!r}. Available: {list(df.columns)}")
 
     data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
     if not data_names:
-        raise ValueError("SemanticTableResult must declare at least one DATA column in output_schema for data loading")
+        raise ValueError("Result must declare at least one DATA column in output_schema for data loading")
     for dn in data_names:
         if dn not in df.columns:
-            raise ValueError(f"SemanticTableResult missing DATA column {dn!r}. Available: {list(df.columns)}")
+            raise ValueError(f"Result missing DATA column {dn!r}. Available: {list(df.columns)}")
 
     ns = normalize_code(key_col.namespace)
     raw_codes = df[key_name].dropna().unique()
@@ -110,17 +108,17 @@ class InMemoryDataStore:
 
     async def load_result(
         self,
-        table: SemanticTableResult,
+        table: Result,
         *,
         force: bool = False,
     ) -> LoadResult:
         """Extract DATA columns from *table* and persist each entity.
 
-        With ``force=False``, skip entities already present in the store. With ``force=True``,
-        upsert all entities.
+        With ``force=False``, skip entities already present in the store. With
+        ``force=True``, upsert all entities.
         """
         result = LoadResult()
-        rows = _data_from_table_result(table)
+        rows = _data_from_result(table)
         result.total = len(rows)
         if not rows:
             return result
@@ -145,7 +143,4 @@ class InMemoryDataStore:
         return result
 
 
-# Transitional alias. When a second implementation arrives, replace this
-# line with a `DataStore` Protocol extracted from `InMemoryDataStore`'s
-# public methods.
-DataStore = InMemoryDataStore
+__all__ = ["InMemoryDataStore", "LoadResult"]

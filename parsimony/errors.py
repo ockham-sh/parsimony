@@ -12,16 +12,11 @@ Hierarchy::
     ├── ProviderError           (5xx / unexpected status)
     ├── EmptyDataError          (200 but no rows)
     └── ParseError              (200 but unparseable)
-
-:class:`BundleNotFoundError` is a separate tree — the bundle pipeline's
-"no published snapshot for this namespace yet" control-flow signal, which
-is not an error per se.
 """
 
 from __future__ import annotations
 
 __all__ = [
-    "BundleNotFoundError",
     "ConnectorError",
     "EmptyDataError",
     "ParseError",
@@ -37,8 +32,8 @@ from typing import Any
 class ConnectorError(Exception):
     """Base for all connector operational errors.
 
-    Every subclass carries ``provider: str`` so callers can identify the source
-    without parsing message strings.
+    Every subclass carries ``provider: str`` so callers can identify the
+    source without parsing message strings.
     """
 
     def __init__(self, message: str, *, provider: str) -> None:
@@ -47,11 +42,7 @@ class ConnectorError(Exception):
 
 
 class UnauthorizedError(ConnectorError):
-    """Invalid or missing API credentials (HTTP 401/403).
-
-    This is a configuration error — the credentials are wrong or absent.
-    Do not retry; fix the credentials.
-    """
+    """Invalid or missing API credentials (HTTP 401/403). Do not retry."""
 
     def __init__(self, provider: str, message: str | None = None) -> None:
         msg = message or f"{provider}: invalid or missing API credentials"
@@ -59,11 +50,7 @@ class UnauthorizedError(ConnectorError):
 
 
 class PaymentRequiredError(ConnectorError):
-    """The user's API plan does not permit access to this endpoint (HTTP 402).
-
-    This is a terminal error — never retry.  The user must upgrade their plan
-    or use a different connector.
-    """
+    """User's API plan does not permit access to this endpoint (HTTP 402). Terminal."""
 
     def __init__(self, provider: str, message: str | None = None) -> None:
         msg = message or f"{provider}: your plan is not eligible for this data request"
@@ -71,12 +58,10 @@ class PaymentRequiredError(ConnectorError):
 
 
 class RateLimitError(ConnectorError):
-    """The provider returned a rate-limit response (HTTP 429).
+    """Provider rate-limit response (HTTP 429).
 
-    Callers should check :attr:`quota_exhausted`:
-
-    * ``False`` — burst limit; may retry after :attr:`retry_after` seconds.
-    * ``True`` — billing-period quota exhausted; do not retry.
+    Check :attr:`quota_exhausted`: ``False`` = burst limit (retry after
+    :attr:`retry_after`), ``True`` = billing-period quota (do not retry).
     """
 
     def __init__(
@@ -107,7 +92,7 @@ class RateLimitError(ConnectorError):
 
 
 class ProviderError(ConnectorError):
-    """The remote provider returned an HTTP error (5xx or unexpected status).
+    """Remote provider returned an HTTP error (5xx or unexpected status).
 
     Carries ``status_code`` for programmatic handling.
     """
@@ -126,8 +111,7 @@ class ProviderError(ConnectorError):
 class EmptyDataError(ConnectorError):
     """Provider returned HTTP 200 but the result set is empty.
 
-    This is a valid operational outcome — the query succeeded but has no data.
-    Carries ``query_params`` for diagnostic context in batch pipelines.
+    Valid operational outcome. Carries ``query_params`` for diagnostic context.
     """
 
     def __init__(
@@ -142,25 +126,8 @@ class EmptyDataError(ConnectorError):
 
 
 class ParseError(ConnectorError):
-    """Provider returned HTTP 200 but the response could not be parsed.
-
-    The provider's response format was unexpected or malformed.
-    """
+    """Provider returned HTTP 200 but the response could not be parsed."""
 
     def __init__(self, provider: str, message: str | None = None) -> None:
         msg = message or f"{provider}: failed to parse provider response"
         super().__init__(msg, provider=provider)
-
-
-class BundleNotFoundError(Exception):
-    """The requested namespace has no bundle published at the target URL.
-
-    Distinct from connector errors because callers catch it as a non-error
-    control-flow signal — e.g. "no catalog bundle yet, fall back to the live
-    enumerator." Bundle-publishing failures surface as plain exceptions from
-    the underlying transport (``httpx.HTTPError``, ``FileNotFoundError``).
-    """
-
-    def __init__(self, url: str, message: str | None = None) -> None:
-        self.url = url
-        super().__init__(message or f"no catalog bundle at {url!r}")

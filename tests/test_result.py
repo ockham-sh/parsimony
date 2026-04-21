@@ -12,7 +12,6 @@ from parsimony.result import (
     OutputConfig,
     Provenance,
     Result,
-    SemanticTableResult,
 )
 
 
@@ -33,7 +32,8 @@ def test_build_table_result_rename_and_dtypes() -> None:
     )
     prov = Provenance(source="test", params={"series_id": "S"})
     r = cfg.build_table_result(raw, provenance=prov, params={"series_id": "S"})
-    assert isinstance(r, SemanticTableResult)
+    assert isinstance(r, Result)
+    assert r.output_schema is not None
     assert list(r.data.columns) == ["d", "value", "meta"]
     assert r.provenance.properties.get("metadata") is None
     assert len(r.metadata_columns) == 1
@@ -127,7 +127,6 @@ def test_result_from_dataframe_infers_data_columns() -> None:
     prov = Provenance(source="test", params={"k": "v"})
     r = Result.from_dataframe(df, prov)
     assert isinstance(r, Result)
-    assert not isinstance(r, SemanticTableResult)
     assert list(r.data.columns) == ["a", "b"]
     assert r.output_schema is None
     assert r.columns == []
@@ -149,7 +148,8 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
         ]
     )
     t = r.to_table(schema)
-    assert isinstance(t, SemanticTableResult)
+    assert isinstance(t, Result)
+    assert t.output_schema is not None
     roles = {c.name: c.role for c in t.output_schema.columns}
     assert roles["obs"] == ColumnRole.DATA
 

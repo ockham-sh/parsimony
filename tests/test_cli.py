@@ -1,4 +1,4 @@
-"""Tests for ``parsimony list-plugins`` CLI subcommand."""
+"""Tests for the ``parsimony`` CLI (``list`` and ``publish`` verbs)."""
 
 from __future__ import annotations
 
@@ -34,28 +34,27 @@ def _make_module(path: str, **attrs: Any) -> ModuleType:
 
 
 # ---------------------------------------------------------------------------
-# run_list_plugins — programmatic entry point
+# list
 # ---------------------------------------------------------------------------
 
 
-def test_list_plugins_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli.list_plugins import run
-    from parsimony.discovery import _scan as discovery
+def test_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
     mod = _make_module(
         "pkg_foo_cli",
         CONNECTORS=Connectors([_toy("foo_fetch")]),
         ENV_VARS={"api_key": "FOO_API_KEY"},
-        PROVIDER_METADATA={"homepage": "https://example.com"},
     )
     ep = EntryPoint(name="foo", value="pkg_foo_cli", group="parsimony.providers")
-
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
     monkeypatch.setattr(discovery, "_import_module", lambda path: mod)
     monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-foo", "0.1.0"))
+    monkeypatch.setenv("FOO_API_KEY", "present")
     discovery._clear_cache()
 
-    exit_code = run(json_output=True, env={"FOO_API_KEY": "present"})
+    exit_code = main(["list", "--json"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
@@ -71,11 +70,12 @@ def test_list_plugins_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytes
     assert entry["env_vars_present"] == ["FOO_API_KEY"]
     assert entry["env_vars_missing"] == []
     assert entry["conformance"] == "pass"
+    assert entry["catalogs"] == []
 
 
-def test_list_plugins_reports_missing_env_vars(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli.list_plugins import run
-    from parsimony.discovery import _scan as discovery
+def test_list_reports_missing_env_vars(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
     mod = _make_module(
         "pkg_missing_env",
@@ -86,9 +86,10 @@ def test_list_plugins_reports_missing_env_vars(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
     monkeypatch.setattr(discovery, "_import_module", lambda path: mod)
     monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-missing", "0.1.0"))
+    monkeypatch.delenv("MISSING_KEY", raising=False)
     discovery._clear_cache()
 
-    exit_code = run(json_output=True, env={})  # MISSING_KEY absent
+    exit_code = main(["list", "--json"])
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
 
@@ -97,9 +98,9 @@ def test_list_plugins_reports_missing_env_vars(monkeypatch: pytest.MonkeyPatch, 
     assert payload[0]["env_vars_missing"] == ["MISSING_KEY"]
 
 
-def test_list_plugins_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli.list_plugins import run
-    from parsimony.discovery import _scan as discovery
+def test_list_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
     mod = _make_module(
         "pkg_table_test",
@@ -111,84 +112,121 @@ def test_list_plugins_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pyte
     monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-table", "0.1.0"))
     discovery._clear_cache()
 
-    exit_code = run(json_output=False, env={})
+    exit_code = main(["list"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "table" in captured.out
-    assert "pkg_table_test" in captured.out
 
 
-def test_list_plugins_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli.list_plugins import run
-    from parsimony.discovery import _scan as discovery
+def test_list_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()
 
-    exit_code = run(json_output=False, env={})
+    exit_code = main(["list"])
     captured = capsys.readouterr()
 
     assert exit_code == 0
     assert "No parsimony plugins" in captured.out or "0 plugins" in captured.out
 
 
-def test_list_plugins_reports_conformance_failure(
+def test_list_reports_conformance_pass_without_strict_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
-    from parsimony.cli.list_plugins import run
-    from parsimony.discovery import _scan as discovery
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
-    # Broken: ENV_VARS key has no matching dep
     mod = _make_module(
-        "pkg_broken_conformance",
+        "pkg_bad_conformance",
         CONNECTORS=Connectors([_toy("ok_fetch")]),
-        ENV_VARS={"ghost_dep": "GHOST_KEY"},
+        ENV_VARS={"ghost_dep": "GHOST_KEY"},  # ghost_dep is not a real connector dep
     )
-    ep = EntryPoint(name="broken", value="pkg_broken_conformance", group="parsimony.providers")
+    ep = EntryPoint(name="broken", value="pkg_bad_conformance", group="parsimony.providers")
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
     monkeypatch.setattr(discovery, "_import_module", lambda path: mod)
     monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-broken", "0.1.0"))
     discovery._clear_cache()
 
-    exit_code = run(json_output=True, env={})
+    exit_code = main(["list", "--json"])
     captured = capsys.readouterr()
     payload = json.loads(captured.out)
 
     assert payload[0]["conformance"] == "fail"
-    # list-plugins is inventory-only; conformance failures are reported in
-    # the payload but do NOT affect exit code. Use `conformance verify` for gating.
     assert exit_code == 0
 
 
-# ---------------------------------------------------------------------------
-# Entry-point wiring via main()
-# ---------------------------------------------------------------------------
-
-
-def test_main_dispatches_to_list_plugins(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+def test_list_strict_exits_nonzero_on_conformance_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    import parsimony.discovery as discovery
     from parsimony.cli import main
-    from parsimony.discovery import _scan as discovery
+
+    mod = _make_module(
+        "pkg_bad_conformance_strict",
+        CONNECTORS=Connectors([_toy("ok_fetch")]),
+        ENV_VARS={"ghost_dep": "GHOST_KEY"},
+    )
+    ep = EntryPoint(name="broken_strict", value="pkg_bad_conformance_strict", group="parsimony.providers")
+    monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
+    monkeypatch.setattr(discovery, "_import_module", lambda path: mod)
+    monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-broken", "0.1.0"))
+    discovery._clear_cache()
+
+    exit_code = main(["list", "--json", "--strict"])
+    assert exit_code == 1
+
+
+def test_list_includes_static_catalog_namespaces(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
+
+    toy = _toy("fred_enumerate")
+    mod = _make_module(
+        "pkg_with_catalogs",
+        CONNECTORS=Connectors([toy]),
+        CATALOGS=[("fred", toy)],
+    )
+    ep = EntryPoint(name="fred", value="pkg_with_catalogs", group="parsimony.providers")
+    monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [ep])
+    monkeypatch.setattr(discovery, "_import_module", lambda path: mod)
+    monkeypatch.setattr(discovery, "_distribution_for_entry_point", lambda _ep: ("parsimony-fred", "0.1.0"))
+    discovery._clear_cache()
+
+    exit_code = main(["list", "--json"])
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert exit_code == 0
+    assert payload[0]["catalogs"] == ["fred"]
+
+
+# ---------------------------------------------------------------------------
+# publish
+# ---------------------------------------------------------------------------
+
+
+def test_publish_rejects_target_without_namespace_placeholder(capsys: pytest.CaptureFixture) -> None:
+    from parsimony.cli import main
+
+    exit_code = main(["publish", "--provider", "fred", "--target", "file:///tmp/catalog"])
+    captured = capsys.readouterr()
+    assert exit_code == 2
+    assert "{namespace}" in captured.err
+
+
+def test_publish_unknown_provider(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
+    import parsimony.discovery as discovery
+    from parsimony.cli import main
 
     monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
     discovery._clear_cache()
 
-    exit_code = main(["list-plugins"])
+    exit_code = main(["publish", "--provider", "bogus", "--target", "file:///tmp/{namespace}"])
     captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert captured.out  # some output emitted
-
-
-def test_main_json_flag(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli import main
-    from parsimony.discovery import _scan as discovery
-
-    monkeypatch.setattr(discovery, "_entry_points", lambda *, group: [])
-    discovery._clear_cache()
-
-    exit_code = main(["list-plugins", "--json"])
-    captured = capsys.readouterr()
-
-    assert exit_code == 0
-    assert json.loads(captured.out) == []
+    assert exit_code == 2
+    assert "bogus" in captured.err

@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, Namespace, connector
+from parsimony.connector import Connectors, connector
 from parsimony.result import Column, ColumnRole, OutputConfig
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ class SimpleParams(BaseModel):
 
 
 class FetchParams(BaseModel):
-    series_id: Annotated[str, Namespace("fred_series")] = Field(..., description="FRED series identifier")
+    series_id: Annotated[str, "ns:fred_series"] = Field(..., description="FRED series identifier")
     start_date: str | None = Field(None, description="Start date (YYYY-MM-DD)")
 
 

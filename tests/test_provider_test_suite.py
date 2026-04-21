@@ -1,9 +1,4 @@
-"""Tests for the pytest-native ProviderTestSuite base class.
-
-We exercise the base class by subclassing it against stub modules, then
-collecting+running the inherited test_* methods via pytest's programmatic
-API.
-"""
+"""Tests for the pytest-native ProviderTestSuite base class."""
 
 from __future__ import annotations
 
@@ -18,10 +13,6 @@ from pydantic import BaseModel
 from parsimony.connector import Connectors, connector
 from parsimony.result import Provenance, Result
 from parsimony.testing import ConformanceError, ProviderTestSuite
-
-# ---------------------------------------------------------------------------
-# Fixture plugin modules
-# ---------------------------------------------------------------------------
 
 
 class _Params(BaseModel):
@@ -38,7 +29,7 @@ async def _demo_fn(params: _Params) -> Result:
 def _make_connector(
     name: str,
     *,
-    description: str = "A connector with a sufficiently long description for MCP.",
+    description: str = "A connector with a sufficiently long description.",
     tags: list[str] | None = None,
 ) -> Any:
     return connector(
@@ -54,25 +45,22 @@ def _make_module(
     *,
     connectors: list[Any],
     env_vars: dict[str, str] | None = None,
-    provider_metadata: dict[str, Any] | None = None,
 ) -> types.ModuleType:
     mod = types.ModuleType(name)
     mod.CONNECTORS = Connectors(connectors)
     if env_vars is not None:
         mod.ENV_VARS = env_vars
-    if provider_metadata is not None:
-        mod.PROVIDER_METADATA = provider_metadata
     sys.modules[name] = mod
     return mod
 
 
 # ---------------------------------------------------------------------------
-# Happy path
+# Happy path — all three checks pass
 # ---------------------------------------------------------------------------
 
 
 def test_happy_path_suite_passes_all_checks() -> None:
-    c = _make_connector("demo_fetch", tags=["tool"])
+    c = _make_connector("demo_fetch")
     _make_module("test_happy_module", connectors=[c])
 
     class Suite(ProviderTestSuite):
@@ -81,11 +69,7 @@ def test_happy_path_suite_passes_all_checks() -> None:
     s = Suite()
     s.test_connectors_exported()
     s.test_descriptions_non_empty()
-    s.test_tool_tag_description_length()
-    s.test_env_vars_shape()
     s.test_env_vars_map_to_deps()
-    s.test_name_env_var_collisions()
-    s.test_provider_metadata_shape()
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +92,7 @@ def test_module_attribute_overrides_module_path() -> None:
     class Suite(ProviderTestSuite):
         module = mod
 
-    Suite().test_connectors_exported()  # does not import by path
+    Suite().test_connectors_exported()
 
 
 # ---------------------------------------------------------------------------
@@ -127,17 +111,6 @@ def test_missing_connectors_export_raises_conformance_error() -> None:
         Suite().test_connectors_exported()
 
 
-def test_tool_short_description_fails() -> None:
-    c = _make_connector("short_tool", description="too short", tags=["tool"])
-    _make_module("test_short_tool", connectors=[c])
-
-    class Suite(ProviderTestSuite):
-        module_path = "test_short_tool"
-
-    with pytest.raises(ConformanceError, match="tool-tagged"):
-        Suite().test_tool_tag_description_length()
-
-
 def test_env_var_not_mapping_to_dep_fails() -> None:
     c = _make_connector("demo_fetch")
     _make_module(
@@ -153,23 +126,8 @@ def test_env_var_not_mapping_to_dep_fails() -> None:
         Suite().test_env_vars_map_to_deps()
 
 
-def test_provider_metadata_wrong_type_fails() -> None:
-    c = _make_connector("demo_fetch")
-    _make_module(
-        "test_bad_meta",
-        connectors=[c],
-        provider_metadata="not a dict",  # type: ignore[arg-type]
-    )
-
-    class Suite(ProviderTestSuite):
-        module_path = "test_bad_meta"
-
-    with pytest.raises(ConformanceError, match="PROVIDER_METADATA"):
-        Suite().test_provider_metadata_shape()
-
-
 # ---------------------------------------------------------------------------
-# Entry-point path
+# Entry-point resolution method
 # ---------------------------------------------------------------------------
 
 
@@ -179,8 +137,6 @@ def test_entry_point_skips_when_name_not_set() -> None:
 
     class Suite(ProviderTestSuite):
         module_path = "test_ep_skip"
-        # entry_point_name = None  (default)
 
-    # Method calls pytest.skip — pytest raises Skipped internally.
     with pytest.raises(pytest.skip.Exception):
         Suite().test_entry_point_resolves()

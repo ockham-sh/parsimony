@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from parsimony.catalog.models import (
+from parsimony.catalog import (
     SeriesEntry,
     normalize_code,
     normalize_entity_code,

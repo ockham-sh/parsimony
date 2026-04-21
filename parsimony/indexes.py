@@ -22,21 +22,12 @@ RRF_K = 60
 
 
 def tokenize(text: str) -> list[str]:
-    """Whitespace + lowercase tokenization for BM25.
-
-    Deliberately simple. Tokenization is in-process only: the BM25 index is
-    rebuilt from the parquet's text columns on load, so the choice is not
-    part of the on-disk contract.
-    """
+    """Whitespace + lowercase tokenization for BM25."""
     return text.lower().split()
 
 
 def build_faiss(matrix: np.ndarray, *, dim: int, normalize: bool) -> faiss.Index:
-    """Build a FAISS index from *matrix* (shape ``(n, dim)``).
-
-    Picks ``IndexFlatIP`` for small catalogs and ``IndexHNSWFlat`` above
-    :data:`HNSW_THRESHOLD` rows.
-    """
+    """Build a FAISS index from *matrix* (shape ``(n, dim)``)."""
     import faiss
 
     if normalize:
@@ -112,3 +103,16 @@ def rrf_fuse(*rankings: list[tuple[int, int]]) -> list[tuple[int, float]]:
         for idx, rank in ranking:
             scored[idx] = scored.get(idx, 0.0) + 1.0 / (RRF_K + rank + 1)
     return sorted(scored.items(), key=lambda kv: kv[1], reverse=True)
+
+
+__all__ = [
+    "HNSW_THRESHOLD",
+    "RRF_K",
+    "bm25_query",
+    "build_faiss",
+    "faiss_query",
+    "read_faiss",
+    "rrf_fuse",
+    "tokenize",
+    "write_faiss",
+]

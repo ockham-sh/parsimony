@@ -1,19 +1,18 @@
 """Parsimony — typed connectors and a hybrid-search catalog for financial data.
 
-Public surface lives at the top level. Heavy symbols (``Catalog`` and its FAISS
-/ sentence-transformers / huggingface-hub stack) load lazily on first access
+Flat module layout. Heavy symbols (:class:`Catalog` and its FAISS /
+sentence-transformers / huggingface-hub stack) load lazily on first access
 via :pep:`562` so that ``import parsimony`` stays cheap.
 
 * :class:`Connectors` is an immutable collection of :class:`Connector` objects;
   callers use ``await connectors[name](**kwargs)``. Each connector validates
   its input through a Pydantic param model.
-* :class:`BaseCatalog` is the catalog ABC. :class:`Catalog` is the canonical
-  implementation (Parquet rows + FAISS vectors + BM25 keywords + RRF) and is
-  loaded lazily.
+* :class:`CatalogBackend` is the structural contract every catalog matches.
+  :class:`Catalog` is the canonical implementation (Parquet rows + FAISS
+  vectors + BM25 keywords + RRF) and is loaded lazily.
 * Connector plugins are discovered through the ``parsimony.providers``
-  entry-point group (see :mod:`parsimony.discovery`). The catalog has no
-  plugin axis: custom backends subclass :class:`BaseCatalog` directly.
-* ``CONTRACT_VERSION`` is the plugin ABI pin; see ``docs/contract.md``.
+  entry-point group. Catalog publishing reads ``CATALOGS`` / optional
+  ``RESOLVE_CATALOG`` on the plugin module — see :func:`parsimony.publish.publish`.
 """
 
 from __future__ import annotations
@@ -21,21 +20,9 @@ from __future__ import annotations
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
-from parsimony.catalog.catalog import BaseCatalog
-from parsimony.catalog.embedder_info import EmbedderInfo
-from parsimony.catalog.models import (
-    IndexResult,
-    SeriesEntry,
-    SeriesMatch,
-    catalog_key,
-    code_token,
-    normalize_code,
-    series_match_from_entry,
-)
 from parsimony.connector import (
     Connector,
     Connectors,
-    Namespace,
     ResultCallback,
     connector,
     enumerator,
@@ -56,22 +43,16 @@ from parsimony.result import (
     OutputConfig,
     Provenance,
     Result,
-    SemanticTableResult,
 )
-from parsimony.stores.data_store import DataStore, InMemoryDataStore, LoadResult
+from parsimony.stores import InMemoryDataStore, LoadResult
 
 try:
     __version__ = version("parsimony-core")
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 
-#: Plugin contract ABI version. Bumped only when a stable symbol breaks; see
-#: ``docs/contract.md`` §2.
-CONTRACT_VERSION = "1"
 
 __all__ = [
-    # --- Meta ---
-    "CONTRACT_VERSION",
     # --- Connector primitives ---
     "Connector",
     "Connectors",
@@ -79,17 +60,15 @@ __all__ = [
     "connector",
     "enumerator",
     "loader",
-    "Namespace",
     # --- Result system ---
     "Column",
     "ColumnRole",
     "OutputConfig",
     "Provenance",
     "Result",
-    "SemanticTableResult",
-    # --- Catalog ---
-    "BaseCatalog",
+    # --- Catalog (lazy) ---
     "Catalog",
+    "CatalogBackend",
     "EmbedderInfo",
     "EmbeddingProvider",
     "IndexResult",
@@ -97,8 +76,13 @@ __all__ = [
     "SentenceTransformerEmbedder",
     "SeriesEntry",
     "SeriesMatch",
+    "catalog_key",
+    "code_token",
+    "normalize_code",
+    "normalize_entity_code",
+    "parse_catalog_url",
+    "series_match_from_entry",
     # --- Data persistence ---
-    "DataStore",
     "InMemoryDataStore",
     "LoadResult",
     # --- Errors ---
@@ -109,11 +93,6 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "UnauthorizedError",
-    # --- Utilities ---
-    "catalog_key",
-    "code_token",
-    "normalize_code",
-    "series_match_from_entry",
     # --- Convenience ---
     "client",
 ]
@@ -123,10 +102,21 @@ __all__ = [
 # pull torch / faiss / huggingface-hub. Keys are the public attribute names;
 # values are ``(module, attribute)``.
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
-    "Catalog": ("parsimony._standard", "Catalog"),
-    "EmbeddingProvider": ("parsimony._standard.embedder", "EmbeddingProvider"),
-    "SentenceTransformerEmbedder": ("parsimony._standard.embedder", "SentenceTransformerEmbedder"),
-    "LiteLLMEmbeddingProvider": ("parsimony._standard.embedder", "LiteLLMEmbeddingProvider"),
+    "Catalog": ("parsimony.catalog", "Catalog"),
+    "CatalogBackend": ("parsimony.catalog", "CatalogBackend"),
+    "EmbedderInfo": ("parsimony.embedder", "EmbedderInfo"),
+    "EmbeddingProvider": ("parsimony.embedder", "EmbeddingProvider"),
+    "IndexResult": ("parsimony.catalog", "IndexResult"),
+    "LiteLLMEmbeddingProvider": ("parsimony.embedder", "LiteLLMEmbeddingProvider"),
+    "SentenceTransformerEmbedder": ("parsimony.embedder", "SentenceTransformerEmbedder"),
+    "SeriesEntry": ("parsimony.catalog", "SeriesEntry"),
+    "SeriesMatch": ("parsimony.catalog", "SeriesMatch"),
+    "catalog_key": ("parsimony.catalog", "catalog_key"),
+    "code_token": ("parsimony.catalog", "code_token"),
+    "normalize_code": ("parsimony.catalog", "normalize_code"),
+    "normalize_entity_code": ("parsimony.catalog", "normalize_entity_code"),
+    "parse_catalog_url": ("parsimony.catalog", "parse_catalog_url"),
+    "series_match_from_entry": ("parsimony.catalog", "series_match_from_entry"),
 }
 
 

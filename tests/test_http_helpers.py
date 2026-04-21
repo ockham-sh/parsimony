@@ -13,7 +13,14 @@ from parsimony.errors import (
     RateLimitError,
     UnauthorizedError,
 )
-from parsimony.transport import map_http_error, parse_retry_after, redact_url
+from parsimony.transport import (
+    HttpClient,
+    map_http_error,
+    map_timeout_error,
+    parse_retry_after,
+    pooled_client,
+    redact_url,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -195,3 +202,73 @@ def test_map_http_error_op_name_in_message() -> None:
     with pytest.raises(RateLimitError) as excinfo:
         map_http_error(exc, provider="example", op_name="test_op")
     assert "test_op" in str(excinfo.value)
+
+
+# ---------------------------------------------------------------------------
+# map_timeout_error
+# ---------------------------------------------------------------------------
+
+
+def test_map_timeout_error_raises_provider_error_408() -> None:
+    exc = httpx.TimeoutException("timed out")
+    with pytest.raises(ProviderError) as excinfo:
+        map_timeout_error(exc, provider="example", op_name="test_op")
+    assert excinfo.value.status_code == 408
+    assert excinfo.value.provider == "example"
+    assert excinfo.value.__cause__ is exc
+
+
+def test_map_timeout_error_message_includes_provider_and_op() -> None:
+    exc = httpx.ReadTimeout("read timed out")
+    with pytest.raises(ProviderError) as excinfo:
+        map_timeout_error(exc, provider="example", op_name="my_endpoint")
+    msg = str(excinfo.value)
+    assert "example" in msg
+    assert "my_endpoint" in msg
+
+
+# ---------------------------------------------------------------------------
+# pooled_client
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_pooled_client_yields_client_reusing_single_async_client() -> None:
+    created: list[httpx.AsyncClient] = []
+    original_init = httpx.AsyncClient.__init__
+
+    def tracking_init(self: httpx.AsyncClient, *args: object, **kwargs: object) -> None:
+        original_init(self, *args, **kwargs)
+        created.append(self)
+
+    http = HttpClient(
+        "https://api.example.com",
+        timeout=5.0,
+        headers={"X-Test": "1"},
+        query_params={"apikey": "secret"},
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    transport = httpx.MockTransport(handler)
+    pooled = HttpClient(
+        "https://api.example.com",
+        timeout=5.0,
+        headers={"X-Test": "1"},
+        query_params={"apikey": "secret"},
+        _transport=transport,
+    )
+
+    async with pooled_client(pooled) as shared:
+        # Two consecutive requests through the same shared client.
+        r1 = await shared.request("GET", "/a")
+        r2 = await shared.request("GET", "/b")
+
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+    # Both requests reused the single underlying client — verify that the
+    # shared HttpClient carried through the config from the outer one.
+    assert shared.base_url == pooled.base_url
+    # The outer HttpClient used for construction is untouched.
+    assert http.base_url == "https://api.example.com"

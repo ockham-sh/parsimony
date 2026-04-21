@@ -10,6 +10,11 @@ as the kernel adds support for additional protocols.
 * :func:`parse_retry_after` — extract retry-after seconds from a 429 response.
 * :func:`map_http_error` — translate ``httpx.HTTPStatusError`` into a typed
   :mod:`parsimony.errors` exception.
+* :func:`map_timeout_error` — translate ``httpx.TimeoutException`` into a
+  typed :class:`~parsimony.errors.ProviderError` (status 408).
+* :func:`pooled_client` — async context manager that yields an
+  :class:`HttpClient` backed by a single pooled ``httpx.AsyncClient``, for
+  enumerator loops and fan-out fetches.
 * :class:`HttpClient` — async HTTP client with base URL, default
   headers/query params, and redacted logging.
 """
@@ -18,6 +23,8 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -165,6 +172,21 @@ def map_http_error(exc: httpx.HTTPStatusError, *, provider: str, op_name: str) -
     ) from exc
 
 
+def map_timeout_error(exc: httpx.TimeoutException, *, provider: str, op_name: str) -> NoReturn:
+    """Translate an :class:`httpx.TimeoutException` into a typed connector error.
+
+    Raises :class:`~parsimony.errors.ProviderError` with ``status_code=408``
+    (the HTTP semantic for "request timeout") so downstream callers can treat
+    it uniformly with other transport failures. The original exception is
+    chained via ``raise ... from exc`` for traceback visibility.
+    """
+    raise ProviderError(
+        provider=provider,
+        status_code=408,
+        message=f"{provider} request timed out on endpoint '{op_name}'",
+    ) from exc
+
+
 class HttpClient:
     """Async HTTP client with base URL, default headers/query params, and redacted logging.
 
@@ -297,9 +319,30 @@ class HttpClient:
         return response
 
 
+@asynccontextmanager
+async def pooled_client(http: HttpClient) -> AsyncIterator[HttpClient]:
+    """Yield an :class:`HttpClient` backed by a single pooled ``httpx.AsyncClient``.
+
+    Use when a single logical operation issues many requests (enumerator
+    loops, screener fan-out) and TCP/TLS state should be reused across them.
+    The returned client inherits the configured base URL, default headers,
+    default query params, timeout, TLS settings, and transport of *http*.
+
+    Example::
+
+        async with pooled_client(http) as shared:
+            for key in keys:
+                response = await shared.request("GET", f"/data/{key}")
+    """
+    async with httpx.AsyncClient(**http._client_kwargs()) as shared:
+        yield http.with_shared_client(shared)
+
+
 __all__ = [
     "HttpClient",
     "map_http_error",
+    "map_timeout_error",
     "parse_retry_after",
+    "pooled_client",
     "redact_url",
 ]

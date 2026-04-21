@@ -130,7 +130,7 @@ async def test_connector_valueerror_not_wrapped_as_parse_error() -> None:
 @pytest.mark.asyncio
 async def test_http_client_follows_redirects() -> None:
     """HttpClient must follow a 302 redirect to the final URL."""
-    from parsimony.http import HttpClient
+    from parsimony.transport import HttpClient
 
     redirect_response = httpx.Response(
         302,
@@ -158,7 +158,7 @@ async def test_http_client_follows_redirects() -> None:
 @pytest.mark.asyncio
 async def test_http_client_follow_redirects_default_true() -> None:
     """HttpClient.follow_redirects defaults to True."""
-    from parsimony.http import HttpClient
+    from parsimony.transport import HttpClient
 
     c = HttpClient("http://example.com")
     assert c._follow_redirects is True

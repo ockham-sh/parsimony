@@ -26,7 +26,7 @@ import logging
 import re
 import shutil
 import tempfile
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -512,7 +512,7 @@ class Catalog:
     async def list_namespaces(self) -> list[str]:
         return sorted({e.namespace for e in self._entries})
 
-    async def list(
+    async def list_entries(
         self,
         *,
         namespace: str | None = None,
@@ -520,6 +520,11 @@ class Catalog:
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[list[SeriesEntry], int]:
+        """Paginated browse. Returns ``(entries, total_count)``.
+
+        Named ``list_entries`` rather than ``list`` so it doesn't shadow
+        ``builtins.list`` in type annotations within the class body.
+        """
         ns = catalog_key(namespace, "_")[0] if namespace else None
         ql = q.lower() if q else None
         filtered = [
@@ -800,7 +805,11 @@ async def _push_hf(catalog: Catalog, root: str) -> None:
         await asyncio.to_thread(_upload)
 
 
-def _url_handlers() -> dict[str, tuple[Callable[..., Any], Callable[..., Any]]]:
+_LoadFn = Callable[..., Awaitable["Catalog"]]
+_PushFn = Callable[["Catalog", str], Awaitable[None]]
+
+
+def _url_handlers() -> dict[str, tuple[_LoadFn, _PushFn]]:
     """(load, push) pair per supported scheme. Kept as a function so tests can monkeypatch."""
     return {
         "file": (_load_file, _push_file),

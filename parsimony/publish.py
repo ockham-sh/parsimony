@@ -273,12 +273,11 @@ async def _invoke(fn: CatalogFn) -> Result:
 
     if isinstance(fn, Connector):
         return await fn(fn.param_type())
-    ret = fn()
-    if inspect.isawaitable(ret):
-        ret = await ret
-    if not isinstance(ret, Result):
-        raise TypeError(f"catalog callable must return Result; got {type(ret).__name__}")
-    return ret
+    raw: Any = fn()
+    resolved = await raw if inspect.isawaitable(raw) else raw
+    if not isinstance(resolved, Result):
+        raise TypeError(f"catalog callable must return Result; got {type(resolved).__name__}")
+    return resolved
 
 
 # ---------------------------------------------------------------------------

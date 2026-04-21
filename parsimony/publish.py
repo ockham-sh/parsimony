@@ -81,32 +81,47 @@ async def collect_catalogs(
 
     * ``CATALOGS = [("ns", fn), ...]`` — static list.
     * ``async def CATALOGS(): yield "ns", fn`` — async generator function.
-    * ``RESOLVE_CATALOG(namespace) -> Callable | None`` — on-demand lookup,
-      only consulted when *only* names a namespace not yielded by
-      ``CATALOGS``.
+    * ``RESOLVE_CATALOG(namespace) -> Callable | None`` — on-demand lookup.
 
-    When *only* is supplied, the result is filtered to just those namespaces;
-    for each name not already yielded, ``RESOLVE_CATALOG`` is consulted.
+    Dispatch rules:
+
+    * When *only* is ``None``: iterate all of ``CATALOGS`` to fan out the
+      full publish set. ``RESOLVE_CATALOG`` is unused (the caller didn't
+      name anything specific).
+    * When *only* is a set: try ``RESOLVE_CATALOG`` FIRST for each
+      requested namespace. Only fall back to walking ``CATALOGS`` for
+      namespaces the resolver didn't recognise. This matters when
+      ``CATALOGS`` itself is expensive (e.g. a plugin that live-queries
+      an upstream API to enumerate what exists) — a targeted
+      ``--only ns`` shouldn't pay the full fan-out cost if the plugin
+      can short-circuit the lookup.
     """
     wanted = None if only is None else {n for n in only}
     catalogs: list[CatalogEntry] = []
     seen: set[str] = set()
 
+    resolve = getattr(module, "RESOLVE_CATALOG", None)
+    if wanted is not None and resolve is not None:
+        for ns in wanted:
+            fn = resolve(ns)
+            if fn is not None:
+                catalogs.append((ns, fn))
+                seen.add(ns)
+        # Everything the caller asked for resolved directly — skip the
+        # CATALOGS walk entirely. This is the common case when a plugin
+        # pairs a targetable RESOLVE_CATALOG with an expensive CATALOGS.
+        if wanted == seen:
+            return catalogs
+
     raw = getattr(module, "CATALOGS", None)
     if raw is not None:
         async for ns, fn in _iter_catalogs(raw):
+            if ns in seen:
+                continue
             if wanted is not None and ns not in wanted:
                 continue
             catalogs.append((ns, fn))
             seen.add(ns)
-
-    if wanted is not None:
-        resolve = getattr(module, "RESOLVE_CATALOG", None)
-        if resolve is not None:
-            for ns in wanted - seen:
-                fn = resolve(ns)
-                if fn is not None:
-                    catalogs.append((ns, fn))
 
     return catalogs
 

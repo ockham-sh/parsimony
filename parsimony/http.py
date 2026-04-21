@@ -1,11 +1,29 @@
-"""Framework HTTP client: generic async REST helper with no product dependencies."""
+"""Framework HTTP client and connector-facing HTTP helpers.
+
+Connector packages compose the public helpers below to:
+
+* :func:`redact_url` — strip sensitive query-param values before logging or
+  embedding a URL in an exception message.
+* :func:`parse_retry_after` — extract retry-after seconds from a 429 response.
+* :func:`map_http_error` — translate ``httpx.HTTPStatusError`` into a typed
+  :mod:`parsimony.errors` exception.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+import time
+from typing import Any, NoReturn
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+
+from parsimony.errors import (
+    PaymentRequiredError,
+    ProviderError,
+    RateLimitError,
+    UnauthorizedError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +31,7 @@ _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
     {
         "api_key",
         "apikey",
+        "api_token",
         "token",
         "access_token",
         "refresh_token",
@@ -23,6 +42,10 @@ _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
         "authorization",
     }
 )
+
+_REDACTED_VALUE = "***"
+
+_DEFAULT_RATE_LIMIT_RETRY_AFTER: float = 60.0
 
 
 def _redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
@@ -40,6 +63,99 @@ def _redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
 def _safe_redirect_url(url: httpx.URL) -> str:
     """Return ``scheme://host/path`` with all query params stripped."""
     return f"{url.scheme}://{url.host}{url.path}"
+
+
+def redact_url(url: str) -> str:
+    """Return *url* with sensitive query-param values masked.
+
+    Use before logging a request URL or embedding one in an exception message.
+    Sensitive parameter names are matched against
+    :data:`_SENSITIVE_QUERY_PARAM_NAMES` (case-insensitive, hyphen→underscore
+    normalised). Non-sensitive params are preserved as-is. URLs without a
+    query string are returned unchanged.
+    """
+    parts = urlsplit(url)
+    if not parts.query:
+        return url
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    redacted = [
+        (k, _REDACTED_VALUE if str(k).lower().replace("-", "_") in _SENSITIVE_QUERY_PARAM_NAMES else v)
+        for k, v in pairs
+    ]
+    return urlunsplit(parts._replace(query=urlencode(redacted)))
+
+
+def parse_retry_after(response: httpx.Response, *, default: float = _DEFAULT_RATE_LIMIT_RETRY_AFTER) -> float:
+    """Extract retry-after seconds from a 429 response.
+
+    Order of attempts:
+
+    1. ``Retry-After`` header parsed as a numeric (seconds).
+    2. ``X-Ratelimit-Reset`` header parsed as a Unix epoch timestamp; the
+       returned value is ``max(1.0, reset - now)``.
+    3. ``default``.
+
+    Result is clamped to ``(0, 86400]`` (the kernel's
+    :class:`~parsimony.errors.RateLimitError` rejects values larger than
+    24 hours as likely-mis-encoded epochs).
+    """
+    header = response.headers.get("Retry-After", "").strip()
+    if header:
+        try:
+            value = float(header)
+            if 0 < value <= 86_400:
+                return value
+        except ValueError:
+            pass
+    epoch_header = response.headers.get("X-Ratelimit-Reset", "").strip()
+    if epoch_header:
+        try:
+            reset = float(epoch_header)
+            value = max(1.0, reset - time.time())
+            if 0 < value <= 86_400:
+                return value
+        except ValueError:
+            pass
+    return default
+
+
+def map_http_error(exc: httpx.HTTPStatusError, *, provider: str, op_name: str) -> NoReturn:
+    """Translate an :class:`httpx.HTTPStatusError` into a typed connector error.
+
+    Mapping (matches the kernel's :mod:`parsimony.errors` hierarchy):
+
+    * 401, 403 → :class:`~parsimony.errors.UnauthorizedError`
+    * 402      → :class:`~parsimony.errors.PaymentRequiredError`
+    * 429      → :class:`~parsimony.errors.RateLimitError` with
+      ``retry_after`` from :func:`parse_retry_after`
+    * else     → :class:`~parsimony.errors.ProviderError` carrying the status
+
+    The original exception is chained via ``raise ... from exc`` so the
+    traceback retains it. Messages do not embed the request URL — callers
+    that want a URL in the message must redact via :func:`redact_url` first.
+    """
+    status = exc.response.status_code
+    if status in (401, 403):
+        raise UnauthorizedError(
+            provider=provider,
+            message=f"Invalid or missing {provider} API credentials",
+        ) from exc
+    if status == 402:
+        raise PaymentRequiredError(
+            provider=provider,
+            message=f"Your {provider} plan is not eligible for this data request",
+        ) from exc
+    if status == 429:
+        raise RateLimitError(
+            provider=provider,
+            retry_after=parse_retry_after(exc.response),
+            message=f"{provider} rate limit reached on endpoint '{op_name}'",
+        ) from exc
+    raise ProviderError(
+        provider=provider,
+        status_code=status,
+        message=f"{provider} API error {status} on endpoint '{op_name}'",
+    ) from exc
 
 
 class HttpClient:
@@ -174,4 +290,9 @@ class HttpClient:
         return response
 
 
-__all__ = ["HttpClient"]
+__all__ = [
+    "HttpClient",
+    "map_http_error",
+    "parse_retry_after",
+    "redact_url",
+]

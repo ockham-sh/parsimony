@@ -4,6 +4,21 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.1]
+
+### Added
+
+- `parsimony.http.redact_url(url)` — strip sensitive query-param values
+  before logging or embedding a URL in an exception message.
+- `parsimony.http.parse_retry_after(response, *, default=60.0)` — extract
+  retry-after seconds from a 429 response, with `X-Ratelimit-Reset`
+  Unix-epoch fallback.
+- `parsimony.http.map_http_error(exc, *, provider, op_name)` — translate
+  `httpx.HTTPStatusError` into a typed `parsimony.errors` exception
+  (401/403→`UnauthorizedError`, 402→`PaymentRequiredError`,
+  429→`RateLimitError`, else→`ProviderError`). Replaces the per-connector
+  `_raise_mapped_error` helpers duplicated across six packages.
+
 ## [0.3.0]
 
 ### Breaking changes (kernel refactor)

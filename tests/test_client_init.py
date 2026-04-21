@@ -296,9 +296,7 @@ class TestClientLazyGetter:
             return fake_connectors
 
         monkeypatch.setattr(parsimony, "load_dotenv", _fake_load)
-        monkeypatch.setattr(
-            "parsimony.discovery.build_connectors_from_env", _fake_build
-        )
+        monkeypatch.setattr("parsimony.discovery.build_connectors_from_env", _fake_build)
 
         client = parsimony.client
 
@@ -322,9 +320,7 @@ class TestClientLazyGetter:
             return Connectors([])
 
         monkeypatch.setattr(parsimony, "load_dotenv", lambda: None)
-        monkeypatch.setattr(
-            "parsimony.discovery.build_connectors_from_env", _fake_build
-        )
+        monkeypatch.setattr("parsimony.discovery.build_connectors_from_env", _fake_build)
 
         first = parsimony.client
         second = parsimony.client

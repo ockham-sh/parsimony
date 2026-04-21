@@ -1,12 +1,17 @@
-"""Framework HTTP client and connector-facing HTTP helpers.
+"""Transport utilities for connector packages.
 
-Connector packages compose the public helpers below to:
+Each section below covers one transport layer.  New sections can be added here
+as the kernel adds support for additional protocols.
 
-* :func:`redact_url` — strip sensitive query-param values before logging or
+.. rubric:: HTTP
+
+* :func:`redact_url` — mask sensitive query-param values before logging or
   embedding a URL in an exception message.
 * :func:`parse_retry_after` — extract retry-after seconds from a 429 response.
 * :func:`map_http_error` — translate ``httpx.HTTPStatusError`` into a typed
   :mod:`parsimony.errors` exception.
+* :class:`HttpClient` — async HTTP client with base URL, default
+  headers/query params, and redacted logging.
 """
 
 from __future__ import annotations
@@ -26,6 +31,8 @@ from parsimony.errors import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
 
 _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
     {

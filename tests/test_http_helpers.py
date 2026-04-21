@@ -1,4 +1,4 @@
-"""Tests for the public connector-facing helpers in :mod:`parsimony.http`."""
+"""Tests for the public connector-facing helpers in :mod:`parsimony.transport`."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from parsimony.errors import (
     RateLimitError,
     UnauthorizedError,
 )
-from parsimony.http import map_http_error, parse_retry_after, redact_url
+from parsimony.transport import map_http_error, parse_retry_after, redact_url
 
 
 # ---------------------------------------------------------------------------

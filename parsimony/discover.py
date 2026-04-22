@@ -39,9 +39,10 @@ def _dist_name(ep: importlib.metadata.EntryPoint) -> str | None:
     if meta is None:
         return None
     try:
-        return meta["Name"]
+        value = meta["Name"]
     except (KeyError, TypeError):
         return None
+    return value if isinstance(value, str) else None
 
 
 def _dist_version(ep: importlib.metadata.EntryPoint) -> str | None:
@@ -65,8 +66,11 @@ def _dist_homepage(dist_name: str | None) -> str | None:
         meta = importlib.metadata.metadata(dist_name)
     except importlib.metadata.PackageNotFoundError:
         return None
-    homepage = meta.get("Home-page")
-    if homepage and homepage != "UNKNOWN":
+    try:
+        homepage = meta["Home-page"]
+    except (KeyError, TypeError):
+        homepage = None
+    if isinstance(homepage, str) and homepage and homepage != "UNKNOWN":
         return homepage
     # PEP 621 `[project.urls]` encodes as repeated "Project-URL: key, url"
     for raw in meta.get_all("Project-URL") or ():

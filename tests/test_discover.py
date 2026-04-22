@@ -52,9 +52,11 @@ def test_iter_providers_duplicate_name_raises() -> None:
     ep1 = _make_ep("fred", "parsimony_fred_a", "parsimony-fred", "0.1.0")
     ep2 = _make_ep("fred", "parsimony_fred_b", "parsimony-fred-fork", "0.2.0")
 
-    with patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep1, ep2]):
-        with pytest.raises(RuntimeError, match="two distributions register provider 'fred'"):
-            list(iter_providers())
+    with (
+        patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep1, ep2]),
+        pytest.raises(RuntimeError, match="two distributions register provider 'fred'"),
+    ):
+        list(iter_providers())
 
 
 def test_load_strict_missing_name() -> None:
@@ -62,12 +64,14 @@ def test_load_strict_missing_name() -> None:
     mod = types.ModuleType("parsimony_fred")
     mod.CONNECTORS = Connectors([_toy("fred_fetch")])
 
-    with patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep]):
-        with patch("parsimony.discover.importlib.import_module", return_value=mod):
-            with pytest.raises(LookupError) as exc_info:
-                load("ghost")
-            assert "ghost" in str(exc_info.value)
-            assert "Available" in str(exc_info.value)
+    with (
+        patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep]),
+        patch("parsimony.discover.importlib.import_module", return_value=mod),
+        pytest.raises(LookupError) as exc_info,
+    ):
+        load("ghost")
+    assert "ghost" in str(exc_info.value)
+    assert "Available" in str(exc_info.value)
 
 
 def test_load_all_forgiving_on_import_error(caplog: pytest.LogCaptureFixture) -> None:
@@ -82,10 +86,12 @@ def test_load_all_forgiving_on_import_error(caplog: pytest.LogCaptureFixture) ->
             return good_mod
         raise ImportError("no module named 'missing_dep'")
 
-    with patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep1, ep2]):
-        with patch("parsimony.discover.importlib.import_module", side_effect=_import_module):
-            with caplog.at_level(logging.WARNING, logger="parsimony.discover"):
-                result = load_all()
+    with (
+        patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep1, ep2]),
+        patch("parsimony.discover.importlib.import_module", side_effect=_import_module),
+        caplog.at_level(logging.WARNING, logger="parsimony.discover"),
+    ):
+        result = load_all()
 
     assert len(result) == 1
     assert result.names() == ["good_fetch"]
@@ -96,10 +102,12 @@ def test_load_contract_violation() -> None:
     ep = _make_ep("noexport", "parsimony_noexport", "parsimony-noexport", "0.1.0")
     mod = types.ModuleType("parsimony_noexport")  # no CONNECTORS
 
-    with patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep]):
-        with patch("parsimony.discover.importlib.import_module", return_value=mod):
-            with pytest.raises(TypeError, match="must export CONNECTORS: Connectors"):
-                load("noexport")
+    with (
+        patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep]),
+        patch("parsimony.discover.importlib.import_module", return_value=mod),
+        pytest.raises(TypeError, match="must export CONNECTORS: Connectors"),
+    ):
+        load("noexport")
 
 
 def test_provider_load_idempotent() -> None:

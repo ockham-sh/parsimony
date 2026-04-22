@@ -1,6 +1,6 @@
 # The Parsimony Plugin Contract
 
-**Status:** Contract v1.
+**Status:** Contract v1 (kernel ≥ 0.4).
 **Author tutorials:** [`building-a-private-connector.md`](building-a-private-connector.md),
 [`guide-new-plugin.md`](guide-new-plugin.md).
 
@@ -23,8 +23,8 @@ The contract covers:
 2. **The module exports** the kernel reads from a discovered plugin module.
 3. **The kernel API surface** plugins may import, with a stability marking on
    every symbol.
-4. **The discovery record** (`DiscoveredProvider`) the kernel exposes to
-   consumers that walk discovered plugins directly.
+4. **The discovery record** (`Provider`) the kernel exposes to consumers that
+   walk installed plugins directly.
 5. **The conformance entry point** plugins MUST pass to be considered
    contract-compliant.
 6. **The catalog-publish shape** (`CATALOGS` / `RESOLVE_CATALOG`) the kernel's
@@ -70,7 +70,7 @@ pin. There is no separate contract-version classifier.
 
 ```toml
 [project]
-dependencies = ["parsimony-core>=0.3,<0.5"]
+dependencies = ["parsimony-core>=0.4,<0.5"]
 ```
 
 The kernel ships a single public distribution (`parsimony-core`); the bare
@@ -107,28 +107,16 @@ shape.
 ### Required
 
 #### `CONNECTORS: Connectors`
-An immutable `parsimony.Connectors` collection of bound `@connector` /
+An immutable `parsimony.Connectors` collection of `@connector` /
 `@enumerator` / `@loader` decorated functions. **Stable.** Non-empty;
 duplicate connector names within the collection are a contract violation.
 
+Per-connector environment-variable backings live on the decorator, not on
+the module. Each `@connector(env={...})` declaration is preserved as the
+read-only `Connector.env_map: Mapping[str, str]` field; the consumer
+resolves them via :meth:`Connectors.bind_env`. See §4.5 below.
+
 ### Optional
-
-#### `ENV_VARS: dict[str, str]`
-Maps each connector dependency name (keyword-only arg on at least one
-connector in `CONNECTORS`) to the environment variable supplying it.
-**Stable.** Default `{}`. Missing env vars cause the plugin to be silently
-skipped at `build_connectors_from_env` time — the expected behaviour when a
-user has not configured that provider.
-
-#### `PROVIDER_METADATA: dict[str, Any]`
-Free-form plugin-level metadata. **Stable** as a shape. Reserved top-level
-keys (all **provisional**):
-
-- `"homepage"` — provider's docs URL.
-- `"rate_limits"` — short human-readable description.
-- `"pricing"` — `"free"`, `"freemium"`, `"paid"`, or a short string.
-
-Plugins may add arbitrary keys; the kernel ignores unknown keys.
 
 #### `CATALOGS`
 See §6 — the catalog-publish contract. Optional. Plugins that do not publish
@@ -136,6 +124,79 @@ catalogs omit this.
 
 #### `RESOLVE_CATALOG: Callable[[str], Callable | None]`
 See §6 — optional reverse-lookup for `parsimony publish --only`.
+
+### Where provider metadata lives
+
+The kernel reads plugin metadata exclusively from standard Python channels —
+no per-module dictionaries duplicating PEP 621 data:
+
+| What | Source |
+|---|---|
+| Distribution name | `importlib.metadata` (auto-resolved from the entry point). |
+| Version | `importlib.metadata.version(dist_name)` — the kernel reads it on demand. |
+| Homepage | `pyproject.toml` `[project.urls] Homepage = "..."` — surfaced via `Provider.homepage`. |
+| Description | `pyproject.toml` `[project] description = "..."`. |
+| Per-connector env vars | `@connector(env={"api_key": "FOO_API_KEY"})` — surfaced via `Connector.env_map`. |
+
+Plugin authors do **not** export `ENV_VARS`, `PROVIDER_METADATA`, or
+`__version__` at the module level. Those module-level shapes were removed
+in the kernel 0.4 refactor.
+
+### 4.5 `@connector(env=...)`
+
+The `env` keyword on `@connector` (and `@enumerator` / `@loader`) maps each
+keyword-only dependency to the environment variable that supplies it:
+
+```python
+@connector(env={"api_key": "FRED_API_KEY"})
+async def fred_fetch(params: FredFetchParams, *, api_key: str) -> Result:
+    """..."""
+```
+
+The mapping is stored on the resulting `Connector` as the read-only
+`env_map: Mapping[str, str]` (`{"api_key": "FRED_API_KEY"}`). At consumer
+time, `Connectors.bind_env()` walks each connector's `env_map`, resolves
+values from `os.environ` (optionally layered with an `overrides` dict),
+and binds them. Missing required env vars do **not** drop the connector;
+see §4.6 for the keep-but-unbound contract.
+
+Multiple env vars per connector are supported (e.g. username + password):
+
+```python
+@connector(env={"username": "DESTATIS_USERNAME", "password": "DESTATIS_PASSWORD"})
+async def destatis_fetch(params, *, username: str, password: str) -> Result: ...
+```
+
+Connectors with no auth requirement omit `env=` entirely; `bind_env()` is a
+no-op for them.
+
+### 4.6 Keep-but-unbound credentialing
+
+`Connectors.bind_env()` keeps every connector in the collection regardless
+of whether its required env vars are set. A connector whose required env
+var is missing returns as a clone with `bound=False`. Calling such a
+connector raises `parsimony.errors.UnauthorizedError` naming the missing
+env var:
+
+```python
+connectors = discover.load_all().bind_env()
+
+print(connectors.unbound)
+# ('polymarket_fetch',)  ← user installed parsimony-polymarket but did not set POLYMARKET_API_KEY
+
+await connectors["polymarket_fetch"](market_id="x")
+# raises UnauthorizedError("POLYMARKET_API_KEY is not set")
+
+await connectors["fred_fetch"](series_id="UNRATE")
+# works (FRED_API_KEY is set)
+```
+
+This replaces the older "silent-drop" behaviour where a missing env var
+would cause the connector to disappear from the surface with no
+explanation. The connector still appears in `parsimony list`, in
+`Connectors.names()`, and in MCP tool listings — agents see the same
+inventory whether or not credentials are wired up. The error names the
+missing variable so the user can fix it without grepping documentation.
 
 ---
 
@@ -151,11 +212,11 @@ are **private** unless otherwise noted.
 
 | Symbol | Stability | Notes |
 |---|---|---|
-| `Connector` | stable | Frozen dataclass wrapping one decorated function. |
-| `Connectors` | stable | Immutable collection; `+`, `.filter()`, `.bind_deps()`, `.with_callback()`. |
-| `connector` | stable | Decorator for fetch connectors. |
-| `enumerator` | stable | Decorator for catalog-population connectors. |
-| `loader` | stable | Decorator for observation-loading connectors. |
+| `Connector` | stable | Frozen dataclass wrapping one decorated function. New fields: `env_map`, `bound` (see §4.5/§4.6). |
+| `Connectors` | stable | Immutable collection; verbs: `merge`, `bind`, `bind_env`, `unbound`, `env_vars`, `replace`, `filter`, `with_callback`. |
+| `connector` | stable | Decorator for fetch connectors. Accepts `env={...}` kwarg. |
+| `enumerator` | stable | Decorator for catalog-population connectors. Accepts `env={...}` kwarg. |
+| `loader` | stable | Decorator for observation-loading connectors. Accepts `env={...}` kwarg. |
 | `ResultCallback` | provisional | Post-fetch hook type used by `with_callback`. |
 | `Result` | stable | Connector return type. Carries optional `output_schema: OutputConfig`. |
 | `OutputConfig` | stable | Tabular output configuration. |
@@ -186,21 +247,27 @@ are **private** unless otherwise noted.
 | `normalize_entity_code` | stable | Validate non-empty trimmed entity-code strings. |
 | `parse_catalog_url` | stable | Split a `scheme://root[/sub]` URL into `(scheme, root, sub)`. |
 | `series_match_from_entry` | provisional | Build a `SeriesMatch` from a stored `SeriesEntry`. |
-| `client` | provisional | Lazy-composed `Connectors` surface (reads env on first access). |
 | `__version__` | stable | Installed kernel package version string. |
 
-### `parsimony.discovery`
+### `parsimony.discover`
+
+Three functions plus one frozen dataclass — the entire discovery surface.
+No cache, no singleton, no import-time side effects. Consumers cache at
+their own level if they need to.
 
 | Symbol | Stability | Notes |
 |---|---|---|
-| `DiscoveredProvider` | stable | Record returned from discovery. Fields: `name`, `module_path`, `connectors`, `env_vars`, `provider_metadata`, `distribution_name`, `version`, `module`. |
-| `discovered_providers` | stable | Enumerate all discovered plugins. Cached. |
-| `iter_entry_points` | stable | Low-level iteration over `parsimony.providers` entry points. |
-| `load_provider` | stable | Load and validate one entry point. |
-| `build_connectors_from_env` | stable | Compose every discovered provider, binding env deps. |
-| `PluginError` | stable | Base class for discovery errors. |
-| `PluginImportError` | stable | Target module failed to import. |
-| `PluginContractError` | stable | Target module violated §4. |
+| `Provider` | stable | Frozen dataclass. Fields: `name`, `module_path`, `dist_name`, `version`. Property: `homepage` (resolved on demand via `importlib.metadata`). Method: `load() -> Connectors`. |
+| `iter_providers` | stable | Iterator over installed `Provider` records. Metadata-only — never imports plugin modules. Raises `RuntimeError` if two distributions register the same provider name. |
+| `load` | stable | `load(*names) -> Connectors` — strict; raises `LookupError` if any name is not installed. Returns a merged `Connectors`. |
+| `load_all` | stable | `load_all() -> Connectors` — forgiving; loads every installed provider, logs and skips failures. Returns a merged `Connectors`. |
+
+Failure-mode summary:
+
+* Missing `CONNECTORS` export, or wrong type → `TypeError`.
+* Strict `load()` for an absent name → `LookupError`.
+* Two distributions register the same entry-point name → `RuntimeError`.
+* Plugin import error inside `load_all()` → logged at WARNING and skipped.
 
 ### `parsimony.transport`
 
@@ -315,9 +382,10 @@ The suite runs three checks:
    `parsimony.Connectors`.
 2. `check_descriptions_non_empty` — every connector has a non-empty
    description (no silently empty LLM tool schemas).
-3. `check_env_vars_map_to_deps` — every key in `ENV_VARS` names a real
-   keyword-only dependency on at least one connector in `CONNECTORS`
-   (catches typos and renames).
+3. `check_env_map_matches_deps` — for every `Connector` in `CONNECTORS`,
+   each key of its `env_map` names a real keyword-only dependency on that
+   connector (catches typos and renames). Walks `Connector.env_map`
+   directly; no module-level `ENV_VARS` is read.
 
 The same suite runs as:
 
@@ -381,4 +449,4 @@ its own `parsimony-<name>` distribution discovered via the
 
 ---
 
-*This is contract v1.*
+*This is contract v1, kernel ≥ 0.4.*

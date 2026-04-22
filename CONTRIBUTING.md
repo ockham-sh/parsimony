@@ -114,7 +114,7 @@ parsimony/
 ├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + LiteLLMEmbeddingProvider.
 ├── indexes.py          FAISS + BM25 + RRF pure functions (private).
 ├── publish.py          publish(module, ...) — reads CATALOGS / RESOLVE_CATALOG.
-├── discovery.py        entry-point scan + DiscoveredProvider + build_connectors_from_env.
+├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
 ├── stores.py           InMemoryDataStore + LoadResult.
 ├── errors.py           ConnectorError hierarchy.
 ├── transport.py        HttpClient + pooled_client + map_http_error + redact_url.
@@ -142,7 +142,8 @@ individual connectors live in the `parsimony-connectors` monorepo.
 - **Lazy loading** in `__init__.py` via `__getattr__` (PEP 562) — keeps
   `import parsimony` fast.
 - **Dependency injection** — keyword-only args after `*` in connector
-  functions, bound via `bind_deps()`.
+  functions, bound via `bind()` (manual) or `bind_env()` (env-driven, using
+  the decorator's `env={...}` map).
 
 ## Reporting bugs
 

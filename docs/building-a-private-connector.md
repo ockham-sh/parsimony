@@ -70,13 +70,6 @@ class YourFetchParams(BaseModel):
     start: str | None = None
 
 
-ENV_VARS = {"api_key": "YOUR_API_KEY"}
-PROVIDER_METADATA = {
-    "homepage": "https://your-provider.example",
-    "pricing": "internal",
-}
-
-
 _OUTPUT = OutputConfig(
     columns=[
         Column(name="entity_id", role=ColumnRole.KEY, namespace="your_name"),
@@ -87,7 +80,7 @@ _OUTPUT = OutputConfig(
 )
 
 
-@connector(output=_OUTPUT, tags=["your_name", "tool"])
+@connector(output=_OUTPUT, env={"api_key": "YOUR_API_KEY"}, tags=["your_name", "tool"])
 async def your_fetch(params: YourFetchParams, *, api_key: str) -> Result:
     """One-line description. First sentence becomes the MCP tool description."""
     # ... call your internal API, return a Result ...
@@ -95,6 +88,12 @@ async def your_fetch(params: YourFetchParams, *, api_key: str) -> Result:
 
 CONNECTORS = Connectors([your_fetch])
 ```
+
+Add a `[project.urls] Homepage = "https://your-provider.example"` entry
+to `pyproject.toml` so the kernel can surface it via `Provider.homepage`.
+There is no module-level `ENV_VARS`, `PROVIDER_METADATA`, or
+`__version__` — env-var backings live on the decorator and provider
+metadata lives in the package's PEP 621 metadata.
 
 Run the conformance suite locally:
 
@@ -194,16 +193,21 @@ explicit = true
 ### Discovery
 
 The kernel walks the `parsimony.providers` entry-point group on
-`build_connectors_from_env()` and loads every installed plugin. Your
-internal plugin is treated identically to officially-maintained ones
-— the kernel does not differentiate.
+`discover.load_all()` and loads every installed plugin. Your internal
+plugin is treated identically to officially-maintained ones — the kernel
+does not differentiate.
 
 ```python
-from parsimony.discovery import build_connectors_from_env
-connectors = build_connectors_from_env()
+from parsimony import discover
+connectors = discover.load_all().bind_env()
 # "your_fetch" is now available alongside any other installed plugin
 result = await connectors["your_fetch"](entity_id="E123")
 ```
+
+If `YOUR_API_KEY` is not set in the environment, `your_fetch` stays in
+the collection but is marked `bound=False`; calling it raises
+`UnauthorizedError("YOUR_API_KEY is not set")`. Inspect via
+`connectors.unbound`.
 
 ---
 
@@ -235,8 +239,9 @@ Three checks run against every plugin module:
    `parsimony.Connectors`.
 2. `check_descriptions_non_empty` — every connector carries a non-empty
    description (no silently empty LLM tool schemas).
-3. `check_env_vars_map_to_deps` — every `ENV_VARS` key names a real
-   keyword-only dependency on at least one connector (catches typos).
+3. `check_env_map_matches_deps` — for every connector, each key in its
+   decorator-declared `env_map` names a real keyword-only dependency on
+   that connector (catches typos and renames).
 
 These are integrity checks, not behavioural tests. Your
 `tests/test_<name>_connectors.py` file is where behavioural coverage
@@ -249,7 +254,7 @@ lives (happy path, 401 → `UnauthorizedError`, 429 → `RateLimitError`).
 Plugins pin a range on the kernel distribution, not a single version:
 
 ```toml
-dependencies = ["parsimony-core>=0.3,<0.5"]
+dependencies = ["parsimony-core>=0.4,<0.5"]
 ```
 
 When a kernel MAJOR release lands (e.g. `0.5.0`), your plugin keeps

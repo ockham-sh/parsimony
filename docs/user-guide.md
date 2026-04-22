@@ -68,8 +68,9 @@ pip install parsimony-mcp
 
 ## Environment setup
 
-Each connector plugin declares its own required env vars (see the plugin's
-`ENV_VARS` mapping). Typical examples:
+Each connector declares its own required env vars on the `@connector(env=...)`
+decorator. Inspect the union via `Connectors.env_vars()` after loading.
+Typical examples:
 
 | Variable | Required by |
 |---|---|
@@ -86,9 +87,11 @@ Each connector plugin declares its own required env vars (see the plugin's
 SDMX, Polymarket, SEC Edgar, US Treasury, and most central-bank connectors
 require no credentials.
 
-`build_connectors_from_env()` reads `os.environ` and binds each plugin's
-declared env vars. Plugins whose required env vars are absent are silently
-skipped.
+`Connectors.bind_env()` reads `os.environ` and binds each connector's
+declared env vars. Connectors whose required env vars are missing stay in
+the collection but raise `UnauthorizedError` on call — see
+[`contract.md`](contract.md) §4.6. Inspect them via the
+`connectors.unbound` property.
 
 ```bash
 # .env
@@ -96,16 +99,22 @@ FRED_API_KEY=your-fred-api-key
 FMP_API_KEY=your-fmp-api-key       # optional
 ```
 
+> The kernel does not auto-load `.env` files. Use
+> [`python-dotenv`](https://github.com/theskumar/python-dotenv),
+> [`uv run --env-file`](https://docs.astral.sh/uv/), or your shell to
+> populate `os.environ` before constructing connectors. The standalone
+> `parsimony-mcp` distribution autoloads `.env` for the MCP boot path.
+
 ---
 
 ## Quick start
 
 ```python
 import asyncio
-from parsimony.discovery import build_connectors_from_env
+from parsimony import discover
 
 async def main():
-    connectors = build_connectors_from_env()     # walks parsimony.providers
+    connectors = discover.load_all().bind_env()     # walks parsimony.providers
     result = await connectors["fred_fetch"](series_id="UNRATE")
     print(result.data.tail())
     print(result.provenance)
@@ -116,10 +125,10 @@ asyncio.run(main())
 Or compose a specific plugin directly:
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred
 
-fred = FRED.bind_deps(api_key="your-key")
-result = await fred["fred_fetch"](series_id="UNRATE")
+connectors = fred.bind_env()                        # reads FRED_API_KEY
+result = await connectors["fred_fetch"](series_id="UNRATE")
 ```
 
 ---
@@ -129,16 +138,21 @@ result = await fred["fred_fetch"](series_id="UNRATE")
 ### Connectors
 
 A `Connector` is an async function wrapped with metadata: a name,
-description, Pydantic params model, and optional output schema. Call it
-with keyword arguments (`await conn(series_id="GDP")`) or a typed Pydantic
-model. Dependencies like API keys are injected via `bind_deps()` and never
-appear in provenance or logs.
+description, Pydantic params model, optional output schema, and optional
+`env_map` declaring the env vars that back its keyword-only dependencies.
+Call it with keyword arguments (`await conn(series_id="GDP")`) or a typed
+Pydantic model. Dependencies like API keys are injected via `bind()` /
+`bind_env()` and never appear in provenance or logs.
 
 ### Connectors (the collection)
 
 `Connectors` is an immutable collection of `Connector` instances. Look up
-by name with `connectors["fred_fetch"]`, compose with `+`, filter with
-`.filter(tags=["macro"])`, and attach hooks with `.with_callback()`.
+by name with `connectors["fred_fetch"]`, merge with
+`Connectors.merge(*others)`, filter with `.filter(tags=["macro"])` (or a
+predicate), apply env-driven binding with `.bind_env(overrides=None)`,
+swap entries with `.replace(name, connector)`, attach hooks with
+`.with_callback()`. The `.unbound` property and `.env_vars()` method
+surface credential state across the collection.
 
 ### Results
 
@@ -152,7 +166,8 @@ declares an `OutputConfig`, the result additionally carries
 
 `Provenance` records where data came from: the connector name, the
 user-facing parameters, and when it was fetched. API keys injected via
-`bind_deps` are excluded. Provenance survives Arrow/Parquet round-trips.
+`bind()` / `bind_env()` are excluded. Provenance survives Arrow/Parquet
+round-trips.
 
 ---
 
@@ -262,10 +277,10 @@ at query time or `ValueError` is raised.
 
 ```python
 from parsimony import Catalog, LiteLLMEmbeddingProvider
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred_connectors
 
 async def build_fred():
-    fred = FRED.bind_deps(api_key="your-key")
+    fred = fred_connectors.bind_env()       # reads FRED_API_KEY
     embedder = LiteLLMEmbeddingProvider(
         model="gemini/text-embedding-004",
         dimension=768,
@@ -377,23 +392,30 @@ machinery.
 
 ### With dependency injection
 
-Keyword-only parameters after `*` declare dependencies:
+Keyword-only parameters after `*` declare dependencies. Use `env={...}` on
+the decorator to map each one to an environment variable that
+`Connectors.bind_env()` will resolve at consumer time:
 
 ```python
-@connector(tags=["custom"])
+@connector(env={"api_key": "MY_API_KEY"}, tags=["custom"])
 async def my_authenticated(params: MyParams, *, api_key: str) -> pd.DataFrame:
     """Fetch from an authenticated API."""
-    # api_key is injected via bind_deps; never stored in provenance.
+    # api_key is injected via bind/bind_env; never stored in provenance.
     ...
 
-# Bind before use:
-bound = my_authenticated.bind_deps(api_key="secret-key")
+# Bind explicitly (for tests, or when the value isn't in env):
+bound = my_authenticated.bind(api_key="secret-key")
 ```
+
+For non-env dependencies — DB pools, HTTP clients, caches — drop the
+`env=` kwarg and bind manually via `Connectors.bind(**deps)`. See
+[Internal Connectors](internal-connectors.md).
 
 ### Packaging as a plugin
 
-To make your connectors discoverable via `build_connectors_from_env`, ship
-them as a separate `parsimony-<name>` distribution. See
+To make your connectors discoverable via `discover.load_all()`, ship them
+as a separate `parsimony-<name>` distribution registering the
+`parsimony.providers` entry point. See
 [`guide-new-plugin.md`](guide-new-plugin.md) for the public path and
 [`building-a-private-connector.md`](building-a-private-connector.md) for
 the internal/private path.
@@ -456,27 +478,34 @@ preserve the full shape.
 
 ## Filtering and composing bundles
 
-### Filter by tag or name
+### Filter by tag, name, or predicate
 
 ```python
-connectors = build_connectors_from_env()
+connectors = discover.load_all().bind_env()
 
 equity = connectors.filter(tags=["equity"])
 macro = connectors.filter(tags=["macro"])
 
 fred_only = connectors.filter(name="fred")
+
+# Predicate overload — keep loaders out of an MCP tool surface, etc.
+safe = connectors.filter(lambda c: "loader" not in c.tags)
 ```
 
 ### Combine bundles
 
 ```python
-from parsimony import Connectors
+from parsimony import Connectors, discover
 
-custom = Connectors([my_prices, my_authenticated.bind_deps(api_key="key")])
-combined = build_connectors_from_env() + custom
+custom = Connectors([my_prices, my_authenticated.bind(api_key="key")])
+combined = Connectors.merge(discover.load_all().bind_env(), custom)
 
 result = await combined["my_prices"](ticker="AAPL")
 ```
+
+`Connectors.merge(*others)` raises `ValueError` on duplicate connector
+names — use `Connectors.replace(name, connector)` to swap an existing
+entry for a test double or patched version.
 
 ### Generate LLM tool descriptions
 

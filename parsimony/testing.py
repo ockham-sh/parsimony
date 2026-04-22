@@ -6,8 +6,9 @@ Three checks — the minimal integrity set every official plugin must pass:
    (a :class:`Connectors` with at least one entry).
 2. :func:`_check_descriptions_non_empty` — every connector has a description
    (no silently empty tool schemas).
-3. :func:`_check_env_vars_map_to_deps` — every ``ENV_VARS`` key names a real
-   connector dependency (catches typos / renames).
+3. :func:`_check_env_map_matches_deps` — every key in each connector's
+   decorator-declared ``env_map`` corresponds to a real connector dep
+   (catches typos / renames).
 
 Two entry points:
 
@@ -93,39 +94,33 @@ def _check_descriptions_non_empty(module: ModuleType) -> None:
             )
 
 
-def _check_env_vars_map_to_deps(module: ModuleType) -> None:
+def _check_env_map_matches_deps(module: ModuleType) -> None:
+    """Assert every key in each connector's ``env_map`` names a real dep."""
     connectors: Connectors = module.CONNECTORS
-    env_vars = getattr(module, "ENV_VARS", {}) or {}
-    if not env_vars:
-        return
-    if not isinstance(env_vars, dict):
-        raise ConformanceError(
-            "check_env_vars_map_to_deps",
-            f"ENV_VARS must be a dict[str, str]; got {type(env_vars).__name__}",
-        )
-    all_deps: set[str] = set()
     for c in connectors:
-        all_deps |= set(c.dep_names) | set(c.optional_dep_names)
-    for key, value in env_vars.items():
-        if not isinstance(key, str) or not isinstance(value, str):
-            raise ConformanceError(
-                "check_env_vars_map_to_deps",
-                f"ENV_VARS entries must be str -> str; got {key!r} -> {value!r}",
-            )
-        if key not in all_deps:
-            raise ConformanceError(
-                "check_env_vars_map_to_deps",
-                (
-                    f"ENV_VARS key {key!r} does not match any connector dependency "
-                    f"(known deps across all connectors: {sorted(all_deps)})"
-                ),
-            )
+        if not c.env_map:
+            continue
+        allowed = set(c.dep_names) | set(c.optional_dep_names)
+        for key, value in c.env_map.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ConformanceError(
+                    "check_env_map_matches_deps",
+                    f"{c.name!r} env_map entries must be str -> str; got {key!r} -> {value!r}",
+                )
+            if key not in allowed:
+                raise ConformanceError(
+                    "check_env_map_matches_deps",
+                    (
+                        f"{c.name!r}: env_map key {key!r} does not match any connector "
+                        f"dependency (known deps: {sorted(allowed)})"
+                    ),
+                )
 
 
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
-    "check_env_vars_map_to_deps": _check_env_vars_map_to_deps,
+    "check_env_map_matches_deps": _check_env_map_matches_deps,
 }
 
 
@@ -214,8 +209,8 @@ class ProviderTestSuite:
     def test_descriptions_non_empty(self) -> None:
         _check_descriptions_non_empty(self._resolve_module())
 
-    def test_env_vars_map_to_deps(self) -> None:
-        _check_env_vars_map_to_deps(self._resolve_module())
+    def test_env_map_matches_deps(self) -> None:
+        _check_env_map_matches_deps(self._resolve_module())
 
     def test_entry_point_resolves(self) -> None:
         """Verify the plugin is installed under ``parsimony.providers``.
@@ -226,10 +221,10 @@ class ProviderTestSuite:
             import pytest
 
             pytest.skip("entry_point_name not set; skipping installation check")
-        from parsimony.discovery import discovered_providers
+        from parsimony.discover import iter_providers
 
         expected = self._resolve_module()
-        providers = {p.name: p for p in discovered_providers()}
+        providers = {p.name: p for p in iter_providers()}
         if self.entry_point_name not in providers:
             raise ConformanceError(
                 "check_entry_point_registered",
@@ -239,7 +234,10 @@ class ProviderTestSuite:
                 ),
             )
         provider = providers[self.entry_point_name]
-        if provider.module is not expected:
+        import importlib
+
+        resolved = importlib.import_module(provider.module_path)
+        if resolved is not expected:
             raise ConformanceError(
                 "check_entry_point_matches",
                 (

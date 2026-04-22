@@ -22,9 +22,10 @@ import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any, TextIO
 
-from parsimony.discovery import DiscoveredProvider, discovered_providers
+from parsimony.discover import Provider, iter_providers
 from parsimony.publish import publish_provider
 
 __all__ = ["main"]
@@ -114,9 +115,7 @@ class _PluginRow:
     version: str | None
     connector_count: int
     catalogs: list[str]
-    env_vars_present: list[str]
-    env_vars_missing: list[str]
-    conformance: str  # "pass" | "fail"
+    conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
 
     def to_dict(self) -> dict[str, Any]:
@@ -127,58 +126,74 @@ class _PluginRow:
             "version": self.version,
             "connector_count": self.connector_count,
             "catalogs": self.catalogs,
-            "env_vars_present": self.env_vars_present,
-            "env_vars_missing": self.env_vars_missing,
             "conformance": self.conformance,
             "conformance_detail": self.conformance_detail,
         }
 
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
-    rows = _collect_rows(os.environ)
+    rows, env_vars = _collect_rows(strict=strict)
     if json_output:
-        print(json.dumps([r.to_dict() for r in rows], indent=2))
+        payload: dict[str, Any] = {
+            "plugins": [r.to_dict() for r in rows],
+            "env_vars": sorted(env_vars),
+        }
+        print(json.dumps(payload, indent=2))
     else:
-        _render_table(rows, sys.stdout)
+        _render_table(rows, env_vars, sys.stdout)
     if strict and any(r.conformance == "fail" for r in rows):
         return 1
     return 0
 
 
-def _collect_rows(env: Any) -> list[_PluginRow]:
+def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], set[str]]:
+    """Walk ``iter_providers`` metadata-only.
+
+    Only imports each plugin when ``strict`` is requested (conformance needs
+    the module). Env-var surfaces are aggregated from loaded connectors'
+    ``env_map`` when available, empty otherwise.
+    """
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
     rows: list[_PluginRow] = []
-    for provider in discovered_providers():
-        present = sorted(var for var in provider.env_vars.values() if env.get(var))
-        missing = sorted(var for var in provider.env_vars.values() if not env.get(var))
+    env_vars: set[str] = set()
 
-        module = provider.module or importlib.import_module(provider.module_path)
-        try:
-            assert_plugin_valid(module)
-            conformance = "pass"
-            detail = None
-        except ConformanceError as exc:
-            conformance = "fail"
-            detail = str(exc)
+    for provider in iter_providers():
+        module: ModuleType | None = None
+        connector_count = 0
+        catalogs: list[str] = []
+        conformance = "skipped"
+        detail: str | None = None
 
-        catalogs = _list_catalog_namespaces(module)
+        if strict:
+            try:
+                module = importlib.import_module(provider.module_path)
+                connectors = provider.load()
+                connector_count = len(connectors)
+                env_vars.update(connectors.env_vars())
+                catalogs = _list_catalog_namespaces(module)
+                assert_plugin_valid(module)
+                conformance = "pass"
+            except ConformanceError as exc:
+                conformance = "fail"
+                detail = str(exc)
+            except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
+                conformance = "fail"
+                detail = f"{type(exc).__name__}: {exc}"
 
         rows.append(
             _PluginRow(
                 name=provider.name,
                 module=provider.module_path,
-                distribution=provider.distribution_name,
+                distribution=provider.dist_name,
                 version=provider.version,
-                connector_count=len(list(provider.connectors)),
+                connector_count=connector_count,
                 catalogs=catalogs,
-                env_vars_present=present,
-                env_vars_missing=missing,
                 conformance=conformance,
                 conformance_detail=detail,
             )
         )
-    return rows
+    return rows, env_vars
 
 
 def _list_catalog_namespaces(module: Any) -> list[str]:
@@ -200,7 +215,7 @@ def _list_catalog_namespaces(module: Any) -> list[str]:
     return ["<dynamic>"]
 
 
-def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
+def _render_table(rows: list[_PluginRow], env_vars: set[str], stream: TextIO) -> None:
     if not rows:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
@@ -209,20 +224,16 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
         )
         return
 
-    header = ["NAME", "VERSION", "CONNECTORS", "CATALOGS", "ENV", "CONFORMANCE"]
+    header = ["NAME", "VERSION", "CONNECTORS", "CATALOGS", "CONFORMANCE"]
     body: list[list[str]] = [header]
     for r in rows:
-        env_cell = f"{len(r.env_vars_present)}/{len(r.env_vars_present) + len(r.env_vars_missing)}"
-        if r.env_vars_missing:
-            env_cell += f" (missing: {','.join(r.env_vars_missing)})"
         catalog_cell = ",".join(r.catalogs) if r.catalogs else "-"
         body.append(
             [
                 r.name,
                 r.version or "?",
-                str(r.connector_count),
+                str(r.connector_count) if r.connector_count else "?",
                 catalog_cell,
-                env_cell,
                 r.conformance,
             ]
         )
@@ -236,6 +247,10 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
 
     print(file=stream)
     print(f"{len(rows)} plugin(s) discovered.", file=stream)
+    if env_vars:
+        unset = sorted(v for v in env_vars if not os.environ.get(v))
+        if unset:
+            print(f"Env vars not set: {', '.join(unset)}", file=stream)
     for r in rows:
         if r.conformance == "fail":
             print(f"  ! {r.name}: {r.conformance_detail}", file=stream)
@@ -270,8 +285,8 @@ def _run_publish(
     return 0 if report.ok else 1
 
 
-def _provider_by_name(name: str) -> DiscoveredProvider:
-    for p in discovered_providers():
+def _provider_by_name(name: str) -> Provider:
+    for p in iter_providers():
         if p.name == name:
             return p
     raise ValueError(f"no parsimony provider named {name!r}")

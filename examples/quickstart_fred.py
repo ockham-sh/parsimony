@@ -27,8 +27,8 @@ async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Bind the API key once; use the bound connector for all calls.
-    search = fred_search.bind_deps(api_key=api_key)
-    fetch = fred_fetch.bind_deps(api_key=api_key)
+    search = fred_search.bind(api_key=api_key)
+    fetch = fred_fetch.bind(api_key=api_key)
 
     # 1. Search for GDP series
     search_result = await search(search_text="US gross domestic product")

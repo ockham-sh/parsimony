@@ -47,7 +47,7 @@ parsimony/
 ├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + LiteLLMEmbeddingProvider + EmbedderInfo.
 ├── indexes.py          FAISS + BM25 + RRF pure functions (used by Catalog; not public).
 ├── publish.py          publish(module, ...) orchestrator — reads CATALOGS / RESOLVE_CATALOG.
-├── discovery.py        entry-point scan + DiscoveredProvider + build_connectors_from_env + PluginError hierarchy.
+├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
 ├── stores.py           InMemoryDataStore + LoadResult (observation persistence for @loader).
 ├── errors.py           ConnectorError hierarchy.
 ├── transport.py        HttpClient + pooled_client + map_http_error + redact_url + parse_retry_after.
@@ -76,13 +76,15 @@ The central abstraction is the `Connector` frozen dataclass defined in
 class Connector:
     name: str
     description: str
-    tags: frozenset[str]
+    tags: tuple[str, ...]
     param_type: type[BaseModel]
     dep_names: frozenset[str]
     optional_dep_names: frozenset[str]
-    fn: Callable                    # wrapped async function (partial after bind_deps)
+    fn: Callable                    # wrapped async function (partial after bind/bind_env)
     output_config: OutputConfig | None
-    callbacks: tuple[ResultCallback, ...]
+    env_map: Mapping[str, str]      # decorator-declared env-var backings; frozen
+    bound: bool                     # False on bind_env clones with missing required env vars
+    _callbacks: tuple[ResultCallback, ...]
 ```
 
 ### Decoration flow
@@ -131,42 +133,59 @@ identifiable KEY + TITLE columns.
 All mutation returns a **new** `Connector`; the original is untouched:
 
 ```python
-bound = my_fetch.bind_deps(api_key="secret")         # new Connector
+bound = my_fetch.bind(api_key="secret")              # new Connector
 logged = bound.with_callback(my_observer)            # new Connector
 assert my_fetch.dep_names == frozenset({"api_key"})  # unchanged
 assert bound.dep_names == frozenset()                # deps consumed
 ```
 
-`Connectors` follows the same pattern: `+`, `.filter()`, `.bind_deps()`,
-`.with_callback()` all return new instances.
+`Connectors` follows the same pattern: `.merge()`, `.filter()`,
+`.bind()`, `.bind_env()`, `.replace()`, `.with_callback()` all return new
+instances.
 
 ---
 
 ## Dependency injection
 
-Keyword-only parameters after `*` declare runtime dependencies:
+Keyword-only parameters after `*` declare runtime dependencies. The
+decorator's `env={...}` keyword maps each one to the env var that should
+back it:
 
 ```
-connector_fn(params, *, api_key: str)
+@connector(env={"api_key": "FRED_API_KEY"})
+async def connector_fn(params, *, api_key: str): ...
      ↓
-Connector(dep_names=frozenset({"api_key"}), fn=connector_fn)
-     ↓ .bind_deps(api_key=os.getenv("FRED_API_KEY"))
-Connector(dep_names=frozenset(), fn=partial(connector_fn, api_key=...))
+Connector(
+    dep_names=frozenset({"api_key"}),
+    env_map={"api_key": "FRED_API_KEY"},
+    fn=connector_fn,
+    bound=True,
+)
+     ↓ Connectors([connector_fn]).bind_env()  # reads os.environ["FRED_API_KEY"]
+Connector(
+    dep_names=frozenset(),
+    fn=partial(connector_fn, api_key=...),
+    bound=True,
+)
      ↓ connector(series_id="GDP")
-1. Pydantic validates kwargs → MyParams(series_id="GDP")
-2. fn(params, **bound_deps) called
-3. Return value wrapped in Result
-4. Callbacks fired with the Result
+1. Reject if bound=False → raise UnauthorizedError naming missing env var
+2. Pydantic validates kwargs → MyParams(series_id="GDP")
+3. fn(params, **bound_deps) called
+4. Return value wrapped in Result
+5. Callbacks fired with the Result
 ```
 
-`build_connectors_from_env` automates the bind step by reading each
-plugin's `ENV_VARS` dict and pulling values from `os.environ`. Plugins
-whose required env vars are absent are **silently skipped** — the expected
-behaviour when a user has not configured that provider.
+`Connectors.bind_env(overrides=None)` walks each connector's `env_map`
+and resolves values from `os.environ` (optionally layered with
+`overrides`). Connectors whose required env vars are missing stay in the
+collection but are marked `bound=False` — calling one raises
+`UnauthorizedError` immediately, naming the missing variable. Inspect via
+`Connectors.unbound`.
 
-Dependencies bound via `bind_deps` become part of the function partial.
-They are never stored in `Provenance.params` — API keys do not appear in
-lineage records, logs, or serialized results.
+For non-env dependencies (DB pools, HTTP clients), use `Connectors.bind`
+directly. Dependencies bound via either path become part of the function
+partial. They are never stored in `Provenance.params` — API keys do not
+appear in lineage records, logs, or serialized results.
 
 ---
 
@@ -182,8 +201,7 @@ Result(data=df, provenance=Provenance(...), output_schema=OutputConfig | None)
 Result returned to caller
 ```
 
-`Result` is a single class — the legacy `SemanticTableResult` subclass was
-merged into `Result` in 0.3.0. Results carry an optional
+`Result` is a single class. Results carry an optional
 `output_schema: OutputConfig | None`; the schema-aware accessors
 (`entity_keys`, `data_columns`, `metadata_columns`) return empty sequences
 when the schema is absent.
@@ -275,30 +293,43 @@ Retryable transport failures inside `add` are caught and counted in
 
 ## Plugin discovery
 
-`parsimony.discovery` walks the `parsimony.providers` entry-point group
-exactly once per process. Each entry point is loaded, validated against
-the contract (§4 of [`contract.md`](contract.md)), and wrapped in a
-`DiscoveredProvider` record.
+`parsimony.discover` is the entire discovery surface — three functions
+plus one frozen dataclass. No cache, no singleton, no import-time side
+effects. Consumers cache at their own level if they need to.
 
 ```
 parsimony.providers entry point(s)
-    ↓ iter_entry_points()
-    ↓ load_provider(ep)
-     ├─ importlib.import_module(ep.value)
-     ├─ validate CONNECTORS is a non-empty Connectors
-     ├─ validate ENV_VARS keys map to dep_names
-     └─ record distribution_name, version, module
-DiscoveredProvider(...)
-    ↓ build_connectors_from_env(env=os.environ)
-    ↓ for each provider: connectors.bind_deps(**read_env_vars(env, provider.env_vars))
-    ↓ + operator concatenates the bound bundles
-Connectors (single flat collection)
+    ↓ discover.iter_providers()
+    ↓ for each ep: yield Provider(name, module_path, dist_name, version)
+Provider(...)                                    ← metadata only; nothing imported yet
+    ↓ p.load()                                   ← imports the module on demand
+    ├─ importlib.import_module(p.module_path)
+    └─ validate CONNECTORS is a Connectors instance
+Connectors                                       ← from one provider
+
+discover.load_all()
+    ↓ for each Provider: try p.load(); on import failure log+skip
+    ↓ Connectors.merge(*loaded)                  ← duplicate-name → ValueError
+Connectors                                       ← single flat collection
+    ↓ .bind_env(overrides=None)
+Connectors                                       ← env-bound clones; some may be bound=False
 ```
 
-Failures (import error, contract violation) are logged and skipped — not
-raised — so a single broken plugin cannot take down the whole
-`build_connectors_from_env` call. The structured log line names the plugin
-and the failure reason.
+Failure modes:
+
+- Two distributions register the same provider name → `iter_providers`
+  raises `RuntimeError` naming both distributions.
+- Plugin module missing or wrong type for `CONNECTORS` → `Provider.load()`
+  raises `TypeError`.
+- Strict `discover.load("name")` for an absent provider → `LookupError`
+  with the available names listed.
+- Plugin import error inside `discover.load_all()` → logged at WARNING
+  via the `parsimony.discover` logger and skipped, so a single broken
+  plugin cannot take down the whole load.
+
+Provider metadata (homepage, version, distribution name) is read from
+`importlib.metadata` on demand — no per-module dictionaries duplicate the
+PEP 621 data.
 
 ---
 
@@ -331,13 +362,14 @@ The publisher pipeline:
 
 ```
 parsimony publish --provider NAME --target 'hf://org/catalog-{namespace}'
-    ↓ discovered_providers() → find NAME
+    ↓ discover.iter_providers() → find NAME → p.load() → CATALOGS / RESOLVE_CATALOG
     ↓ if --only and RESOLVE_CATALOG:
     │     for ns in only: resolve(ns) or fall back to CATALOGS walk
     │ else:
     │     walk CATALOGS, optionally filtered by --only
     ↓ for each (namespace, fn):
-    │     result = await fn()
+    │     bound = fn.bind_env() if isinstance(fn, Connector) else fn
+    │     result = await bound()
     │     catalog = Catalog(name=namespace, embedder=default)
     │     await catalog.add_from_result(result)
     │     await catalog.push(target.format(namespace=namespace))
@@ -445,8 +477,9 @@ pass. Three checks:
    `Connectors` instance.
 2. `check_descriptions_non_empty` — every connector has a non-empty
    description (no silently empty LLM tool schemas).
-3. `check_env_vars_map_to_deps` — every key in `ENV_VARS` names a real
-   dep on at least one connector.
+3. `check_env_map_matches_deps` — for every connector, each key in its
+   `env_map` (decorator-declared via `@connector(env={...})`) names a real
+   keyword-only dependency on that connector.
 
 The suite runs as a merge gate in `parsimony-connectors` CI, as a release
 gate per connector, and as a security-review artefact via
@@ -474,28 +507,26 @@ any requested namespace doesn't resolve.
 
 ### Why Protocol over ABC for `CatalogBackend` and `EmbeddingProvider`?
 
-ABCs require nominal subclassing. A user wiring up a Postgres backend has
-to import `BaseCatalog` just to inherit from it; a test fake has to do
-the same. Protocols carry the same structural contract without the
-inheritance tax. A plugin author copying a reference implementation can
-freely rename, reshape, or delete the base — the kernel only checks that
-the final object has the right methods.
+ABCs require nominal subclassing. A user wiring up a Postgres backend
+would have to import a base class just to inherit from it; a test fake
+would do the same. Protocols carry the same structural contract without
+the inheritance tax. A plugin author copying a reference implementation
+can freely rename, reshape, or delete the base — the kernel only checks
+that the final object has the right methods.
 
-### Why merge `SemanticTableResult` into `Result`?
+### Why is `Result` a single class with optional `output_schema`?
 
-Two result types was two too many. The subclass existed because schema-aware
-accessors (`entity_keys`, `data_columns`) needed a guaranteed `output_schema`.
-Making the schema optional on the base type and returning empty sequences
-when absent collapses the distinction. Existing code using
-`isinstance(result, SemanticTableResult)` should check
-`result.output_schema is not None` instead.
+One result type instead of a parent/subclass split. Schema-aware
+accessors (`entity_keys`, `data_columns`) check
+`result.output_schema is not None` and return empty sequences when the
+schema is absent — the type system stays flat without sacrificing the
+schema-aware operations.
 
-### Why delete `Namespace` and namespace templates?
+### Why per-call namespaces, not a templating mini-language?
 
-The `Namespace("x")` annotation class and `{placeholder}` namespace
-templates added a mini-language that plugin authors had to learn, for a
-problem that plain Python already solves. A plugin that needs per-call
-namespaces just builds the string directly:
+Plain Python already solves per-call namespace assembly without needing
+an annotation class or a `{placeholder}` template grammar that plugin
+authors must learn:
 
 ```python
 ns = f"sdmx_series_{agency.lower()}_{dataset_id.lower()}"
@@ -541,9 +572,15 @@ manipulate with code.
 
 The workflow this enables: **discover → fetch → analyze**. The agent
 calls `fred_search` as an MCP tool (small metadata result), then writes
-and executes Python calling `await client["fred_fetch"](series_id=...)`
-(full DataFrame lands in the code-execution environment), then operates
-on the DataFrame programmatically.
+and executes Python that loads connectors explicitly:
+
+```python
+from parsimony_fred import CONNECTORS as fred
+result = await fred.bind_env()["fred_fetch"](series_id="UNRATE")
+```
+
+The full DataFrame lands in the code-execution environment, where the
+agent can operate on it programmatically.
 
 The `"tool"` tag is the only mechanism. The MCP server
 (`parsimony-mcp` — separate distribution) filters with

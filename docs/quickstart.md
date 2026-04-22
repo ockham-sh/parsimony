@@ -128,9 +128,9 @@ export FRED_API_KEY="your-key-here"
 **Search for series:**
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred_connectors
 
-fred = FRED.bind_deps(api_key="your-key-here")
+fred = fred_connectors.bind_env()      # reads FRED_API_KEY from os.environ
 
 search = await fred["fred_search"](search_text="US unemployment rate")
 print(search.data[["id", "title"]].head())
@@ -189,9 +189,9 @@ publish to Hugging Face Hub:
 
 ```python
 from parsimony import Catalog
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred_connectors
 
-fred = FRED.bind_deps(api_key="your-fred-key")
+fred = fred_connectors.bind_env()      # reads FRED_API_KEY
 catalog = Catalog("fred")
 
 # Enumerate all series in FRED release 10 (Employment Situation)
@@ -249,22 +249,26 @@ await SDMX["sdmx_fetch"](SdmxFetchParams(dataset_key="ECB-EXR", series_key="D.US
 ### Composing multiple sources
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
-from parsimony_sdmx import CONNECTORS as SDMX
+from parsimony import Connectors
+from parsimony_fred import CONNECTORS as fred
+from parsimony_sdmx import CONNECTORS as sdmx
 
-all_connectors = FRED.bind_deps(api_key="your-key") + SDMX
+all_connectors = Connectors.merge(fred, sdmx).bind_env()
 result = await all_connectors["fred_fetch"](series_id="GDP")
 ```
 
-Or use `build_connectors_from_env()` to compose every installed plugin in
-one call, reading env vars automatically:
+Or use `discover.load_all()` to compose every installed plugin in one
+call, reading env vars automatically:
 
 ```python
-from parsimony.discovery import build_connectors_from_env
+from parsimony import discover
 
-connectors = build_connectors_from_env()
+connectors = discover.load_all().bind_env()
 result = await connectors["fred_fetch"](series_id="GDP")
 ```
+
+Connectors whose required env vars are not set stay in the collection but
+raise `UnauthorizedError` on call — list them via `connectors.unbound`.
 
 ---
 

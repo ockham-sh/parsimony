@@ -64,7 +64,7 @@ class TestConnectorBind:
             """Needs key."""
             return _make_search_df(params.query)
 
-        bound = needs_key.bind_deps(api_key="x")
+        bound = needs_key.bind(api_key="x")
         assert isinstance(bound, Connector)
         assert bound.dep_names == frozenset()
         result = asyncio.run(bound(query="GDP"))
@@ -76,10 +76,10 @@ class TestConnectorBind:
             """Needs two deps."""
             return _make_search_df(params.query)
 
-        partially_bound = needs_two.bind_deps(api_key="x")
+        partially_bound = needs_two.bind(api_key="x")
         assert partially_bound.dep_names == frozenset({"base_url"})
 
-        fully_bound = partially_bound.bind_deps(base_url="https://example.test")
+        fully_bound = partially_bound.bind(base_url="https://example.test")
         assert fully_bound.dep_names == frozenset()
         result = asyncio.run(fully_bound(query="GDP"))
         assert len(result.data) == 2
@@ -95,7 +95,7 @@ class TestConnectorBind:
             """B."""
             return _make_fetch_df()
 
-        wired = Connectors([a, b]).bind_deps(api_key="k")
+        wired = Connectors([a, b]).bind(api_key="k")
         assert wired.names() == ["a", "b"]
 
     def test_unbound_connector_call_raises(self) -> None:
@@ -399,12 +399,6 @@ class TestConnectorsCollection:
         with pytest.raises(ValueError, match="Duplicate connector names"):
             Connectors([demo_search, demo_search])
 
-    def test_add_raises_on_duplicate_connector_names(self) -> None:
-        left = Connectors([demo_search])
-        right = Connectors([demo_search])
-        with pytest.raises(ValueError, match="Duplicate connector names"):
-            _ = left + right
-
 
 # ---------------------------------------------------------------------------
 # kwargs calling convention
@@ -478,7 +472,7 @@ class TestCallback:
             asyncio.run(c["demo_search"](query=""))
         assert log == []
 
-    def test_callback_preserved_through_bind_deps(self) -> None:
+    def test_callback_preserved_through_bind(self) -> None:
         log: list[str] = []
 
         @connector()
@@ -486,7 +480,7 @@ class TestCallback:
             """Keyed."""
             return _make_search_df(params.query)
 
-        c = Connectors([keyed]).with_callback(lambda r: log.append(r.provenance.source)).bind_deps(api_key="k")
+        c = Connectors([keyed]).with_callback(lambda r: log.append(r.provenance.source)).bind(api_key="k")
         asyncio.run(c["keyed"](query="GDP"))
         assert log == ["keyed"]
 

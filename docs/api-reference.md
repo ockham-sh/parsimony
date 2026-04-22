@@ -29,6 +29,10 @@ for the authoritative list. The kernel ships no provider-specific code.
 12. [CLI](#cli)
 13. [Environment variables](#environment-variables)
 
+> Plugin authors: see [`contract.md`](contract.md) §4.5/§4.6 for the
+> `@connector(env=...)` declaration shape and the keep-but-unbound
+> credentialing contract.
+
 ---
 
 ## Connector primitives
@@ -47,16 +51,18 @@ Frozen dataclass wrapping a single async data-fetching function.
 |---|---|---|
 | `name` | `str` | Decorator-derived identifier. |
 | `description` | `str` | First paragraph of docstring. |
-| `tags` | `frozenset[str]` | Domain / `"tool"` markers. |
+| `tags` | `tuple[str, ...]` | Domain / `"tool"` markers. |
 | `param_type` | `type[BaseModel]` | Pydantic params model. |
 | `dep_names` | `frozenset[str]` | Required keyword-only deps (must be bound). |
 | `optional_dep_names` | `frozenset[str]` | Optional keyword-only deps. |
 | `output_config` | `OutputConfig \| None` | When set, result carries a schema. |
+| `env_map` | `Mapping[str, str]` | Decorator-declared env-var backings (`{"api_key": "FOO_API_KEY"}`). Frozen, defaults to empty. |
+| `bound` | `bool` | `False` on clones produced by `Connectors.bind_env` when a required env var was missing. Calling such a connector raises `UnauthorizedError` immediately. |
 
 | Method | Signature | Description |
 |---|---|---|
-| `__call__` | `async (params_dict_or_model, **overrides) -> Result` | Validate params, inject bound deps, call fn, wrap in `Result`. |
-| `bind_deps` | `(self, **deps) -> Connector` | Return new connector with named deps pre-bound. |
+| `__call__` | `async (params_dict_or_model, **overrides) -> Result` | If `bound=False`, raise `UnauthorizedError`. Otherwise validate params, inject bound deps, call fn, wrap in `Result`. |
+| `bind` | `(self, **deps) -> Connector` | Return new connector with named deps pre-bound. (Renamed from `bind_deps` in 0.4; no compat alias.) |
 | `with_callback` | `(self, cb: ResultCallback) -> Connector` | Return new connector with an appended callback. |
 | `to_llm` | `(self) -> str` | Serialize as a plain-text tool description. |
 | `describe` | `(self) -> str` | Human-readable one-line summary. |
@@ -71,54 +77,85 @@ Immutable ordered collection of `Connector` instances.
 
 | Method | Signature | Description |
 |---|---|---|
-| `__init__` | `(connectors: Iterable[Connector])` | Construct from any iterable. |
-| `__add__` | `(self, other: Connectors) -> Connectors` | Combine two bundles. |
+| `__init__` | `(connectors: Sequence[Connector])` | Construct from any sequence; raises `ValueError` on duplicate names. |
 | `__getitem__` | `(self, name: str) -> Connector` | Look up by name; raises `KeyError`. |
 | `__iter__` | `() -> Iterator[Connector]` | Ordered iteration. |
 | `__contains__` | `(name: str) -> bool` | Name membership check. |
 | `__len__` | `() -> int` | Number of connectors. |
-| `filter` | `(self, *, tags=None, name=None) -> Connectors` | Filter by tag intersection or name substring. |
-| `bind_deps` | `(self, **deps) -> Connectors` | Apply `bind_deps` to every connector. |
+| `merge` *(classmethod)* | `(*others: Connectors) -> Connectors` | Combine N collections into a new one; raises `ValueError` on duplicate names across collections. Accepts zero args (returns empty). |
+| `bind` | `(self, **deps) -> Connectors` | Apply `bind` to every connector that accepts each named dep (silently ignores deps that no connector declares). |
+| `bind_env` | `(self, overrides: Mapping[str, str] \| None = None) -> Connectors` | For each connector, walk `env_map`; resolve from `os.environ \| overrides`; bind values that are present. Connectors with missing required env vars stay in the collection with `bound=False`. |
+| `unbound` *(property)* | `tuple[str, ...]` | Names of connectors marked `bound=False` after `bind_env`. |
+| `env_vars` | `() -> frozenset[str]` | Union of declared env-var names across every connector's `env_map`. |
+| `replace` | `(self, name: str, connector: Connector) -> Connectors` | Return a new collection with `name` swapped for `connector`. Raises `KeyError` if `name` is absent. |
+| `filter` | `(self, predicate: Callable[[Connector], bool] \| None = None, *, name=None, tags=None, **properties) -> Connectors` | Predicate overrides every other filter. Otherwise filter by substring on name/description, full tag-subset match, and property k/v matches. |
 | `with_callback` | `(self, cb: ResultCallback) -> Connectors` | Apply `with_callback` to every connector. |
-| `to_llm` | `(self) -> str` | Concatenate tool descriptions. |
+| `to_llm` | `(self, *, header="", heading="Connectors") -> str` | Concatenate tool descriptions. |
 | `describe` | `(self) -> str` | Multi-line summary. |
-| `names` | `() -> list[str]` | Ordered list of connector names. |
+| `names` | `() -> list[str]` | Sorted list of connector names. |
+
+> `__add__` exists as an internal helper but public callers should prefer
+> `Connectors.merge(*others)` so duplicate-name failures surface explicitly.
 
 ### `connector` decorator
 
 ```python
 connector(
+    *,
+    env: dict[str, str] | None = None,
     name: str | None = None,
     description: str | None = None,
-    tags: list[str] | None = None,
+    params: type[BaseModel] | None = None,
     output: OutputConfig | None = None,
+    tags: list[str] | None = None,
+    properties: dict[str, Any] | None = None,
 ) -> Callable[[AsyncFunc], Connector]
 ```
 
 **Stable.** Wraps an async function that takes a Pydantic model as its first
-positional argument. When `output` is provided, the connector's return value
-is coerced into a `Result` carrying that schema; otherwise the `Result`
-carries no schema.
+positional argument. The `env` mapping names environment-variable backings
+for keyword-only deps (`{"api_key": "FRED_API_KEY"}`); consumers resolve
+these through `Connectors.bind_env`. When `output` is provided, the
+connector's return value is coerced into a `Result` carrying that schema;
+otherwise the `Result` carries no schema.
 
 ### `enumerator` decorator
 
 ```python
-enumerator(output: OutputConfig) -> Callable[[AsyncFunc], Connector]
+enumerator(
+    *,
+    output: OutputConfig,
+    env: dict[str, str] | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    params: type[BaseModel] | None = None,
+    tags: list[str] | None = None,
+    properties: dict[str, Any] | None = None,
+) -> Callable[[AsyncFunc], Connector]
 ```
 
 **Stable.** Like `connector`, but enforces a catalog-population shape on the
-`OutputConfig`: exactly one KEY column, at least one TITLE column, no DATA
+`OutputConfig`: exactly one KEY column, exactly one TITLE column, no DATA
 columns. Intended for functions that list entity identifiers for later
 catalog ingestion.
 
 ### `loader` decorator
 
 ```python
-loader(output: OutputConfig) -> Callable[[AsyncFunc], Connector]
+loader(
+    *,
+    output: OutputConfig,
+    env: dict[str, str] | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    params: type[BaseModel] | None = None,
+    tags: list[str] | None = None,
+    properties: dict[str, Any] | None = None,
+) -> Callable[[AsyncFunc], Connector]
 ```
 
-**Stable.** Enforces observation-loading shape: at least one KEY column and
-at least one DATA column.
+**Stable.** Enforces observation-loading shape: exactly one KEY column with
+a non-empty `namespace=`, at least one DATA column, no TITLE/METADATA.
 
 ### `ResultCallback`
 
@@ -218,9 +255,9 @@ Result(
 )
 ```
 
-**Stable.** Universal connector return type. The legacy
-`SemanticTableResult` subclass was merged into `Result` in 0.3.0 — results
-now carry the schema as an optional attribute rather than as a subclass.
+**Stable.** Universal connector return type. Results carry the schema as
+an optional `output_schema` attribute; schema-aware accessors return
+empty sequences when the schema is absent.
 
 **Class methods:**
 
@@ -477,51 +514,60 @@ LoadResult(total: int, loaded: int, skipped: int, errors: int)
 ## Discovery
 
 ```python
-from parsimony.discovery import (
-    DiscoveredProvider,
-    discovered_providers,
-    iter_entry_points,
-    load_provider,
-    build_connectors_from_env,
-    PluginError, PluginImportError, PluginContractError,
-)
+from parsimony import discover
+# discover.Provider, discover.iter_providers, discover.load, discover.load_all
 ```
 
-### `DiscoveredProvider`
+Three functions plus one frozen dataclass — the entire discovery surface.
+No cache, no singleton, no import-time side effects. Consumers cache at
+their own level if they need to.
 
-**Stable.** Record returned from `discovered_providers` / `load_provider`.
+### `Provider`
 
-| Field | Type |
-|---|---|
-| `name` | `str` — entry-point key. |
-| `module_path` | `str` — dotted module path. |
-| `connectors` | `Connectors` |
-| `env_vars` | `dict[str, str]` |
-| `provider_metadata` | `dict[str, Any]` |
-| `distribution_name` | `str` |
-| `version` | `str` |
-| `module` | `ModuleType` |
+**Stable.** Frozen dataclass — installed-plugin metadata only, no module
+reference.
 
-### `discovered_providers() -> list[DiscoveredProvider]`
+| Field | Type | Notes |
+|---|---|---|
+| `name` | `str` | Entry-point key (lowercase snake_case). |
+| `module_path` | `str` | Dotted module path the entry point points at. |
+| `dist_name` | `str \| None` | Distribution name (`parsimony-fred`, ...) from `importlib.metadata`. |
+| `version` | `str \| None` | Distribution version from `importlib.metadata`. |
 
-**Stable.** Walks the `parsimony.providers` entry-point group once, caches
-results. Failures are logged and skipped — not raised.
+| Property / method | Returns | Description |
+|---|---|---|
+| `homepage` *(property)* | `str \| None` | Reads `[project.urls] Homepage` (or `Home-page`) from the distribution's PEP 621 metadata on demand. |
+| `load()` | `Connectors` | Imports the plugin module and returns its `CONNECTORS` export. Raises `TypeError` if the module does not export a `Connectors` instance named `CONNECTORS`. |
 
-### `iter_entry_points() -> Iterator[EntryPoint]`
+### `iter_providers() -> Iterator[Provider]`
 
-**Stable.** Lower-level iteration over the entry-point group itself.
+**Stable.** Enumerate installed providers by walking the
+`parsimony.providers` entry-point group. Metadata-only — never imports a
+plugin module.
 
-### `load_provider(entry_point) -> DiscoveredProvider`
+Raises `RuntimeError` if two distributions register the same provider name
+(the kernel refuses to guess which one wins; uninstall one).
 
-**Stable.** Load one entry point and validate against §4. Raises
-`PluginImportError` if the module fails to import, `PluginContractError` if
-it violates the export contract.
+### `load(*names: str) -> Connectors`
 
-### `build_connectors_from_env(*, env=None) -> Connectors`
+**Stable.** Strict: load the named providers and merge them. Raises
+`LookupError` (with the available names listed) if any requested name is
+not installed. Uses `Connectors.merge` internally, so duplicate connector
+names across providers raise `ValueError`.
 
-**Stable.** Compose every discovered provider, binding `ENV_VARS` keys from
-`os.environ` (or `env` if supplied). Providers whose required env vars are
-absent are silently excluded.
+### `load_all() -> Connectors`
+
+**Stable.** Forgiving: load every installed provider and merge them.
+Plugins that fail to import are logged at WARNING via the
+`parsimony.discover` logger and skipped — a single broken plugin cannot
+take down the whole load.
+
+The typical bootstrap chains it with `bind_env` to resolve credentials:
+
+```python
+from parsimony import discover
+connectors = discover.load_all().bind_env()
+```
 
 ---
 
@@ -531,16 +577,21 @@ absent are silently excluded.
 from parsimony.publish import publish, publish_provider, collect_catalogs, PublishReport
 ```
 
-### `publish(module, *, target, only=None, dry_run=False) -> PublishReport`
+### `publish(module, *, target, only=None, dry_run=False, env=None, provider_name=None) -> PublishReport`
 
 **Stable.** Build one `Catalog` per declared namespace and push each to
 `target.format(namespace=...)`. `only` restricts to specific namespaces
-(uses `RESOLVE_CATALOG` if present to skip the `CATALOGS` walk).
+(uses `RESOLVE_CATALOG` if present to skip the `CATALOGS` walk). For
+catalog callables that are themselves `Connector` instances, the
+publisher resolves their `env_map` via `bind_env(env or os.environ)`.
+The legacy `env_vars=` parameter on `publish` was removed in 0.4.
 
-### `publish_provider(name, *, target, only=None, dry_run=False) -> PublishReport`
+### `publish_provider(name, *, target, only=None, dry_run=False, env=None) -> PublishReport`
 
-**Stable.** Like `publish`, but looks up the provider module by the
-entry-point key returned from `discovered_providers`.
+**Stable.** Like `publish`, but looks up the provider module via
+`discover.iter_providers()` by entry-point key. The optional `env`
+mapping is layered on top of `os.environ` when binding catalog-callable
+connectors.
 
 ### `collect_catalogs(module, *, only=None) -> list[tuple[str, Callable]]`
 
@@ -587,8 +638,14 @@ the exact checks.
 
 ### `ProviderTestSuite`
 
-**Stable.** Pytest-native base class. Subclass it and set `module` to
-the plugin module; the four `test_*` methods are discovered by pytest.
+**Stable.** Pytest-native base class. Subclass it and set either `module`
+(the imported plugin module) or `module_path` (its dotted path); the four
+`test_*` methods are discovered by pytest:
+
+* `test_connectors_exported`
+* `test_descriptions_non_empty`
+* `test_env_map_matches_deps`  *(renamed from `test_env_vars_map_to_deps` in 0.4)*
+* `test_entry_point_resolves`  *(skipped unless `entry_point_name` is set)*
 
 ```python
 import parsimony_myplugin
@@ -596,6 +653,7 @@ from parsimony.testing import ProviderTestSuite
 
 class TestMyPlugin(ProviderTestSuite):
     module = parsimony_myplugin
+    entry_point_name = "myplugin"   # optional; enables the entry-point check
 ```
 
 ### `iter_check_names() -> Iterable[str]`
@@ -678,7 +736,7 @@ All **stable**. Hierarchy:
 
 ```
 ConnectorError(provider: str)
-├── UnauthorizedError      — 401/403 credentials rejected
+├── UnauthorizedError      — 401/403 credentials rejected, OR connector is bound=False (see Connectors.bind_env)
 ├── PaymentRequiredError   — 402 plan restriction
 ├── RateLimitError         — 429 rate-limit (carries retry_after: float, quota_exhausted: bool)
 ├── ProviderError          — 5xx / unexpected status
@@ -690,6 +748,11 @@ Every error carries `.provider: str` so callers can identify the source
 without parsing message strings. `RateLimitError.retry_after` is the wait
 in seconds; `RateLimitError.quota_exhausted=True` indicates a terminal
 condition (do not retry).
+
+`UnauthorizedError` is also raised by `Connector.__call__` when the
+connector was returned from `Connectors.bind_env` with `bound=False` —
+the message names the missing env var so the user can fix configuration
+without grepping documentation.
 
 These are operational errors. Programmer errors (bad types, invalid
 parameters) remain `TypeError` / `ValueError` / Pydantic `ValidationError`.
@@ -729,11 +792,23 @@ The `parsimony` console script exposes two verbs.
 Enumerate installed plugins and their declared catalogs.
 
 ```bash
-parsimony list                  # human-readable table
+parsimony list                  # human-readable table — metadata only, no plugin imports
 parsimony list --json           # machine-readable JSON
-parsimony list --strict         # run conformance suite; exit non-zero on failure
+parsimony list --strict         # import each plugin + run conformance suite; exit non-zero on failure
 parsimony list --strict --json  # JSON + strict — the security-review artefact
 ```
+
+Without `--strict`, no plugin module is imported — `parsimony list`
+walks `discover.iter_providers()` only. With `--strict`, each plugin is
+imported and `parsimony.testing.assert_plugin_valid(module)` runs against
+it; the connector count and declared catalogs are surfaced in the same
+pass.
+
+The `--json` payload is `{"plugins": [...], "env_vars": [...]}` where
+`env_vars` is the union of every connector's declared env-var names
+(strict mode only — empty otherwise). The previous per-plugin
+`env_vars_present` / `env_vars_missing` / `provider_metadata` keys were
+dropped in 0.4.
 
 ### `parsimony publish`
 

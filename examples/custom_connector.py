@@ -57,7 +57,7 @@ async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Compose custom + built-in connectors into one bundle.
-    fred = Connectors([fred_fetch]).bind_deps(api_key=api_key)
+    fred = Connectors([fred_fetch]).bind(api_key=api_key)
     bundle = fred + Connectors([my_data_source])
 
     print(f"Bundle connectors: {bundle.names()}")

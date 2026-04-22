@@ -44,12 +44,16 @@ nav:
       - User Guide: user-guide.md
   - Guides:
       - Building Connectors: connector-implementation-guide.md
+      - New Plugin Guide: guide-new-plugin.md
+      - Private Connectors: building-a-private-connector.md
       - Internal Connectors: internal-connectors.md
       - MCP Setup: mcp-setup.md
       - Cookbook: cookbook.md
       - FAQ: faq.md
-  - API Reference: api-reference.md
-  - Architecture: architecture.md
+  - Reference:
+      - Plugin Contract: contract.md
+      - API Reference: api-reference.md
+      - Architecture: architecture.md
 
 markdown_extensions:
   - pymdownx.highlight:

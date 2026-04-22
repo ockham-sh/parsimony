@@ -39,8 +39,10 @@ import asyncpg
 import pandas as pd
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony import (
+    Column, ColumnRole, Connectors, OutputConfig, Provenance, Result,
+    connector, enumerator,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +171,10 @@ import pandas as pd
 import snowflake.connector
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony import (
+    Column, ColumnRole, Connectors, OutputConfig, Provenance, Result,
+    connector, enumerator,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +315,7 @@ import pandas as pd
 import pyarrow.parquet as pq
 from pydantic import BaseModel, Field
 
-from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony import Column, ColumnRole, Connectors, OutputConfig, connector, enumerator
 
 
 # ---------------------------------------------------------------------------
@@ -451,7 +454,7 @@ all_connectors = (
 # Auto-index into catalog on every fetch:
 from parsimony import Catalog
 catalog = Catalog("indexed")
-all_connectors = all_connectors.with_callback(catalog.index_result)
+all_connectors = all_connectors.with_callback(catalog.add_from_result)
 ```
 
 ---

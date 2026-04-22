@@ -1,12 +1,17 @@
 # Contributing to parsimony
 
-Thank you for your interest in contributing! This guide covers everything from setting up your development environment to submitting a pull request.
+Thank you for your interest in contributing! This guide covers kernel
+development. For **new or updated connectors**, contribute to
+[ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)
+— the kernel accepts no provider-specific code. That's structurally
+enforced by [`tests/test_kernel_purity.py`](tests/test_kernel_purity.py).
 
-## Development Setup
+## Development setup
 
 ### Option 1: uv (recommended)
 
-[uv](https://docs.astral.sh/uv/) is the fastest way to get a working environment:
+[uv](https://docs.astral.sh/uv/) is the fastest way to get a working
+environment:
 
 ```bash
 git clone https://github.com/<your-username>/parsimony.git
@@ -16,8 +21,6 @@ uv pip install -e ".[dev]"
 ```
 
 ### Option 2: pip
-
-Standard pip works fine if you prefer it:
 
 ```bash
 git clone https://github.com/<your-username>/parsimony.git
@@ -60,124 +63,99 @@ mypy parsimony/
 
 Run all checks before submitting a PR. CI will run the same commands.
 
-## Making Changes
+## Making changes
 
-1. **Fork** this repository
-2. **Create a feature branch** from `main` (`git checkout -b feat/my-feature`)
-3. **Write tests** for new functionality (we follow TDD -- write tests first)
-4. **Run checks** (tests, linting, type checking)
-5. **Submit a pull request** with a clear description
+1. **Fork** this repository.
+2. **Create a feature branch** from `main` (`git checkout -b feat/my-feature`).
+3. **Write tests** for new functionality (we follow TDD — write tests first).
+4. **Run checks** (tests, linting, type checking).
+5. **Submit a pull request** with a clear description.
 
-### Code Style
+### Code style
 
-- We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting (line length: 120)
-- Type hints on all public function signatures
-- Docstrings on public classes and functions
-- Pydantic models for all external contracts (parameter boundaries)
-- Immutable data structures preferred (`frozen=True` dataclasses, `Connectors` is immutable)
+- We use [ruff](https://docs.astral.sh/ruff/) for linting and formatting
+  (line length: 120).
+- Type hints on all public function signatures.
+- Docstrings on public classes and functions.
+- Pydantic models for all external contracts (parameter boundaries).
+- Immutable data structures preferred (`frozen=True` dataclasses,
+  `Connectors` is immutable).
 
-## Adding a New Connector
+### What belongs in the kernel
 
-New connectors are the most common contribution. Here is the step-by-step process.
+The kernel ships connector primitives, the `CatalogBackend` Protocol and
+`Catalog` reference implementation, plugin discovery, conformance, the
+publish orchestrator, the CLI, and shared HTTP utilities. That's it.
 
-### 1. Create the connector module
+Provider-specific code — API wrappers, endpoint knowledge, response-shape
+transformations — lives in individual `parsimony-<name>` plugin
+distributions, not here.
 
-Add a new file in `parsimony/connectors/`. Use `parsimony/connectors/fred.py` as the reference implementation. Your module needs:
+If you're unsure whether a change belongs in the kernel or a plugin,
+open an issue before you start coding.
 
-- **Pydantic params model(s)** -- one model per connector function, defining the user-facing parameters with types, defaults, and descriptions.
-- **OutputConfig** (optional but recommended) -- declares column roles (KEY, TITLE, DATA, METADATA) for typed results. Required for connectors that will feed the catalog.
-- **Async connector function(s)** decorated with `@connector()`, `@enumerator()`, or `@loader()`.
-- **A `CONNECTORS` export** -- a `Connectors([...])` bundle containing all connector instances from the module.
+## Pull request guidelines
 
-For detailed patterns, see [docs/connector-implementation-guide.md](docs/connector-implementation-guide.md).
+- Keep PRs focused on a single change.
+- Include tests for new features.
+- Update `CHANGELOG.md` under the `[Unreleased]` section.
+- Reference any related issues.
+- Use conventional commit messages: `feat:`, `fix:`, `refactor:`,
+  `docs:`, `test:`, `chore:`.
 
-### 2. Wire up the factory (if applicable)
-
-If your connector requires an API key, add it to `build_connectors_from_env()` in `parsimony/connectors/__init__.py`. Add a `ProviderSpec` entry to the `PROVIDERS` registry and export an `ENV_VARS` dict from your module. Follow the existing pattern:
-
-```python
-my_key = _env.get("MY_API_KEY")
-if my_key:
-    from parsimony.connectors.my_source import CONNECTORS as MY_SOURCE
-    result = result + MY_SOURCE.bind_deps(api_key=my_key)
-```
-
-### 3. Write tests
-
-Add tests in `tests/`. At minimum:
-
-- **Unit tests** for param validation (required fields, defaults, validators)
-- **Integration tests** for the connector function (mock HTTP responses with `pytest` fixtures)
-- Verify the result type (`Result` vs `SemanticTableResult`)
-- Verify provenance is populated correctly
-- Verify column roles match the `OutputConfig`
-
-### 4. Update documentation
-
-- Add your connector to the env var table in `docs/user-guide.md`
-- Add a usage example showing common call patterns
-
-### Connector PR checklist
-
-Before submitting your PR, verify:
-
-- [ ] Pydantic params model with `Field(description=...)` on every field
-- [ ] Async function with a descriptive docstring (used as the connector description)
-- [ ] `OutputConfig` with correct column roles (if the connector returns tabular data)
-- [ ] Dependencies (API keys, HTTP clients) declared as keyword-only args after `*`
-- [ ] `CONNECTORS` bundle exported from the module
-- [ ] Tests pass: `pytest tests/ -v`
-- [ ] Linting passes: `ruff check .`
-- [ ] Type checking passes: `mypy parsimony/`
-- [ ] No hardcoded API keys or secrets in the source
-- [ ] User guide and env var table updated
-
-## Good First Issues
-
-If you are looking for a way to get started, here are some approachable tasks:
-
-- **Add tests for an existing connector** -- several connectors have minimal test coverage. Pick one and add param validation + mocked response tests.
-- **Improve error messages** -- find a connector that raises a generic `ValueError` and make the message more helpful (include the parameter that failed, suggest a fix).
-- **Add a new OutputConfig** -- some connectors return raw `Result` without column roles. Adding an `OutputConfig` makes them catalog-indexable.
-- **Documentation examples** -- add a new example script in `examples/` showing a workflow not yet covered.
-
-Look for issues labeled `good first issue` in the issue tracker.
-
-## Pull Request Guidelines
-
-- Keep PRs focused on a single change
-- Include tests for new connectors or features
-- Update CHANGELOG.md under the `[Unreleased]` section
-- Reference any related issues
-- Use conventional commit messages: `feat:`, `fix:`, `refactor:`, `docs:`, `test:`, `chore:`
-
-## Project Structure
+## Project structure
 
 ```
 parsimony/
-├── connector.py          # @connector, @enumerator, @loader decorators + Connectors collection
-├── result.py             # Result, SemanticTableResult, OutputConfig, Provenance, Column (+ Arrow/Parquet)
-├── errors.py             # ConnectorError hierarchy + BundleNotFoundError
-├── catalog/              # BaseCatalog ABC, SeriesEntry/SeriesMatch models, EmbedderInfo
-├── _standard/            # Canonical Catalog (Parquet + FAISS + BM25 + RRF), embedders, URL sources
-├── bundles/              # CatalogSpec/CatalogPlan declarative layer + LazyNamespaceCatalog wrapper
-├── discovery/            # Plugin entry-point discovery (parsimony.providers) + build_connectors_from_env
-├── stores/               # DataStore + InMemoryDataStore (observation persistence for @loader)
-├── transport/            # HttpClient with credential redaction, JSON helpers
-├── cli/                  # `parsimony list-plugins`, `parsimony conformance verify`, `parsimony bundles {list,build}`
-└── testing.py            # assert_plugin_valid (procedural) + ProviderTestSuite (pytest class)
+├── __init__.py         Public surface (lazy-loaded via PEP 562).
+├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
+├── result.py           Result + Provenance + OutputConfig + Column + ColumnRole.
+├── catalog.py          CatalogBackend Protocol + Catalog + SeriesEntry/Match/IndexResult + parse_catalog_url.
+├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + LiteLLMEmbeddingProvider.
+├── indexes.py          FAISS + BM25 + RRF pure functions (private).
+├── publish.py          publish(module, ...) — reads CATALOGS / RESOLVE_CATALOG.
+├── discovery.py        entry-point scan + DiscoveredProvider + build_connectors_from_env.
+├── stores.py           InMemoryDataStore + LoadResult.
+├── errors.py           ConnectorError hierarchy.
+├── transport.py        HttpClient + pooled_client + map_http_error + redact_url.
+├── testing.py          assert_plugin_valid + ProviderTestSuite.
+└── cli.py              Two verbs: `parsimony list`, `parsimony publish`.
 ```
-(MCP server lives in the separate `parsimony-mcp` distribution.)
+
+The MCP server lives in the separate `parsimony-mcp` distribution;
+individual connectors live in the `parsimony-connectors` monorepo.
 
 ### Key architectural decisions
 
-- **Three decorator primitives**: `@connector` (fetch/search), `@enumerator` (catalog population), `@loader` (data persistence). All produce the same `Connector` type.
-- **Frozen dataclasses + immutable collections** -- `Connector` is `@dataclass(frozen=True)`, `Connectors` is immutable.
-- **Pydantic models at boundaries** -- every connector validates params via a Pydantic `BaseModel`.
-- **Lazy loading** in `__init__.py` via `__getattr__` -- keeps `import parsimony` fast.
-- **Provider registry** -- `PROVIDERS` tuple in `connectors/__init__.py` drives `build_connectors_from_env`.
-- **Dependency injection** -- keyword-only args after `*` in connector functions, bound via `bind_deps()`.
+- **Three decorator primitives**: `@connector` (fetch/search),
+  `@enumerator` (catalog population), `@loader` (data persistence). All
+  produce the same `Connector` type.
+- **Structural typing over ABCs**: `CatalogBackend` and
+  `EmbeddingProvider` are `typing.Protocol` classes. Custom backends
+  match the shape; no subclassing required.
+- **Flat module layout**: no subpackages. Each public-surface module is
+  a single file at the top level of `parsimony/`.
+- **Frozen dataclasses + immutable collections**: `Connector` is
+  `@dataclass(frozen=True)`, `Connectors` is immutable.
+- **Pydantic models at boundaries**: every connector validates params
+  via a Pydantic `BaseModel`.
+- **Lazy loading** in `__init__.py` via `__getattr__` (PEP 562) — keeps
+  `import parsimony` fast.
+- **Dependency injection** — keyword-only args after `*` in connector
+  functions, bound via `bind_deps()`.
 
-## Code of Conduct
+## Reporting bugs
 
-Please read our [Code of Conduct](CODE_OF_CONDUCT.md). We are committed to providing a welcoming and inclusive experience for everyone.
+For bugs in the kernel itself, open a GitHub issue with:
+
+- The `parsimony-core` version (`pip show parsimony-core`).
+- A minimal reproduction (ideally a failing test).
+- The full traceback.
+
+For security issues: see [`SECURITY.md`](SECURITY.md) — do **not** open a
+public issue.
+
+## Code of conduct
+
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md). We are committed to
+providing a welcoming and inclusive experience for everyone.

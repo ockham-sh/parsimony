@@ -7,7 +7,7 @@ The final package installs from your private Python index (Artifactory,
 internal Nexus, GitHub Packages, wheel file) and plugs into the kernel
 exactly like an officially-maintained connector.
 
-**Binding spec:** [`contract.md`](contract.md). If anything below
+**Authoritative contract:** [`contract.md`](contract.md). If anything below
 contradicts the contract spec, the spec wins.
 
 ---
@@ -22,12 +22,12 @@ Use this path when any of the following is true:
   client code, endpoint documentation, or example responses under
   Apache 2.0.
 - You want your own release cadence separate from the
-  `parsimony-connectors` monorepo.
+  [`parsimony-connectors`](https://github.com/ockham-sh/parsimony-connectors)
+  monorepo.
 
 If none apply and your connector can ship under Apache 2.0, contribute it
-to [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)
-instead — you get free matrix CI, shared trust-root identity, and the
-monorepo's maintainer rotation.
+to `parsimony-connectors` instead — you get free matrix CI, shared trust-
+root identity, and the monorepo's maintainer rotation.
 
 ---
 
@@ -42,9 +42,9 @@ uvx cookiecutter gh:ockham-sh/parsimony-plugin-template
 Answer the prompts (`provider_name`, `description`, author info). The
 scaffold writes a minimal working connector with:
 
-- `pyproject.toml` — entry-point registration, contract classifier, mandatory
-  kernel pin, Python classifier range
-- `src/parsimony_<name>/__init__.py` — a placeholder `CONNECTORS` export
+- `pyproject.toml` — entry-point registration, kernel version pin, Python
+  classifier range
+- `parsimony_<name>/__init__.py` — a placeholder `CONNECTORS` export
 - `tests/test_conformance.py` — release-blocking conformance test
 - `.github/workflows/ci.yml` — test + lint + conformance on every PR
 
@@ -54,13 +54,15 @@ Commit and push to your internal repository (or GitHub, if public).
 
 ## 3. Write the connector
 
-Replace the placeholder in `src/parsimony_<name>/__init__.py`. The minimum
+Replace the placeholder in `parsimony_<name>/__init__.py`. The minimum
 shape:
 
 ```python
 from pydantic import BaseModel, Field
-from parsimony import Connectors, connector
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony import (
+    Column, ColumnRole, Connectors, OutputConfig, Provenance, Result,
+    connector,
+)
 
 
 class YourFetchParams(BaseModel):
@@ -97,12 +99,35 @@ CONNECTORS = Connectors([your_fetch])
 Run the conformance suite locally:
 
 ```bash
-uv sync --all-extras
-uv run pytest
-uv run parsimony conformance verify parsimony-<yourname>
+pip install -e .[dev]
+pytest tests/test_conformance.py
+parsimony list --strict                        # fails if any plugin flunks conformance
 ```
 
-If `conformance verify` exits `0`, the package meets the contract.
+`parsimony list --strict` exits non-zero on any conformance failure; the
+report (in `--json` mode) is the machine-readable artefact your security
+team can consume.
+
+### Publishing catalogs (optional)
+
+If your internal connector should produce searchable catalog bundles for
+your agents to load via `Catalog.from_url(...)`, export `CATALOGS` on
+the module:
+
+```python
+# Static — namespaces known at import time
+CATALOGS = [("your_name", your_enumerate)]
+
+# Or async generator — namespaces discovered at build time
+async def CATALOGS():
+    async for division in _fetch_divisions():
+        yield f"your_name_{division.code.lower()}", partial(your_enumerate, division=division)
+```
+
+Run `parsimony publish --provider your_name --target 'file:///shared/catalogs/{namespace}'`
+(or against your internal Hugging Face mirror / S3 bucket) to build and
+push catalogs. See [`contract.md`](contract.md) §6 for the full spec and
+optional `RESOLVE_CATALOG` reverse lookup.
 
 ---
 
@@ -150,11 +175,11 @@ Your users install from the private index:
 
 ```bash
 pip install --index-url https://your-artifactory.example/api/pypi/internal/simple/ \
-            parsimony parsimony-<yourname>
+            parsimony-core parsimony-<yourname>
 ```
 
-Or, if your users run in a `uv sync` workflow with a pinned private index
-in their own project's `pyproject.toml`:
+Or, in a `uv sync` workflow with a pinned private index in the
+consuming project's `pyproject.toml`:
 
 ```toml
 [[tool.uv.index]]
@@ -166,35 +191,18 @@ explicit = true
 "parsimony-yourname" = { index = "internal" }
 ```
 
-### The trust gate
+### Discovery
 
-The kernel's default allow-list does **not** include your private
-package — it only auto-trusts officially-maintained
-`parsimony-<name>` distributions from
-[ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
-Users of your package must explicitly opt in:
-
-```bash
-export PARSIMONY_TRUST_PLUGINS="parsimony-yourname,parsimony-other-internal"
-```
-
-Or in a Python application bootstrap:
+The kernel walks the `parsimony.providers` entry-point group on
+`build_connectors_from_env()` and loads every installed plugin. Your
+internal plugin is treated identically to officially-maintained ones
+— the kernel does not differentiate.
 
 ```python
-import os
-os.environ.setdefault(
-    "PARSIMONY_TRUST_PLUGINS",
-    "parsimony-yourname,parsimony-other-internal",
-)
-
-from parsimony import build_connectors_from_env
+from parsimony.discovery import build_connectors_from_env
 connectors = build_connectors_from_env()
-```
-
-The structured log line emitted when your plugin loads says exactly why:
-
-```
-INFO parsimony.discovery: parsimony: loading non-official plugin 'parsimony-yourname' (opted in via PARSIMONY_TRUST_PLUGINS)
+# "your_fetch" is now available alongside any other installed plugin
+result = await connectors["your_fetch"](entity_id="E123")
 ```
 
 ---
@@ -205,38 +213,59 @@ If your security team needs to approve `parsimony-yourname` before
 production rollout, the deliverable for them is:
 
 ```bash
-parsimony conformance verify parsimony-yourname --json > verify-report.json
+parsimony list --strict --json > verify-report.json
 ```
 
-Exit code `0` + `"passed": true` in the JSON is the machine-readable
-pass/fail they're looking for. The report schema is stable across kernel
-MINOR releases (see [`contract.md`](contract.md) §5).
+Exit code `0` and no `"conformance": {"passed": false}` entries in the
+JSON is the machine-readable pass. The report schema is **stable** across
+kernel MINOR releases — see [`contract.md`](contract.md) §7.
 
 Pair it with:
 
 - `pip-audit` on the built wheel
 - `bandit` on the source
 - Your internal static-analysis pipeline
-- A human review against the contract spec (`docs/contract.md`)
+- A human review against the contract spec
+
+### What the conformance suite verifies
+
+Three checks run against every plugin module:
+
+1. `check_connectors_exported` — module exports `CONNECTORS`, a non-empty
+   `parsimony.Connectors`.
+2. `check_descriptions_non_empty` — every connector carries a non-empty
+   description (no silently empty LLM tool schemas).
+3. `check_env_vars_map_to_deps` — every `ENV_VARS` key names a real
+   keyword-only dependency on at least one connector (catches typos).
+
+These are integrity checks, not behavioural tests. Your
+`tests/test_<name>_connectors.py` file is where behavioural coverage
+lives (happy path, 401 → `UnauthorizedError`, 429 → `RateLimitError`).
 
 ---
 
 ## 7. Upgrading across kernel releases
 
-Plugins declare a contract-version classifier, not a specific kernel
-version. When the kernel bumps `CONTRACT_VERSION` (rare; see
-`contract.md` §7), your plugin keeps working as long as the kernel still
-supports its declared version. The deprecation window is at least one
-year for **stable** surface.
+Plugins pin a range on the kernel distribution, not a single version:
 
-When the kernel drops support for your declared contract version:
+```toml
+dependencies = ["parsimony-core>=0.3,<0.5"]
+```
 
-1. Update the classifier in `pyproject.toml`:
-   `Framework :: Parsimony :: Contract 2`
-2. Address any use of **provisional** or **private** symbols flagged in
-   the kernel's CHANGELOG.
-3. Re-run `parsimony conformance verify`.
-4. Release a new version of your plugin.
+When a kernel MAJOR release lands (e.g. `0.5.0`), your plugin keeps
+working until you update the pin. The kernel publishes a changelog
+naming any **stable** symbols that were removed — see
+[`contract.md`](contract.md) §8 for the deprecation window guarantees.
+
+The upgrade recipe:
+
+1. Bump the pin: `"parsimony-core>=0.5,<0.7"`.
+2. Re-run `parsimony list --strict` against the new kernel to catch any
+   provisional-surface breakage flagged by the suite.
+3. Run your unit tests to catch behavioural drift.
+4. Release a new patch version of your plugin.
+
+There is no separate contract-version classifier or keyword to bump.
 
 ---
 
@@ -247,8 +276,9 @@ When the kernel drops support for your declared contract version:
   [ockham-sh/parsimony](https://github.com/ockham-sh/parsimony/issues) if
   it's ambiguous.
 - **Scaffolding issues:** [ockham-sh/parsimony-plugin-template](https://github.com/ockham-sh/parsimony-plugin-template)
-- **Security disclosures:** see [`SECURITY.md`](../SECURITY.md) at the
-  kernel repo root — do **not** open a public issue.
+- **Security disclosures:** see `SECURITY.md` at the kernel repo root on
+  [GitHub](https://github.com/ockham-sh/parsimony/blob/main/SECURITY.md)
+  — do **not** open a public issue.
 
 ---
 

@@ -399,6 +399,7 @@ class TestConnectorsCollection:
         with pytest.raises(ValueError, match="Duplicate connector names"):
             Connectors([demo_search, demo_search])
 
+
 # ---------------------------------------------------------------------------
 # kwargs calling convention
 # ---------------------------------------------------------------------------

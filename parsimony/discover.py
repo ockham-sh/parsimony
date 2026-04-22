@@ -120,8 +120,7 @@ def iter_providers() -> Iterator[Provider]:
         dist_name = _dist_name(ep)
         if ep.name in seen:
             raise RuntimeError(
-                f"two distributions register provider {ep.name!r}: "
-                f"{seen[ep.name]!r} and {dist_name!r}. Uninstall one."
+                f"two distributions register provider {ep.name!r}: {seen[ep.name]!r} and {dist_name!r}. Uninstall one."
             )
         seen[ep.name] = dist_name or "?"
         yield Provider(

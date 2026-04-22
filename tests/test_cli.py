@@ -117,9 +117,7 @@ def test_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
     assert payload["env_vars"] == ["FOO_API_KEY"]
 
 
-def test_list_metadata_only_without_strict(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
-) -> None:
+def test_list_metadata_only_without_strict(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
     from parsimony.cli import main
 
     # Module is intentionally NOT importable (no sys.modules entry). Without

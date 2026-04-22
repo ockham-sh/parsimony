@@ -657,9 +657,7 @@ class Connectors:
         items: list[Connector] = []
         for coll in others:
             if not isinstance(coll, Connectors):
-                raise TypeError(
-                    f"Connectors.merge arguments must be Connectors; got {type(coll).__name__}"
-                )
+                raise TypeError(f"Connectors.merge arguments must be Connectors; got {type(coll).__name__}")
             items.extend(coll._items)
         return cls(items)
 

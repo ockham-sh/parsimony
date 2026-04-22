@@ -63,27 +63,40 @@ python my_script.py
 # Or use python-dotenv
 ```
 
-In code, `build_connectors_from_env()` reads `os.environ` and binds each
-plugin's declared env vars automatically:
+In code, `discover.load_all().bind_env()` walks every installed plugin
+and resolves each connector's declared env vars from `os.environ`:
 
 ```python
-from parsimony.discovery import build_connectors_from_env
+from parsimony import discover
 
-connectors = build_connectors_from_env()
+connectors = discover.load_all().bind_env()
 ```
 
-You can also bind keys manually on individual plugins:
+You can also bind keys manually on individual plugins. The cheapest path
+is `bind_env()`, which reads `os.environ`; for tests or non-env values
+(e.g. secrets pulled from a vault), use `bind(api_key=...)`:
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred
 
-bound = FRED.bind_deps(api_key="your-key")
+bound = fred.bind_env()                     # reads FRED_API_KEY from env
+# bound = fred.bind(api_key="your-key")     # explicit, for tests
 result = await bound["fred_fetch"](series_id="GDP")
 ```
 
 ### Which connectors need API keys?
 
-Every plugin declares its own `ENV_VARS`. Typical examples:
+Every connector declares its env vars on the `@connector(env=...)`
+decorator. Inspect the union via `Connectors.env_vars()`:
+
+```python
+from parsimony import discover
+
+print(sorted(discover.load_all().env_vars()))
+# {'BLS_API_KEY', 'COINGECKO_API_KEY', 'FRED_API_KEY', ...}
+```
+
+Typical examples:
 
 | Plugin | Env variable | Required? |
 |---|---|---|
@@ -150,17 +163,35 @@ nest_asyncio.apply()
 
 ## Common errors
 
-### `TypeError: Connector '...' has unbound dependencies`
+### `UnauthorizedError: ... is not set`
 
-You called a connector that requires API keys without binding them
-first. Call `bind_deps()`:
+The connector is in the collection but its required env var was not
+resolved by `bind_env()`. Either set the env var and rebind, or supply
+the value explicitly via `bind()`:
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
+import os
+from parsimony_fred import CONNECTORS as fred
 
-bound = FRED.bind_deps(api_key="your-key")
+# Option A — set env var, then bind_env()
+os.environ["FRED_API_KEY"] = "your-key"
+bound = fred.bind_env()
+
+# Option B — explicit value (for tests / vault-sourced secrets)
+bound = fred.bind(api_key="your-key")
+
 result = await bound["fred_fetch"](series_id="GDP")
 ```
+
+Inspect which connectors are unbound across a whole collection via
+`connectors.unbound`.
+
+### `TypeError: Connector '...' has unbound dependencies`
+
+You called a connector that has non-env keyword-only dependencies that
+were never bound. Provide them via `Connector.bind(**deps)` — see
+[Internal Connectors](internal-connectors.md) for the DB-pool / HTTP-client
+binding pattern.
 
 ### Rate limit errors
 
@@ -202,10 +233,11 @@ extra.
 
 ## Security
 
-### How does `bind_deps` protect API keys?
+### How does `bind` / `bind_env` protect API keys?
 
-When you call `connector.bind_deps(api_key="secret")`, the key is
-injected as a keyword-only argument via `functools.partial`. It never
+When you call `connector.bind(api_key="secret")` (or
+`Connectors.bind_env()`, which delegates to `bind` internally), the key
+is injected as a keyword-only argument via `functools.partial`. It never
 appears in:
 
 - The `Provenance.params` dict (which only records user-facing
@@ -238,14 +270,15 @@ Use your platform's secrets manager instead of environment variables in
 - **Azure**: Key Vault
 - **Docker/K8s**: Docker secrets or Kubernetes Secrets
 
-Pass retrieved secrets to `build_connectors_from_env(env={...})` using
-the `env` parameter to override `os.environ`:
+Pass retrieved secrets through `Connectors.bind_env(overrides=...)` —
+the `overrides` mapping is layered on top of `os.environ`, so vault-
+sourced values take precedence:
 
 ```python
-from parsimony.discovery import build_connectors_from_env
+from parsimony import discover
 
 secrets = await fetch_from_vault(["FRED_API_KEY", "FMP_API_KEY"])
-connectors = build_connectors_from_env(env=secrets)
+connectors = discover.load_all().bind_env(overrides=secrets)
 ```
 
 ### Is there connection pooling?

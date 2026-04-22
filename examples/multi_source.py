@@ -28,7 +28,7 @@ async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Compose: FRED (needs API key) + SDMX (no key required).
-    bundle = FRED.bind_deps(api_key=api_key) + SDMX
+    bundle = FRED.bind(api_key=api_key) + SDMX
     print(f"Bundle connectors: {bundle.names()}")
     print()
 

@@ -16,7 +16,7 @@ import altair as alt
 from parsimony_fred import CONNECTORS as FRED
 
 async def main():
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     result = await fred["fred_fetch"](series_id="GDPC1")
     df = result.data
     chart = alt.Chart(df).mark_line().encode(
@@ -42,7 +42,7 @@ from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
 async def main():
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     fred_result = await fred["fred_fetch"](
         series_id="DEXUSEU", observation_start="2023-01-01",
     )
@@ -70,7 +70,7 @@ import asyncio
 from parsimony_fmp import CONNECTORS as FMP
 
 async def main():
-    fmp = FMP.bind_deps(api_key="YOUR_FMP_KEY")
+    fmp = FMP.bind(api_key="YOUR_FMP_KEY")
     tickers = ["AAPL", "MSFT", "GOOGL", "META", "INTC", "AMD", "NVDA", "CRM", "ORCL", "IBM"]
     # Fetch quotes for each ticker concurrently
     results = await asyncio.gather(*[
@@ -103,7 +103,7 @@ from parsimony_fred import CONNECTORS as FRED
 
 async def main():
     catalog = Catalog("fred")
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     # Release 50 = Employment Situation
     result = await fred["enumerate_fred_release"](release_id=50)
     await catalog.add_from_result(result)
@@ -126,7 +126,7 @@ import asyncio
 from parsimony_fmp import CONNECTORS as FMP
 
 async def main():
-    fmp = FMP.bind_deps(api_key="YOUR_FMP_KEY")
+    fmp = FMP.bind(api_key="YOUR_FMP_KEY")
     params = {"symbol": "AAPL", "period": "annual", "limit": 3}
     inc, bs = await asyncio.gather(
         fmp["fmp_income_statements"](**params),
@@ -178,7 +178,7 @@ from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
 async def main():
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     cpi_task = fred["fred_fetch"](series_id="CPIAUCSL", observation_start="2020-01-01")
     ecb_task = SDMX["sdmx_fetch"](
         dataset_key="ECB-FM",
@@ -208,7 +208,7 @@ from parsimony import Result
 from parsimony_fred import CONNECTORS as FRED
 
 async def main():
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     result = await fred["fred_fetch"](series_id="UNRATE")
     # fred_fetch is decorated with an OutputConfig, so result carries a schema
     result.to_parquet("unrate.parquet")
@@ -237,7 +237,7 @@ RELEASES = {50: "Employment", 53: "GDP", 10: "CPI"}
 
 async def main():
     catalog = Catalog("fred")
-    fred = FRED.bind_deps(api_key="YOUR_FRED_KEY")
+    fred = FRED.bind(api_key="YOUR_FRED_KEY")
     for release_id, label in RELEASES.items():
         result = await fred["enumerate_fred_release"](release_id=release_id)
         idx = await catalog.add_from_result(result)

@@ -24,7 +24,7 @@ catalog publishing).
 ```
 parsimony-<name>/
 ├── parsimony_<name>/
-│   ├── __init__.py         CONNECTORS, ENV_VARS, PROVIDER_METADATA, CATALOGS
+│   ├── __init__.py         CONNECTORS (+ optional CATALOGS / RESOLVE_CATALOG)
 │   ├── connectors.py       @connector / @enumerator / @loader functions
 │   └── py.typed
 ├── tests/
@@ -33,7 +33,7 @@ parsimony-<name>/
 ├── .github/workflows/
 │   ├── ci.yml                       lint + type + test + conformance
 │   └── release.yml                  OIDC PyPI publish on release
-├── pyproject.toml                   entry-point registration
+├── pyproject.toml                   entry-point registration + [project.urls] Homepage
 ├── README.md
 ├── CHANGELOG.md
 └── LICENSE
@@ -156,11 +156,14 @@ version = "0.1.0"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "parsimony-core>=0.3,<0.5",
+    "parsimony-core>=0.4,<0.5",
     "pydantic>=2.11,<3",
     "pandas>=2.3,<3",
     "httpx>=0.27,<1",
 ]
+
+[project.urls]
+Homepage = "https://your-provider.example"
 
 [project.optional-dependencies]
 dev = [
@@ -183,7 +186,8 @@ packages = ["parsimony_<your_name>"]
 ```
 
 The entry-point registration is what makes your plugin discoverable by
-the kernel. Exactly one entry per provider module.
+the kernel. Exactly one entry per provider module. `[project.urls] Homepage`
+is what the kernel surfaces as `Provider.homepage`.
 
 ### Minimum `parsimony_<your_name>/__init__.py`
 
@@ -192,23 +196,16 @@ from parsimony import Connectors
 from parsimony_<your_name>.connectors import <your_name>_search, <your_name>_fetch
 
 CONNECTORS = Connectors([<your_name>_search, <your_name>_fetch])
-
-ENV_VARS: dict[str, str] = {"api_key": "<YOUR>_API_KEY"}
-
-PROVIDER_METADATA: dict = {
-    "homepage": "https://example.com",
-    "pricing": "freemium",
-    "rate_limits": "120 req/min",
-}
 ```
 
 - `CONNECTORS` — **required**. The immutable `Connectors` collection
   containing every decorated function in this plugin.
-- `ENV_VARS` — optional. Maps each connector dependency name to the
-  environment variable supplying it. `build_connectors_from_env` reads
-  this dict to bind keys at startup.
-- `PROVIDER_METADATA` — optional but recommended. Appears in
-  `parsimony list` output and the registry.
+- Per-connector env vars live on the `@connector(env={...})` decorator
+  (see Phase 6). The consumer resolves them via `Connectors.bind_env()`.
+- Provider metadata (homepage, version, description) lives in
+  `pyproject.toml` (`[project.urls] Homepage`, `[project] description`).
+  The kernel reads it on demand via `importlib.metadata`. There is no
+  module-level `ENV_VARS`, `PROVIDER_METADATA`, or `__version__`.
 
 See [Phase 8 — Catalog integration](#phase-8-catalog-integration) below
 if your plugin ships catalog bundles.
@@ -485,7 +482,12 @@ import pandas as pd
 from parsimony import connector, enumerator, Result, Provenance
 from parsimony.transport import HttpClient, map_http_error
 
-@enumerator(output=ENUMERATE_OUTPUT, tags=["my_source"])
+
+@enumerator(
+    output=ENUMERATE_OUTPUT,
+    env={"api_key": "MY_SOURCE_API_KEY"},
+    tags=["my_source"],
+)
 async def enumerate_my_source(
     params: MySourceEnumerateParams,
     *,
@@ -501,7 +503,11 @@ async def enumerate_my_source(
     return pd.DataFrame(data.get("series", []))
 
 
-@connector(output=FETCH_OUTPUT, tags=["my_source", "tool"])
+@connector(
+    output=FETCH_OUTPUT,
+    env={"api_key": "MY_SOURCE_API_KEY"},
+    tags=["my_source", "tool"],
+)
 async def my_source_fetch(
     params: MySourceFetchParams,
     *,
@@ -515,6 +521,11 @@ async def my_source_fetch(
             raise map_http_error(exc, provider="my_source", op_name="fetch") from exc
     return pd.DataFrame(response.json().get("observations", []))
 ```
+
+The `env={"api_key": "MY_SOURCE_API_KEY"}` argument tells the kernel
+which environment variable backs the `api_key` keyword-only dep. Both
+decorators accept the same `env=` kwarg; multi-credential providers
+(username + password, etc.) use one entry per dep.
 
 The decorator wraps the returned DataFrame in a `Result` with the
 provenance generated from the params model and the declared
@@ -631,7 +642,7 @@ async def test_fetch_happy_path():
             {"series_id": "CPI", "date": "2024-01-01", "value": 100.0},
         ]})
     )
-    bound = CONNECTORS.bind_deps(api_key="test-key")
+    bound = CONNECTORS.bind(api_key="test-key")
     result = await bound["my_source_fetch"](series_id="CPI")
     assert result.provenance.source == "my_source"
     assert len(result.data) == 1
@@ -642,7 +653,7 @@ async def test_fetch_401_maps_to_unauthorized():
     respx.get("https://api.my-source.example.com/v1/series/X/observations").mock(
         return_value=httpx.Response(401, json={"error": "bad key"})
     )
-    bound = CONNECTORS.bind_deps(api_key="live-looking-key")
+    bound = CONNECTORS.bind(api_key="live-looking-key")
     with pytest.raises(UnauthorizedError) as exc_info:
         await bound["my_source_fetch"](series_id="X")
     # Ensure the key doesn't leak into the exception message:
@@ -756,7 +767,10 @@ See [`contract.md`](contract.md) §6 for the full spec.
 ## Checklist before cutting `v0.1.0`
 
 - [ ] `parsimony_<your_name>` module exports `CONNECTORS`; optionally
-      `ENV_VARS`, `PROVIDER_METADATA`, `CATALOGS`, `RESOLVE_CATALOG`.
+      `CATALOGS`, `RESOLVE_CATALOG`.
+- [ ] Per-connector `@connector(env={...})` declarations cover every
+      required keyword-only dep.
+- [ ] `[project.urls] Homepage` set in `pyproject.toml`.
 - [ ] Entry point registered in `pyproject.toml` under
       `parsimony.providers`.
 - [ ] `parsimony.testing.assert_plugin_valid(module)` passes.

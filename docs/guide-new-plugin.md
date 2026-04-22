@@ -18,7 +18,7 @@ Copy its structure and adjust:
 ```
 parsimony-<yourname>/
 ├── parsimony_<yourname>/
-│   ├── __init__.py         CONNECTORS, ENV_VARS, PROVIDER_METADATA, CATALOGS
+│   ├── __init__.py         CONNECTORS (+ optional CATALOGS / RESOLVE_CATALOG)
 │   ├── connectors.py       @connector / @enumerator / @loader functions
 │   └── py.typed
 ├── tests/
@@ -27,7 +27,7 @@ parsimony-<yourname>/
 ├── .github/workflows/
 │   ├── ci.yml              lint + type + test + conformance
 │   └── release.yml         OIDC PyPI publish on tag
-├── pyproject.toml          entry-point registration, kernel pin, metadata
+├── pyproject.toml          entry-point registration, kernel pin, metadata, [project.urls] homepage
 ├── README.md
 ├── CHANGELOG.md
 ├── LICENSE                 Apache-2.0 for official plugins
@@ -43,11 +43,14 @@ version = "0.1.0"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
-    "parsimony-core>=0.3,<0.5",
+    "parsimony-core>=0.4,<0.5",
     "pydantic>=2.11,<3",
     "pandas>=2.3,<3",
     "httpx>=0.27,<1",
 ]
+
+[project.urls]
+Homepage = "https://your-provider.example"
 
 [project.optional-dependencies]
 dev = [
@@ -69,10 +72,15 @@ build-backend = "hatchling.build"
 packages = ["parsimony_<your_name>"]
 ```
 
-The kernel pin (`parsimony-core>=0.3,<0.5`) is the stability boundary.
+The kernel pin (`parsimony-core>=0.4,<0.5`) is the stability boundary.
 There is no separate contract-version classifier — plugins depend on
 `parsimony-core` via a standard range pin and rely on the [stability
 markings](contract.md#2-versioning) in the API reference.
+
+`[project.urls] Homepage` is what the kernel surfaces via
+`Provider.homepage` (e.g. in `parsimony list` output and in the
+`parsimony-mcp` `init` env-template generator). Provider version is read
+from the distribution metadata; do not export a module-level `__version__`.
 
 ## Minimum plugin module
 
@@ -80,16 +88,8 @@ markings](contract.md#2-versioning) in the API reference.
 # parsimony_<your_name>/__init__.py
 from parsimony import Connectors, connector, Result
 
-ENV_VARS: dict[str, str] = {"api_key": "<YOUR>_API_KEY"}
 
-PROVIDER_METADATA: dict = {
-    "homepage": "https://example.com",
-    "pricing": "freemium",
-    "rate_limits": "120 req/min",
-}
-
-
-@connector(tags=["<your_name>", "tool"])
+@connector(env={"api_key": "<YOUR>_API_KEY"}, tags=["<your_name>", "tool"])
 async def <your_name>_search(params: SearchParams, *, api_key: str) -> Result:
     """At least 40 chars — MCP tool descriptions need enough context for LLMs."""
     ...
@@ -97,6 +97,10 @@ async def <your_name>_search(params: SearchParams, *, api_key: str) -> Result:
 
 CONNECTORS = Connectors([<your_name>_search])
 ```
+
+Per-connector env vars live on the `@connector(env={...})` decorator —
+the consumer resolves them via `Connectors.bind_env()`. There is no
+module-level `ENV_VARS`, `PROVIDER_METADATA`, or `__version__`.
 
 If your plugin publishes catalog bundles, add a `CATALOGS` export:
 
@@ -162,7 +166,9 @@ parsimony list --strict
 ## Checklist before cutting `v0.1.0`
 
 - [ ] `parsimony_<your_name>` module exports `CONNECTORS`.
-- [ ] Optional: `ENV_VARS`, `PROVIDER_METADATA`, `CATALOGS`, `RESOLVE_CATALOG`.
+- [ ] Optional: `CATALOGS`, `RESOLVE_CATALOG`.
+- [ ] Per-connector `@connector(env={...})` declarations cover every required keyword-only dep.
+- [ ] `[project.urls] Homepage` set in `pyproject.toml`.
 - [ ] Entry point registered in `pyproject.toml` under `parsimony.providers`.
 - [ ] `parsimony.testing.assert_plugin_valid(module)` passes.
 - [ ] Tool-tagged connectors have ≥40-character descriptions.

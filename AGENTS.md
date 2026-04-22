@@ -14,7 +14,7 @@ make format   # ruff format + auto-fix
 | Decorators, `Connectors` | `parsimony/connector.py` |
 | Result types, `OutputConfig` | `parsimony/result.py` |
 | `CatalogBackend` Protocol, `Catalog` | `parsimony/catalog.py` |
-| Plugin discovery | `parsimony/discovery.py` |
+| Plugin discovery | `parsimony/discover.py` |
 | Publish orchestrator (`CATALOGS`) | `parsimony/publish.py` |
 | CLI (`list`, `publish`) | `parsimony/cli.py` |
 | Conformance suite | `parsimony/testing.py` |

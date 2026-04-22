@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.3.0"
+version = "0.4.0"
 description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
@@ -8,7 +8,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["finance", "data", "connectors", "fred", "sdmx", "catalog"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Intended Audience :: Financial and Insurance Industry",
     "License :: OSI Approved :: Apache Software License",
@@ -29,13 +29,9 @@ dependencies = [
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
     "tenacity>=9.0.0,<10",
-    # TOON encoder used by `parsimony.client` to emit a fetch summary to
-    # stderr, and by downstream agent contexts (parsimony-mcp bridge,
+    # TOON encoder used by downstream agent contexts (parsimony-mcp bridge,
     # parsimony-agents fetch_log) for token-efficient tabular previews.
     "toon-format>=0.9.0b1,<0.10",
-    # `parsimony.load_dotenv()` applies a project-local .env so the agent's
-    # `python -c "..."` subprocess inherits API keys without `--env-file`.
-    "python-dotenv>=1.0,<2",
 ]
 
 [project.optional-dependencies]

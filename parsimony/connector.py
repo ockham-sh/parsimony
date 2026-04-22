@@ -21,6 +21,7 @@ __all__ = [
 import functools
 import inspect
 import logging
+import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from types import MappingProxyType
@@ -29,7 +30,7 @@ from typing import Any, Union, get_type_hints
 import pandas as pd
 from pydantic import BaseModel
 
-from parsimony.errors import ParseError
+from parsimony.errors import ParseError, UnauthorizedError
 from parsimony.result import ColumnRole, OutputConfig, Provenance, Result
 
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ def _parse_first_param_and_deps(
     return params_name, model_type, frozenset(required_deps), frozenset(optional_deps)
 
 
-def _validate_bind_deps(
+def _validate_bind_kwargs(
     *,
     name: str,
     dep_names: frozenset[str],
@@ -187,7 +188,13 @@ class Connector:
 
     Callbacks are per-connector: use :meth:`with_callback` to attach post-fetch
     hooks that fire after every successful call. Callbacks are preserved through
-    :meth:`bind_deps` and collection operations.
+    :meth:`bind` and collection operations.
+
+    ``env_map`` declares the decorator-level mapping from dep name to env-var
+    name; :meth:`Connectors.bind_env` resolves it against ``os.environ``.
+    ``bound`` is ``False`` on clones produced by :meth:`Connectors.bind_env`
+    when a required env var was missing — calling such a connector raises
+    :class:`UnauthorizedError` immediately, before param validation.
     """
 
     name: str
@@ -201,15 +208,17 @@ class Connector:
     tags: tuple[str, ...] = ()
     properties: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    env_map: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    bound: bool = True
     _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
 
     def with_callback(self, callback: ResultCallback) -> Connector:
         """Return a new :class:`Connector` with *callback* appended to its post-fetch hooks."""
         return replace(self, _callbacks=(*self._callbacks, callback))
 
-    def bind_deps(self, **deps: Any) -> Connector:
+    def bind(self, **deps: Any) -> Connector:
         """Return a new :class:`Connector` with keyword-only dependencies pre-applied."""
-        _validate_bind_deps(
+        _validate_bind_kwargs(
             name=self.name,
             dep_names=self.dep_names,
             optional_dep_names=self.optional_dep_names,
@@ -269,10 +278,17 @@ class Connector:
         **kwargs: Any,
     ) -> Result:
         """Execute the connector with validated parameters."""
+        if not self.bound:
+            env_vars = sorted(self.env_map.values())
+            detail = ", ".join(env_vars) if env_vars else "required credentials"
+            raise UnauthorizedError(
+                provider=self.name,
+                message=f"{detail} is not set",
+            )
         if self.dep_names:
             raise TypeError(
                 f"Connector {self.name!r} has unbound dependencies {sorted(self.dep_names)}; "
-                "call bind_deps(**deps) before registration and execution."
+                "call bind(**deps) before registration and execution."
             )
         model = self._validate_params(params, **kwargs)
         raw = await self.call_raw(model)
@@ -333,7 +349,7 @@ def describe_connector(c: Connector) -> str:
     req_deps = sorted(c.dep_names)
     opt_deps = sorted(c.optional_dep_names)
     if req_deps or opt_deps:
-        lines.append("Dependencies (bind via bind_deps before calling):")
+        lines.append("Dependencies (bind via bind(**deps) before calling):")
         for d in req_deps:
             lines.append(f"  {d} (required)")
         for d in opt_deps:
@@ -401,6 +417,7 @@ def _connector_repr(c: Connector) -> str:
 
 def connector(
     *,
+    env: dict[str, str] | None = None,
     name: str | None = None,
     description: str | None = None,
     params: type[BaseModel] | None = None,
@@ -412,12 +429,16 @@ def connector(
 
     **Canonical usage** — infer metadata from the function; add ``output`` when needed::
 
-        @connector()
+        @connector(env={"api_key": "FRED_API_KEY"})
         async def fred_search(params: FredSearchParams, *, api_key: str) -> Result:
             '''Keyword search for FRED economic time series.'''
 
     **Defaults:** ``name`` ← ``fn.__name__``; ``description`` ← stripped
     ``fn.__doc__`` (required); param model ← type of the first parameter.
+
+    The ``env`` mapping names environment-variable backings for keyword-only
+    deps. Consumers resolve these through :meth:`Connectors.bind_env`; plugins
+    can still be bound manually via :meth:`Connector.bind`.
     """
 
     def decorator(fn: Callable[..., Any]) -> Connector:
@@ -433,6 +454,7 @@ def connector(
         schema = _mapping_proxy(param_type.model_json_schema())
         tag_tup = tuple(tags) if tags else ()
         ns_hints = _mapping_proxy(_param_namespace_hints(param_type))
+        env_proxy: Mapping[str, str] = MappingProxyType(dict(env or {}))
         return Connector(
             name=nm,
             description=desc,
@@ -445,6 +467,7 @@ def connector(
             tags=tag_tup,
             properties=_mapping_proxy(properties),
             namespace_hints=ns_hints,
+            env_map=env_proxy,
         )
 
     return decorator
@@ -510,6 +533,7 @@ def _validate_loader_output(output: OutputConfig) -> None:
 def loader(
     *,
     output: OutputConfig,
+    env: dict[str, str] | None = None,
     name: str | None = None,
     description: str | None = None,
     params: type[BaseModel] | None = None,
@@ -526,6 +550,7 @@ def loader(
     _validate_loader_output(output)
     merged_tags = ["loader", *(tags or [])]
     return connector(
+        env=env,
         name=name,
         description=description,
         params=params,
@@ -538,6 +563,7 @@ def loader(
 def enumerator(
     *,
     output: OutputConfig,
+    env: dict[str, str] | None = None,
     name: str | None = None,
     description: str | None = None,
     params: type[BaseModel] | None = None,
@@ -559,6 +585,7 @@ def enumerator(
     _validate_enumerator_output(output)
     merged_tags = ["enumerator", *(tags or [])]
     return connector(
+        env=env,
         name=name,
         description=description,
         params=params,
@@ -578,6 +605,16 @@ class Connectors:
 
     Lookup by name: ``connectors["fred_fetch"]`` or ``connectors.get("fred_fetch")``.
     ``name in connectors`` is supported for membership checks.
+
+    Public verbs:
+
+    * :meth:`merge` — combine N collections (duplicate names raise).
+    * :meth:`bind` — pre-apply non-env dependencies.
+    * :meth:`bind_env` — resolve ``env_map`` declarations against ``os.environ``.
+    * :meth:`filter` — substring/tag/property filter, or predicate.
+    * :meth:`replace` — swap one entry.
+    * :attr:`unbound` — connector names missing required env vars.
+    * :meth:`env_vars` — declared env-var names across all connectors.
     """
 
     def __init__(self, items: Sequence[Connector]) -> None:
@@ -595,9 +632,96 @@ class Connectors:
         """Return a new collection where every connector has *callback* appended."""
         return Connectors([c.with_callback(callback) for c in self._items])
 
-    def bind_deps(self, **deps: Any) -> Connectors:
-        """Pre-apply ``deps`` to every connector (same keys for each)."""
-        return Connectors([c.bind_deps(**deps) for c in self._items])
+    def bind(self, **deps: Any) -> Connectors:
+        """Pre-apply ``deps`` to every connector (same keys for each).
+
+        Each connector silently ignores deps not in its own
+        ``dep_names | optional_dep_names`` — you can bind a shared resource
+        (e.g. a DB handle) across a heterogeneous collection.
+        """
+        out: list[Connector] = []
+        for c in self._items:
+            allowed = c.dep_names | c.optional_dep_names
+            scoped = {k: v for k, v in deps.items() if k in allowed}
+            out.append(c.bind(**scoped) if scoped else c)
+        return Connectors(out)
+
+    @classmethod
+    def merge(cls, *others: Connectors) -> Connectors:
+        """Combine ``others`` into a new collection. Duplicate names raise ``ValueError``.
+
+        Accepts zero arguments (returns an empty collection) for use as the
+        identity element in ``Connectors.merge(*collections)`` where
+        ``collections`` may be empty.
+        """
+        items: list[Connector] = []
+        for coll in others:
+            if not isinstance(coll, Connectors):
+                raise TypeError(
+                    f"Connectors.merge arguments must be Connectors; got {type(coll).__name__}"
+                )
+            items.extend(coll._items)
+        return cls(items)
+
+    def bind_env(
+        self,
+        overrides: Mapping[str, str] | None = None,
+    ) -> Connectors:
+        """Resolve each connector's ``env_map`` against ``os.environ | overrides``.
+
+        For each connector, walks ``env_map`` in declaration order. Values found
+        in the merged environment are bound via :meth:`Connector.bind`. A
+        connector is marked ``bound=False`` and stays in the collection when at
+        least one required env var is missing — calling it raises
+        :class:`UnauthorizedError` (see :attr:`Connector.bound`).
+        """
+        env: dict[str, str] = dict(os.environ)
+        if overrides:
+            env.update(overrides)
+
+        out: list[Connector] = []
+        for c in self._items:
+            if not c.env_map:
+                out.append(c)
+                continue
+
+            required = c.dep_names
+            resolved: dict[str, Any] = {}
+            missing_required = False
+            for dep_name, env_var in c.env_map.items():
+                value = env.get(env_var, "")
+                if not value:
+                    if dep_name in required:
+                        missing_required = True
+                    continue
+                resolved[dep_name] = value
+
+            if missing_required:
+                out.append(replace(c, bound=False))
+                continue
+
+            out.append(c.bind(**resolved) if resolved else c)
+        return Connectors(out)
+
+    @property
+    def unbound(self) -> tuple[str, ...]:
+        """Names of connectors where at least one required env var is unresolved."""
+        return tuple(c.name for c in self._items if not c.bound)
+
+    def env_vars(self) -> frozenset[str]:
+        """Union of all env-var names declared across every connector's ``env_map``."""
+        vars_: set[str] = set()
+        for c in self._items:
+            vars_.update(c.env_map.values())
+        return frozenset(vars_)
+
+    def replace(self, name: str, connector: Connector) -> Connectors:
+        """Return a new collection with the entry named ``name`` swapped for ``connector``."""
+        if not any(c.name == name for c in self._items):
+            available = sorted(c.name for c in self._items)
+            raise KeyError(f"No connector {name!r}. Available: {available}")
+        out = [connector if c.name == name else c for c in self._items]
+        return Connectors(out)
 
     def __iter__(self) -> Iterator[Connector]:
         return iter(self._items)
@@ -625,9 +749,6 @@ class Connectors:
 
     def names(self) -> list[str]:
         return sorted(c.name for c in self._items)
-
-    def __add__(self, other: Connectors) -> Connectors:
-        return Connectors(list(self._items) + list(other._items))
 
     def describe(self) -> str:
         if not self._items:
@@ -663,12 +784,23 @@ class Connectors:
 
     def filter(
         self,
+        predicate: Callable[[Connector], bool] | None = None,
         *,
         name: str | None = None,
         tags: Sequence[str] | None = None,
         **properties: Any,
     ) -> Connectors:
-        """Return connectors matching substring ``name`` and/or all ``tags`` and property k/v."""
+        """Return a filtered view.
+
+        When ``predicate`` is supplied, it overrides every other filter and
+        retains only connectors for which the predicate returns truthy.
+        Otherwise, returns connectors matching the substring ``name`` (checked
+        against name and description), the full ``tags`` subset, and every
+        property k/v match.
+        """
+        if predicate is not None:
+            return Connectors([c for c in self._items if predicate(c)])
+
         out: list[Connector] = []
         for c in self._items:
             if name is not None and name.strip():

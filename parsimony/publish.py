@@ -25,15 +25,14 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-import os
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any
 
 from parsimony.catalog import Catalog
-from parsimony.discovery import DiscoveredProvider, discovered_providers
+from parsimony.discover import Provider, iter_providers
 from parsimony.result import Result
 
 logger = logging.getLogger(__name__)
@@ -180,28 +179,21 @@ def _validate_entry(item: Any) -> CatalogEntry:
 # ---------------------------------------------------------------------------
 
 
-def _bind_fn(fn: CatalogFn, env_vars: dict[str, str], env: dict[str, str]) -> CatalogFn:
+def _bind_fn(fn: CatalogFn, env: Mapping[str, str] | None) -> CatalogFn:
     """Bind environment-sourced deps to *fn* if it's a :class:`~parsimony.Connector`.
 
-    Plain async functions pass through unchanged — the plugin author is
-    expected to have captured credentials via closure or module state.
+    The connector's decorator-declared ``env_map`` drives binding. Plain
+    async functions pass through unchanged — the plugin author is expected
+    to have captured credentials via closure or module state.
     """
-    from parsimony.connector import Connector
+    from parsimony.connector import Connector, Connectors
 
     if not isinstance(fn, Connector):
         return fn
-    if not env_vars:
+    if not fn.env_map:
         return fn
-    deps: dict[str, Any] = {}
-    required = set(fn.dep_names)
-    for dep_name, env_var in env_vars.items():
-        value = env.get(env_var, "")
-        if not value:
-            if dep_name in required:
-                raise RuntimeError(f"required env var {env_var!r} (→ dep {dep_name!r}) is not set for {fn.name!r}")
-            continue
-        deps[dep_name] = value
-    return fn.bind_deps(**deps) if deps else fn
+    single = Connectors([fn]).bind_env(env)
+    return single[fn.name]
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +207,7 @@ async def publish(
     target: str,
     only: Iterable[str] | None = None,
     dry_run: bool = False,
-    env_vars: dict[str, str] | None = None,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
     provider_name: str | None = None,
 ) -> PublishReport:
     """Publish every declared catalog in *module* to ``target.format(namespace=...)``.
@@ -233,19 +224,15 @@ async def publish(
         When set, limit the publish to these namespaces.
     dry_run:
         Collect catalogs and log targets, but skip enumeration + push.
-    env_vars:
-        ``{dep_name: env_var_name}`` mapping applied via
-        ``Connector.bind_deps`` for entries that are Connectors.
     env:
-        Override for ``os.environ``.
+        Override dict layered on top of ``os.environ``; passed to
+        :meth:`Connectors.bind_env` for catalog entries that are connectors.
     provider_name:
         Label used in the report; defaults to ``module.__name__``.
     """
     if "{namespace}" not in target:
         raise ValueError(f"target {target!r} must contain '{{namespace}}'")
 
-    resolved_env = env if env is not None else dict(os.environ)
-    resolved_env_vars = env_vars if env_vars is not None else getattr(module, "ENV_VARS", {}) or {}
     report_name = provider_name or module.__name__
 
     catalogs = await collect_catalogs(module, only=only)
@@ -260,7 +247,7 @@ async def publish(
             published.append(namespace)
             continue
         try:
-            bound = _bind_fn(fn, resolved_env_vars, resolved_env)
+            bound = _bind_fn(fn, env)
             result = await _invoke(bound)
             catalog = Catalog(namespace)
             index = await catalog.add_from_result(result)
@@ -306,31 +293,31 @@ async def publish_provider(
     target: str,
     only: Iterable[str] | None = None,
     dry_run: bool = False,
-    env: dict[str, str] | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> PublishReport:
     """Publish *provider_name*'s catalogs — resolves the module via discovery."""
-    provider = _find_provider(provider_name)
-    module = provider.module
-    if module is None:
-        import importlib
+    import importlib
 
-        module = importlib.import_module(provider.module_path)
+    provider = _find_provider(provider_name)
+    module = importlib.import_module(provider.module_path)
+    # Trigger the contract check: p.load() raises TypeError if CONNECTORS is missing.
+    provider.load()
     return await publish(
         module,
         target=target,
         only=only,
         dry_run=dry_run,
-        env_vars=dict(provider.env_vars),
         env=env,
         provider_name=provider.name,
     )
 
 
-def _find_provider(name: str) -> DiscoveredProvider:
-    for p in discovered_providers():
+def _find_provider(name: str) -> Provider:
+    providers = list(iter_providers())
+    for p in providers:
         if p.name == name:
             return p
-    available = sorted(p.name for p in discovered_providers())
+    available = sorted(p.name for p in providers)
     raise ValueError(f"no parsimony provider named {name!r}. Available: {available}")
 
 

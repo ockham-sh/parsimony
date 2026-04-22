@@ -31,12 +31,14 @@ def _make_connector(
     *,
     description: str = "A connector with a sufficiently long description.",
     tags: list[str] | None = None,
+    env: dict[str, str] | None = None,
 ) -> Any:
     return connector(
         name=name,
         description=description,
         params=_Params,
         tags=tags or [],
+        env=env,
     )(_demo_fn)
 
 
@@ -44,12 +46,9 @@ def _make_module(
     name: str,
     *,
     connectors: list[Any],
-    env_vars: dict[str, str] | None = None,
 ) -> types.ModuleType:
     mod = types.ModuleType(name)
     mod.CONNECTORS = Connectors(connectors)
-    if env_vars is not None:
-        mod.ENV_VARS = env_vars
     sys.modules[name] = mod
     return mod
 
@@ -69,7 +68,7 @@ def test_happy_path_suite_passes_all_checks() -> None:
     s = Suite()
     s.test_connectors_exported()
     s.test_descriptions_non_empty()
-    s.test_env_vars_map_to_deps()
+    s.test_env_map_matches_deps()
 
 
 # ---------------------------------------------------------------------------
@@ -111,19 +110,27 @@ def test_missing_connectors_export_raises_conformance_error() -> None:
         Suite().test_connectors_exported()
 
 
-def test_env_var_not_mapping_to_dep_fails() -> None:
-    c = _make_connector("demo_fetch")
-    _make_module(
-        "test_env_bad_key",
-        connectors=[c],
-        env_vars={"nonexistent_dep": "DEMO_API_KEY"},
-    )
+def test_env_map_key_not_matching_dep_fails() -> None:
+    # A connector with no dep but an env_map keyed on "nonexistent_dep".
+    async def _public(params: _Params) -> Result:
+        return Result.from_dataframe(
+            pd.DataFrame({"x": [1]}),
+            Provenance(source="public"),
+        )
+
+    bad = connector(
+        name="bad_fetch",
+        description="Has env_map without dep.",
+        params=_Params,
+        env={"nonexistent_dep": "DEMO_API_KEY"},
+    )(_public)
+    _make_module("test_env_bad_key", connectors=[bad])
 
     class Suite(ProviderTestSuite):
         module_path = "test_env_bad_key"
 
-    with pytest.raises(ConformanceError, match="ENV_VARS key"):
-        Suite().test_env_vars_map_to_deps()
+    with pytest.raises(ConformanceError, match="env_map key"):
+        Suite().test_env_map_matches_deps()
 
 
 # ---------------------------------------------------------------------------

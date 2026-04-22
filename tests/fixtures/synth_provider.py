@@ -1,8 +1,8 @@
 """A synthetic provider module conforming to the plugin contract.
 
-Used as a kernel-test fixture wherever previous tests imported a real
-in-tree connector (e.g. ``parsimony.connectors.treasury``). Exports the
-full contract surface: ``CONNECTORS``, ``ENV_VARS``, ``PROVIDER_METADATA``.
+Used as a kernel-test fixture wherever a test needs an example connector
+module. Exports the contract surface required by the plugin contract:
+``CONNECTORS``.
 
 This module lives under ``tests/fixtures/`` rather than in an external
 package because the kernel test suite must be self-contained — tests that
@@ -13,20 +13,11 @@ conformance test, not here.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pandas as pd
 from pydantic import BaseModel, Field
 
 from parsimony.connector import Connectors, connector, enumerator
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
-
-ENV_VARS: dict[str, str] = {}  # no credentials required
-
-PROVIDER_METADATA: dict[str, Any] = {
-    "homepage": "https://example.invalid/synth",
-    "pricing": "free",
-}
 
 
 class SynthFetchParams(BaseModel):

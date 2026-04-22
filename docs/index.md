@@ -7,11 +7,11 @@ Every financial data project starts the same way: write API wrappers, parse resp
 ## Quick Start
 
 ```python
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred
 
-client = FRED.bind_deps(api_key="your-fred-key")
+connectors = fred.bind_env()      # reads FRED_API_KEY from os.environ
 
-result = await client["fred_fetch"](series_id="GDPC1", observation_start="2020-01-01")
+result = await connectors["fred_fetch"](series_id="GDPC1", observation_start="2020-01-01")
 print(result.data)        # pandas DataFrame
 print(result.provenance)  # source="fred_fetch", params={...}
 ```
@@ -55,7 +55,7 @@ The framework centers on three **decorator primitives**, all producing the same 
 - **`@enumerator`** — catalog population: KEY + TITLE + METADATA, no DATA
 - **`@loader`** — observation persistence: KEY + DATA only
 
-Connectors compose into bundles via `Connectors`, bind dependencies once with `bind_deps()`, and dispatch by name. Every call returns a `Result` with the data plus provenance metadata.
+Connectors compose into immutable `Connectors` collections (`Connectors.merge(*others)`), bind environment-backed credentials once with `bind_env()` or arbitrary dependencies with `bind(**kwargs)`, and dispatch by name. Every call returns a `Result` with the data plus provenance metadata.
 
 ## Next Steps
 

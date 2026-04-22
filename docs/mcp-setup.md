@@ -72,7 +72,12 @@ SDMX connectors (ECB, Eurostat, IMF, World Bank — install `parsimony-sdmx`) an
 
 ## What Gets Exposed
 
-The MCP server exposes connectors tagged `"tool"` — these are search and discovery operations that return small, context-friendly results. Bulk data-fetch connectors are not exposed as MCP tools; agents use them via code execution with `from parsimony import client`.
+The MCP server exposes connectors tagged `"tool"` — these are search and discovery operations that return small, context-friendly results. Bulk data-fetch connectors are not exposed as MCP tools; agents use them via code execution by importing the plugin's `CONNECTORS` directly:
+
+```python
+from parsimony_fred import CONNECTORS as fred
+result = await fred.bind_env()["fred_fetch"](series_id="UNRATE")
+```
 
 Exact tool list depends on which plugin distributions are installed. Typical examples:
 
@@ -86,10 +91,10 @@ Exact tool list depends on which plugin distributions are installed. Typical exa
 
 The MCP server is a thin bridge between parsimony's `Connectors` collection and the MCP protocol:
 
-1. On startup, `build_connectors_from_env()` loads every discovered `parsimony.providers` plugin whose required env vars are set.
+1. On startup, `discover.load_all().bind_env()` loads every installed `parsimony.providers` plugin and resolves credentials from `os.environ`. Connectors whose env vars are missing stay in the collection but raise `UnauthorizedError` if invoked — `parsimony-mcp` logs them as `WARN: <name> is unbound (missing <ENV_VAR>)` at boot.
 2. Connectors tagged `"tool"` are filtered and registered as MCP tools.
 3. Each tool's `name`, `description`, and `inputSchema` come directly from the connector metadata.
-4. Server instructions (injected into the agent's system prompt) are generated from `connectors.to_llm(context="mcp")`.
+4. Server instructions (injected into the agent's system prompt) are generated from `connectors.to_llm()`.
 
 ## Running Manually
 

@@ -1,7 +1,7 @@
 """Tests for :mod:`parsimony.testing` — the plugin conformance suite.
 
 Three checks: ``check_connectors_exported``, ``check_descriptions_non_empty``,
-``check_env_vars_map_to_deps``.
+``check_env_map_matches_deps``.
 """
 
 from types import ModuleType
@@ -22,6 +22,7 @@ def _mk_connector(
     *,
     doc: str = "Fetch a toy observation.",
     tags: "list[str] | None" = None,
+    env: "dict[str, str] | None" = None,
     has_dep: bool = True,
 ) -> Any:
     if has_dep:
@@ -36,20 +37,17 @@ def _mk_connector(
 
     _fn.__doc__ = doc
     _fn.__name__ = name
-    return connector(tags=tags)(_fn)
+    return connector(tags=tags, env=env)(_fn)
 
 
 def _make_module(
     name: str,
     *,
     connectors: Connectors | None = None,
-    env_vars: dict[str, str] | None = None,
 ) -> ModuleType:
     mod = ModuleType(name)
     if connectors is not None:
         mod.CONNECTORS = connectors  # type: ignore[attr-defined]
-    if env_vars is not None:
-        mod.ENV_VARS = env_vars  # type: ignore[attr-defined]
     return mod
 
 
@@ -63,8 +61,7 @@ def test_valid_plugin_passes() -> None:
 
     mod = _make_module(
         "pkg_good",
-        connectors=Connectors([_mk_connector("good_fetch")]),
-        env_vars={"api_key": "GOOD_API_KEY"},
+        connectors=Connectors([_mk_connector("good_fetch", env={"api_key": "GOOD_API_KEY"})]),
     )
     assert_plugin_valid(mod)
 
@@ -128,31 +125,18 @@ def test_connector_with_empty_description_fails() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Check 3: env_vars_map_to_deps
+# Check 3: env_map_matches_deps
 # ---------------------------------------------------------------------------
 
 
-def test_env_var_not_mapping_to_dep_fails() -> None:
+def test_env_map_key_not_mapping_to_dep_fails() -> None:
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
     mod = _make_module(
         "pkg_bad_env",
-        connectors=Connectors([_mk_connector("no_dep", has_dep=False)]),
-        env_vars={"api_key": "WHATEVER"},
+        connectors=Connectors([_mk_connector("no_dep", has_dep=False, env={"api_key": "WHATEVER"})]),
     )
     with pytest.raises(ConformanceError, match="api_key"):
-        assert_plugin_valid(mod)
-
-
-def test_env_vars_wrong_type_fails() -> None:
-    from parsimony.testing import ConformanceError, assert_plugin_valid
-
-    mod = _make_module(
-        "pkg_env_list",
-        connectors=Connectors([_mk_connector("x", has_dep=False)]),
-    )
-    mod.ENV_VARS = ["API_KEY"]  # type: ignore[attr-defined]
-    with pytest.raises(ConformanceError, match="dict"):
         assert_plugin_valid(mod)
 
 
@@ -161,15 +145,14 @@ def test_env_vars_wrong_type_fails() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_skip_env_vars_map_to_deps_allows_bypass() -> None:
+def test_skip_env_map_matches_deps_allows_bypass() -> None:
     from parsimony.testing import assert_plugin_valid
 
     mod = _make_module(
         "pkg_skip_envmap",
-        connectors=Connectors([_mk_connector("no_dep_fetch", has_dep=False)]),
-        env_vars={"api_key": "WHATEVER"},
+        connectors=Connectors([_mk_connector("no_dep_fetch", has_dep=False, env={"api_key": "WHATEVER"})]),
     )
-    assert_plugin_valid(mod, skip=["check_env_vars_map_to_deps"])
+    assert_plugin_valid(mod, skip=["check_env_map_matches_deps"])
 
 
 def test_skip_unknown_check_raises() -> None:

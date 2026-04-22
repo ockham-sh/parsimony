@@ -13,7 +13,7 @@ Instead, parsimony gives you the **layer above** the raw client:
   and agent-discoverable schemas via `to_llm()`.
 - **`Catalog`** -- searchable index of what your internal data contains,
   so an agent can find series by keyword instead of memorizing table names.
-- **`bind_deps`** -- inject credentials at startup; they never appear in provenance
+- **`bind`** -- inject credentials at startup; they never appear in provenance
   or agent-visible parameter schemas.
 - **`OutputConfig`** -- declare KEY / TITLE / DATA / METADATA roles so downstream
   tools (charts, exports, catalog indexing) work automatically.
@@ -25,7 +25,7 @@ Parsimony wraps it in a connector that an agent or CLI can discover and call.
 
 ## Postgres Template
 
-Uses `asyncpg` for native async access. The pool is injected via `bind_deps`
+Uses `asyncpg` for native async access. The pool is injected via `bind`
 so credentials stay out of the connector signature.
 
 ```python
@@ -90,7 +90,7 @@ ENUMERATE_OUTPUT = OutputConfig(columns=[
 async def pg_fetch_metric(
     params: PgQueryParams,
     *,
-    pool: asyncpg.Pool,        # injected via bind_deps -- never in provenance
+    pool: asyncpg.Pool,        # injected via bind -- never in provenance
 ) -> pd.DataFrame:
     """Fetch time series observations for an internal metric.
 
@@ -110,7 +110,7 @@ async def pg_fetch_metric(
     if not rows:
         raise ValueError(f"No data for metric_id={params.metric_id!r}")
     # Return a DataFrame; the @connector(output=...) decorator applies the
-    # OutputConfig automatically, producing a SemanticTableResult.
+    # OutputConfig automatically, producing a schema-aware Result.
     return pd.DataFrame([dict(r) for r in rows])
 
 
@@ -136,7 +136,7 @@ async def pg_list_metrics(
     return pd.DataFrame([dict(r) for r in rows])
 
 
-# Export: bind at startup with bind_deps(pool=pool)
+# Export: bind at startup with bind(pool=pool)
 CONNECTORS = Connectors([pg_fetch_metric, pg_list_metrics])
 ```
 
@@ -147,7 +147,7 @@ import asyncpg
 from my_connectors.postgres import CONNECTORS as PG_CONNECTORS
 
 pool = await asyncpg.create_pool(dsn="postgresql://user:pass@host/db")
-bound = PG_CONNECTORS.bind_deps(pool=pool)
+bound = PG_CONNECTORS.bind(pool=pool)
 # Combine with standard bundle:
 # all_connectors = fred_connectors + sdmx_connectors + bound
 ```
@@ -234,7 +234,7 @@ def _sf_query(conn_params: dict[str, Any], sql: str, binds: tuple[Any, ...]) -> 
 async def sf_fetch_kpi(
     params: SfQueryParams,
     *,
-    sf_conn_params: dict[str, Any],  # injected via bind_deps
+    sf_conn_params: dict[str, Any],  # injected via bind
 ) -> pd.DataFrame:
     """Fetch time series for an internal KPI from Snowflake.
 
@@ -292,7 +292,7 @@ sf_params = {
     "password": os.environ["SNOWFLAKE_PASSWORD"],
     "warehouse": "COMPUTE_WH",
 }
-bound = SF_CONNECTORS.bind_deps(sf_conn_params=sf_params)
+bound = SF_CONNECTORS.bind(sf_conn_params=sf_params)
 ```
 
 ---
@@ -387,7 +387,7 @@ def _s3_read(bucket: str, key: str) -> pd.DataFrame:
 async def s3_read_dataset(
     params: S3ReadParams,
     *,
-    bucket: str,  # injected via bind_deps
+    bucket: str,  # injected via bind
 ) -> pd.DataFrame:
     """Read a Parquet dataset from S3.
 
@@ -424,31 +424,32 @@ CONNECTORS = Connectors([s3_read_dataset, s3_list_datasets])
 import os
 from my_connectors.s3 import CONNECTORS as S3_CONNECTORS
 
-bound = S3_CONNECTORS.bind_deps(bucket=os.environ["DATA_LAKE_BUCKET"])
+bound = S3_CONNECTORS.bind(bucket=os.environ["DATA_LAKE_BUCKET"])
 ```
 
 ---
 
 ## Integration: Combining with Standard Connectors
 
-All connector collections compose via `+`. Build one `Connectors` instance that
-an agent or CLI can query:
+Combine collections via `Connectors.merge(*others)`. Build one
+`Connectors` instance that an agent or CLI can query:
 
 ```python
 import os
-from parsimony_fred import CONNECTORS as FRED
-from parsimony_sdmx import CONNECTORS as SDMX
-from my_connectors.postgres import CONNECTORS as PG
-from my_connectors.snowflake import CONNECTORS as SF
-from my_connectors.s3 import CONNECTORS as S3
+from parsimony import Connectors
+from parsimony_fred import CONNECTORS as fred
+from parsimony_sdmx import CONNECTORS as sdmx
+from my_connectors.postgres import CONNECTORS as pg
+from my_connectors.snowflake import CONNECTORS as sf
+from my_connectors.s3 import CONNECTORS as s3
 
-fred_key = os.environ["FRED_API_KEY"]
-all_connectors = (
-    FRED.bind_deps(api_key=fred_key)
-    + SDMX                             # SDMX connectors have no deps
-    + PG.bind_deps(pool=pg_pool)
-    + SF.bind_deps(sf_conn_params=sf_params)
-    + S3.bind_deps(bucket="my-data-lake")
+# Env-driven dep is wired via bind_env(); non-env deps via bind().
+all_connectors = Connectors.merge(
+    fred.bind_env(),                            # reads FRED_API_KEY
+    sdmx,                                       # SDMX connectors have no deps
+    pg.bind(pool=pg_pool),
+    sf.bind(sf_conn_params=sf_params),
+    s3.bind(bucket="my-data-lake"),
 )
 
 # Auto-index into catalog on every fetch:
@@ -462,9 +463,13 @@ all_connectors = all_connectors.with_callback(catalog.add_from_result)
 ## Security Guidance
 
 1. **Environment variables only.** Never hardcode credentials in connector modules.
-   Use `os.environ["KEY"]` at startup and pass via `bind_deps`.
+   For string-typed credentials (API keys, tokens), declare the env var on the
+   decorator (`@connector(env={"api_key": "MY_API_KEY"})`) and let
+   `Connectors.bind_env()` resolve it. For richer dependencies (DB pools,
+   connection-parameter dicts), read `os.environ["KEY"]` at startup and pass
+   via `bind`.
 
-2. **`bind_deps` keeps secrets out of provenance.** Keyword-only dependencies
+2. **`bind` / `bind_env` keep secrets out of provenance.** Keyword-only dependencies
    (`*, api_key: str, pool: asyncpg.Pool`) are bound at startup and never
    serialized into `Provenance.params`. The agent sees the Pydantic param model
    (e.g. `metric_id`, `start_date`), not the pool or API key.

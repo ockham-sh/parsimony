@@ -1,17 +1,9 @@
-"""Shared test fixtures for parsimony test suite."""
+"""Shared test fixtures for parsimony test suite.
+
+The new :mod:`parsimony.discover` is stateless — no cache — so the legacy
+autouse fixture that cleared the per-process cache between tests is gone.
+This file is kept so pytest still recognises the directory as a test package
+and for future fixtures.
+"""
 
 from __future__ import annotations
-
-import pytest
-
-
-@pytest.fixture(autouse=True)
-def _reset_plugin_discovery_cache() -> None:
-    """Clear the plugin discovery cache before every test.
-
-    Monkeypatched entry-points in some tests can otherwise leak cached
-    mock results into subsequent tests that expect the real registry.
-    """
-    import parsimony.discovery as _discovery
-
-    _discovery._clear_cache()

@@ -8,7 +8,7 @@ Enforces the light-kernel invariant (DESIGN-distribution-model.md §5):
 Strategy: walk every Python module under ``parsimony/`` and flag any
 **import** that references a known provider name. Imports are the axis that
 matters — a string literal that happens to contain ``"fred"`` is not a
-structural coupling; ``from parsimony.connectors.fred import X`` is.
+structural coupling; ``from parsimony_fred import X`` is.
 """
 
 from __future__ import annotations

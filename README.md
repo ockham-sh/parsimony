@@ -52,29 +52,31 @@ Fetch US unemployment rate from FRED:
 
 ```python
 import asyncio
-from parsimony_fred import CONNECTORS as FRED
+from parsimony_fred import CONNECTORS as fred
 
 async def main():
-    fred = FRED.bind_deps(api_key="your-fred-key")
-    result = await fred["fred_fetch"](series_id="UNRATE")
+    connectors = fred.bind_env()                  # reads FRED_API_KEY from os.environ
+    result = await connectors["fred_fetch"](series_id="UNRATE")
     print(result.data.tail())
     print(result.provenance)
 
 asyncio.run(main())
 ```
 
-Or compose everything configured in the environment:
+Or compose everything installed in one call:
 
 ```python
-from parsimony.discovery import build_connectors_from_env
+from parsimony import discover
 
-connectors = build_connectors_from_env()
+connectors = discover.load_all().bind_env()
 result = await connectors["fred_fetch"](series_id="UNRATE")
 ```
 
-`build_connectors_from_env()` walks every installed `parsimony.providers`
-entry point, binds dependencies from environment variables, and returns a
-single flat `Connectors` surface.
+`discover.load_all()` imports every installed `parsimony.providers` plugin
+and merges their `CONNECTORS` exports. `.bind_env()` resolves each
+connector's declared env vars from `os.environ`. Connectors whose required
+env vars are missing stay in the collection but raise `UnauthorizedError`
+on call — inspect via `connectors.unbound`.
 
 ## Core primitives
 
@@ -98,16 +100,32 @@ Every data source is a separate distribution implementing one contract:
 # your-connector/pyproject.toml
 [project]
 name = "parsimony-yourname"
-dependencies = ["parsimony-core>=0.3,<0.5", "pydantic"]
+dependencies = ["parsimony-core>=0.4,<0.5", "pydantic"]
+
+[project.urls]
+Homepage = "https://your-provider.example"
 
 [project.entry-points."parsimony.providers"]
 yourname = "parsimony_yourname"
 ```
 
-Your module exports `CONNECTORS` (required), plus optional `ENV_VARS`,
-`PROVIDER_METADATA`, and `CATALOGS` / `RESOLVE_CATALOG` (if the plugin
-publishes catalogs). The full spec is in [`docs/contract.md`](docs/contract.md)
-— it's the framework's load-bearing surface.
+Your module exports `CONNECTORS` (required) and optional `CATALOGS` /
+`RESOLVE_CATALOG` (if the plugin publishes catalogs):
+
+```python
+# parsimony_yourname/__init__.py
+from parsimony import Connectors, connector
+
+@connector(env={"api_key": "YOUR_API_KEY"})
+async def yourname_fetch(params, *, api_key: str): ...
+
+CONNECTORS = Connectors([yourname_fetch])
+```
+
+Per-connector env vars live on the decorator (`env={...}`); homepage and
+version come from `pyproject.toml`. The full spec is in
+[`docs/contract.md`](docs/contract.md) — it's the framework's load-bearing
+surface.
 
 Building a private connector for your organisation? See
 [`docs/building-a-private-connector.md`](docs/building-a-private-connector.md)
@@ -116,10 +134,10 @@ for the customer-private path.
 ## Discovering plugins
 
 ```python
-from parsimony.discovery import discovered_providers
+from parsimony import discover
 
-for provider in discovered_providers():
-    print(provider.distribution_name, provider.version, provider.connectors.names())
+for provider in discover.iter_providers():
+    print(provider.dist_name, provider.version, provider.module_path)
 ```
 
 Or from the command line:
@@ -193,8 +211,8 @@ When path 2 or 3 is preferable:
   sensitive query-param values (`api_key`, `token`, `password`, anything
   ending in `_token`) in structured logs.
 - **No provenance leak.** Keyword-only dependencies bound via
-  `bind_deps()` are injected at the function-call boundary; they never
-  appear in `Provenance.params`, Parquet/Arrow serializations, or
+  `bind()` / `bind_env()` are injected at the function-call boundary; they
+  never appear in `Provenance.params`, Parquet/Arrow serializations, or
   `to_llm()` output.
 
 See [`SECURITY.md`](SECURITY.md) for disclosure.

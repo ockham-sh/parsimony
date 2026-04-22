@@ -130,10 +130,62 @@ parsimony list --strict         # run conformance suite; exit non-zero on failur
 parsimony list --strict --json  # machine-readable artefact for security review
 ```
 
+## Publishing catalogs
+
 `parsimony publish --provider NAME --target URL_TEMPLATE` builds one
 catalog per namespace declared on a plugin's `CATALOGS` export and pushes
 each to `URL_TEMPLATE.format(namespace=...)`. See
-[`docs/contract.md`](docs/contract.md) §6 for the publish shape.
+[`docs/contract.md`](docs/contract.md) §6 for the publish contract.
+
+Three equivalent paths — the on-disk format is identical across schemes,
+so you can stage locally and upload later without re-running the
+enumerator.
+
+**1. Direct to Hugging Face** — one step:
+
+```bash
+parsimony publish --provider sdmx --target 'hf://myorg/catalog-{namespace}'
+```
+
+**2. Local first, then re-publish via parsimony** — load and push:
+
+```bash
+parsimony publish --provider sdmx --target 'file:///tmp/out/{namespace}'
+
+# inspect files, then later:
+python -c "
+import asyncio
+from parsimony import Catalog
+
+async def main():
+    cat = await Catalog.from_url('file:///tmp/out/sdmx_datasets')
+    await cat.push('hf://myorg/catalog-sdmx_datasets')
+
+asyncio.run(main())
+"
+```
+
+**3. Local first, then raw `huggingface-cli upload`** — bypass the
+embedder reconstruction entirely:
+
+```bash
+parsimony publish --provider sdmx --target 'file:///tmp/out/{namespace}'
+huggingface-cli upload myorg/catalog-sdmx_datasets \
+                       /tmp/out/sdmx_datasets --repo-type dataset
+```
+
+Path 3 works because `parsimony`'s `hf://` push just writes the
+three-file bundle (`meta.json`, `entries.parquet`, `embeddings.faiss`)
+to a temp directory and uploads the folder — the `file://` output is
+byte-identical.
+
+When path 2 or 3 is preferable:
+
+- Inspect the bundle before publishing (size, entry counts, embedder
+  fingerprint).
+- Re-publish without re-running the expensive enumerator.
+- Enumerate on a build machine, push from a deploy machine.
+- Publish the same bundle to multiple targets (HF + S3 mirror).
 
 ## Security
 

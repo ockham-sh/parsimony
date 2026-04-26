@@ -41,13 +41,20 @@ def test_to_arrow_embeds_provenance_metadata() -> None:
 
 
 def test_arrow_roundtrip_schemaless_result() -> None:
-    prov = Provenance(source="fred", params={"k": "v"})
+    prov = Provenance(
+        source="fred",
+        params={"k": "v"},
+        description="US macro series",
+        tags=["macro", "monthly"],
+    )
     result = Result(data=_df(), provenance=prov)
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
     assert roundtrip.output_schema is None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"k": "v"}
+    assert roundtrip.provenance.description == "US macro series"
+    assert roundtrip.provenance.tags == ["macro", "monthly"]
     pd.testing.assert_frame_equal(roundtrip.df, _df())
 
 
@@ -82,7 +89,12 @@ def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
 def test_parquet_roundtrip(tmp_path: Path) -> None:
     result = Result(
         data=_df(),
-        provenance=Provenance(source="fred", params={"q": "unemployment"}),
+        provenance=Provenance(
+            source="fred",
+            params={"q": "unemployment"},
+            description="US labor market series",
+            tags=["labor", "fred"],
+        ),
         output_schema=_schema(),
     )
     path = tmp_path / "data.parquet"
@@ -91,4 +103,6 @@ def test_parquet_roundtrip(tmp_path: Path) -> None:
     assert roundtrip.output_schema is not None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"q": "unemployment"}
+    assert roundtrip.provenance.description == "US labor market series"
+    assert roundtrip.provenance.tags == ["labor", "fred"]
     pd.testing.assert_frame_equal(roundtrip.df, _df())

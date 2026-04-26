@@ -21,10 +21,14 @@ as the kernel adds support for additional protocols.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
+import re
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -60,6 +64,7 @@ _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
 _REDACTED_VALUE = "***"
 
 _DEFAULT_RATE_LIMIT_RETRY_AFTER: float = 60.0
+_URL_RE = re.compile(r"https?://[^\s'\"<>]+")
 
 
 def _redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
@@ -97,6 +102,13 @@ def redact_url(url: str) -> str:
         for k, v in pairs
     ]
     return urlunsplit(parts._replace(query=urlencode(redacted)))
+
+
+def redact_sensitive_text(text: str) -> str:
+    """Redact URL query secrets from arbitrary text."""
+    if not text:
+        return text
+    return _URL_RE.sub(lambda m: redact_url(m.group(0)), text)
 
 
 def parse_retry_after(response: httpx.Response, *, default: float = _DEFAULT_RATE_LIMIT_RETRY_AFTER) -> float:
@@ -187,6 +199,42 @@ def map_timeout_error(exc: httpx.TimeoutException, *, provider: str, op_name: st
     ) from exc
 
 
+@dataclass(frozen=True)
+class HttpRetryPolicy:
+    """Transient retry policy for :class:`HttpClient`."""
+
+    max_attempts: int = 3
+    base_delay_s: float = 0.25
+    max_delay_s: float = 8.0
+    jitter_s: float = 0.1
+    retryable_methods: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
+    retryable_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+
+    def validate(self) -> HttpRetryPolicy:
+        if self.max_attempts < 1:
+            raise ValueError(f"max_attempts must be >= 1, got {self.max_attempts}")
+        if self.base_delay_s < 0:
+            raise ValueError(f"base_delay_s must be >= 0, got {self.base_delay_s}")
+        if self.max_delay_s <= 0:
+            raise ValueError(f"max_delay_s must be > 0, got {self.max_delay_s}")
+        if self.jitter_s < 0:
+            raise ValueError(f"jitter_s must be >= 0, got {self.jitter_s}")
+        return self
+
+    def should_retry_method(self, method: str) -> bool:
+        return method.upper() in self.retryable_methods
+
+    def backoff_seconds(self, attempt: int, *, retry_after: float | None = None) -> float:
+        if retry_after is not None:
+            return float(min(max(retry_after, 0.0), self.max_delay_s))
+        exp = self.base_delay_s * (2 ** max(0, attempt - 1))
+        jitter = float(random.uniform(0.0, self.jitter_s)) if self.jitter_s > 0 else 0.0
+        return float(min(exp + jitter, self.max_delay_s))
+
+
+DEFAULT_HTTP_RETRY_POLICY = HttpRetryPolicy().validate()
+
+
 class HttpClient:
     """Async HTTP client with base URL, default headers/query params, and redacted logging.
 
@@ -208,6 +256,7 @@ class HttpClient:
         max_redirects: int = 5,
         _transport: httpx.AsyncBaseTransport | None = None,
         shared_client: httpx.AsyncClient | None = None,
+        retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._timeout = timeout
@@ -218,6 +267,7 @@ class HttpClient:
         self._max_redirects = max_redirects
         self._transport = _transport
         self._shared_client = shared_client
+        self._retry_policy = retry_policy.validate() if retry_policy is not None else None
 
     @property
     def base_url(self) -> str:
@@ -235,6 +285,7 @@ class HttpClient:
             max_redirects=self._max_redirects,
             _transport=self._transport,
             shared_client=client,
+            retry_policy=self._retry_policy,
         )
 
     async def aclose(self) -> None:
@@ -276,23 +327,48 @@ class HttpClient:
             },
         )
 
-        if self._shared_client is not None:
-            response = await self._shared_client.request(
-                method=method,
-                url=url,
-                params=request_params,
-                json=json,
-                headers=request_headers,
-            )
-        else:
-            async with httpx.AsyncClient(**self._client_kwargs()) as client:
-                response = await client.request(
+        method_upper = method.upper()
+        policy = self._retry_policy
+        max_attempts = policy.max_attempts if policy and policy.should_retry_method(method_upper) else 1
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = await self._request_once(
                     method=method,
                     url=url,
                     params=request_params,
                     json=json,
                     headers=request_headers,
                 )
+            except Exception as exc:
+                if not self._is_retryable_exception(exc, policy=policy) or attempt >= max_attempts:
+                    raise
+                assert policy is not None
+                delay = policy.backoff_seconds(attempt)
+                logger.warning(
+                    "Transient HTTP exception (%s). Retrying in %.2fs (attempt %d/%d)",
+                    type(exc).__name__,
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                )
+                await asyncio.sleep(delay)
+                continue
+
+            if self._should_retry_response(response, policy=policy, method=method_upper) and attempt < max_attempts:
+                assert policy is not None
+                retry_after = parse_retry_after(response) if response.status_code == 429 else None
+                delay = policy.backoff_seconds(attempt, retry_after=retry_after)
+                logger.warning(
+                    "Transient HTTP status %d. Retrying in %.2fs (attempt %d/%d)",
+                    response.status_code,
+                    delay,
+                    attempt + 1,
+                    max_attempts,
+                )
+                await asyncio.sleep(delay)
+                continue
+            break
 
         if response.history:
             final_url = _safe_redirect_url(response.url)
@@ -318,6 +394,44 @@ class HttpClient:
         )
         return response
 
+    async def _request_once(
+        self,
+        *,
+        method: str,
+        url: str,
+        params: dict[str, Any],
+        json: dict[str, Any] | None,
+        headers: dict[str, Any],
+    ) -> httpx.Response:
+        if self._shared_client is not None:
+            return await self._shared_client.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json,
+                headers=headers,
+            )
+        async with httpx.AsyncClient(**self._client_kwargs()) as client:
+            return await client.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json,
+                headers=headers,
+            )
+
+    @staticmethod
+    def _is_retryable_exception(exc: Exception, *, policy: HttpRetryPolicy | None) -> bool:
+        if policy is None:
+            return False
+        return isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError))
+
+    @staticmethod
+    def _should_retry_response(response: httpx.Response, *, policy: HttpRetryPolicy | None, method: str) -> bool:
+        if policy is None or not policy.should_retry_method(method):
+            return False
+        return response.status_code in policy.retryable_statuses
+
 
 @asynccontextmanager
 async def pooled_client(http: HttpClient) -> AsyncIterator[HttpClient]:
@@ -339,10 +453,13 @@ async def pooled_client(http: HttpClient) -> AsyncIterator[HttpClient]:
 
 
 __all__ = [
+    "DEFAULT_HTTP_RETRY_POLICY",
     "HttpClient",
+    "HttpRetryPolicy",
     "map_http_error",
     "map_timeout_error",
     "parse_retry_after",
     "pooled_client",
+    "redact_sensitive_text",
     "redact_url",
 ]

@@ -232,12 +232,14 @@ Exposes:
 
 ```python
 Provenance(
-    source: str,
-    source_description: str | None = None,
-    params: dict,
-    fetched_at: datetime,
+    source: str = "",
+    source_description: str = "",
+    params: dict[str, Any] = {},
+    fetched_at: datetime | None = None,
     title: str | None = None,
-    properties: dict = {},
+    description: str | None = None,
+    tags: list[str] = [],
+    properties: dict[str, Any] = {},
 )
 ```
 

@@ -106,6 +106,8 @@ class Provenance(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     fetched_at: datetime | None = None
     title: str | None = None
+    description: str | None = None
+    tags: list[str] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
 
 

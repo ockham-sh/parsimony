@@ -138,6 +138,19 @@ def test_result_from_dataframe_rejects_empty() -> None:
         Result.from_dataframe(pd.DataFrame(), Provenance())
 
 
+def test_provenance_roundtrip_description_and_tags() -> None:
+    prov = Provenance(
+        source="fred",
+        title="US unemployment rate",
+        description="Monthly unemployment from BLS.",
+        tags=["macro", "monthly"],
+    )
+    payload = prov.model_dump(mode="json")
+    roundtrip = Provenance.model_validate(payload)
+    assert roundtrip.description == "Monthly unemployment from BLS."
+    assert roundtrip.tags == ["macro", "monthly"]
+
+
 def test_result_to_table_adds_unmapped_as_data() -> None:
     df = pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]})
     r = Result(data=df, provenance=Provenance(source="x"))

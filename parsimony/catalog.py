@@ -352,9 +352,19 @@ def entries_from_result(
 
     raw_codes = df[key_name].dropna().unique()
     static_ns = normalize_code(resolved_ns)
-    tag_list = [table.provenance.source] if table.provenance.source else []
+    tag_list: list[str] = []
+    if table.provenance.source:
+        tag_list.append(table.provenance.source)
+    tag_list.extend(table.provenance.tags)
     if extra_tags:
         tag_list.extend(extra_tags)
+    deduped_tags: list[str] = []
+    seen_tags: set[str] = set()
+    for tag in tag_list:
+        if tag in seen_tags:
+            continue
+        seen_tags.add(tag)
+        deduped_tags.append(tag)
 
     entries: list[SeriesEntry] = []
     for raw_code in raw_codes:
@@ -380,7 +390,7 @@ def entries_from_result(
                 namespace=static_ns,
                 code=code,
                 title=title,
-                tags=tag_list,
+                tags=deduped_tags,
                 metadata=meta,
             )
         )

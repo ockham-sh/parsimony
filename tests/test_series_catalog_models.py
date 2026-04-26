@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from parsimony.catalog import (
     SeriesEntry,
+    entries_from_result,
     normalize_code,
     normalize_entity_code,
 )
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 
 def test_normalize_code_accepts_snake_case() -> None:
@@ -78,3 +81,25 @@ def test_embedding_text_omits_empty_metadata() -> None:
     )
     text = e.embedding_text()
     assert text == "T"
+
+
+def test_entries_from_result_unions_provenance_tags_source_and_extra_tags() -> None:
+    df = pd.DataFrame(
+        {
+            "code": ["UNRATE", "UNRATE"],
+            "title": ["Unemployment Rate", "Unemployment Rate"],
+        }
+    )
+    result = Result(
+        data=df,
+        provenance=Provenance(source="fred", tags=["macro", "monthly", "macro"]),
+        output_schema=OutputConfig(
+            columns=[
+                Column(name="code", role=ColumnRole.KEY, namespace="fred"),
+                Column(name="title", role=ColumnRole.TITLE),
+            ]
+        ),
+    )
+    entries = entries_from_result(result, extra_tags=["monthly", "labor"])
+    assert len(entries) == 1
+    assert entries[0].tags == ["fred", "macro", "monthly", "labor"]

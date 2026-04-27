@@ -27,7 +27,6 @@ import hashlib
 import json
 import logging
 import math
-import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -47,7 +46,6 @@ PARSIMONY_LITELLM_PACKAGE = "parsimony-core[litellm]"
 
 _LITELLM_BATCH_SIZE = 100
 _ONNX_DEFAULT_BATCH_SIZE = 64
-_ONNX_CACHE_ENV = "PARSIMONY_ONNX_CACHE_DIR"
 
 
 class EmbedderInfo(BaseModel):
@@ -101,15 +99,17 @@ class FragmentEmbeddingCache:
     contortions in earlier drafts. The signature is structural
     (``list[list[str]]``) — no opinions about what fragments represent.
 
-    Optional cross-run persistence via :meth:`persist` / automatic load
-    on construction when ``cache_dir`` is provided. The cache directory
-    is keyed per-embedder (model + normalize + package) so mismatched
-    embedders don't corrupt the cache. Typical layout::
+    Cross-run persistence is on by default. The cache directory is
+    identity-keyed on (model, dim, normalize) — mismatched embedders
+    never share a cache. Layout::
 
-        .parsimony/fragments/<embedder-slug>/fragments.parquet
+        parsimony.cache.embeddings_dir(<slug>) /
+            ├── fragments.parquet
+            └── meta.json
 
-    Callers own the lifecycle: load happens on construction when
-    ``cache_dir`` is set; save only when :meth:`persist` is called.
+    Pass ``cache_dir=`` to override the default location (mostly for
+    tests). Load happens on construction; :meth:`persist` is the only
+    write — callers decide when to save.
     """
 
     _FRAGMENT_CACHE_FILE = "fragments.parquet"
@@ -133,9 +133,12 @@ class FragmentEmbeddingCache:
         self._cache: dict[str, np.ndarray] = {}
         self._hits = 0
         self._misses = 0
-        self._cache_dir = Path(cache_dir) if cache_dir is not None else None
-        if self._cache_dir is not None:
-            self._try_load(self._cache_dir)
+        if cache_dir is None:
+            from parsimony import cache as _cache
+
+            cache_dir = _cache.embeddings_dir(_embedder_slug(base.info()))
+        self._cache_dir = Path(cache_dir)
+        self._try_load(self._cache_dir)
 
     async def compose_many(
         self,
@@ -209,14 +212,12 @@ class FragmentEmbeddingCache:
         }
 
     def persist(self) -> None:
-        """Save the current cache to ``cache_dir`` if configured; otherwise no-op.
+        """Save the current cache to disk; no-op if nothing has been embedded yet.
 
         Writes a parquet of ``(fragment, vector)`` rows plus a small
         ``meta.json`` carrying the embedder's identity. The identity
         guards against stale-cache reuse when the embedder changes.
         """
-        if self._cache_dir is None:
-            return
         if not self._cache:
             return
         import pyarrow as pa
@@ -380,13 +381,16 @@ class OnnxEmbedder:
 
     Cache layout::
 
-        $PARSIMONY_ONNX_CACHE_DIR / <model_slug> / {fp32,int8}/
+        parsimony.cache.models_dir() / <model_slug> / {fp32,int8}/
             ├── model.onnx (or model_quantized.onnx for int8)
             ├── tokenizer.json
             └── …
 
-    When the env var is unset, falls back to
-    ``platformdirs.user_cache_dir("parsimony")/onnx-embedders``.
+    Defaults to :func:`parsimony.cache.models_dir` (resolved through
+    ``PARSIMONY_CACHE_DIR`` then
+    ``platformdirs.user_cache_dir("parsimony")``). Pass ``cache_dir=`` to
+    override the parent that contains the per-model layout (mostly for
+    tests).
     """
 
     def __init__(
@@ -587,14 +591,9 @@ class OnnxEmbedder:
     def _cache_root(self) -> Path:
         if self._cache_dir_override is not None:
             return self._cache_dir_override
-        env = os.environ.get(_ONNX_CACHE_ENV)
-        if env:
-            return Path(env)
-        try:
-            from platformdirs import user_cache_dir
-            return Path(user_cache_dir("parsimony")) / "onnx-embedders"
-        except ImportError:  # pragma: no cover — platformdirs is a base dep
-            return Path.home() / ".cache" / "parsimony" / "onnx-embedders"
+        from parsimony import cache
+
+        return cache.models_dir()
 
 
 def _slug_model(model_name: str) -> str:
@@ -602,6 +601,21 @@ def _slug_model(model_name: str) -> str:
     safe = model_name.replace("/", "__").replace(":", "_")
     # Guard against pathological names with an 8-char hash suffix.
     digest = hashlib.sha1(model_name.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+    return f"{safe}-{digest}"
+
+
+def _embedder_slug(info: EmbedderInfo) -> str:
+    """Identity-keyed slug for :class:`FragmentEmbeddingCache` directories.
+
+    Combines model + dim + normalize so two embedders with the same
+    model name but different dimensions (matryoshka, truncated) or
+    normalization choices never share a cache file.
+    """
+    safe = info.model.replace("/", "__").replace(":", "_")
+    digest = hashlib.sha1(
+        f"{info.model}|{info.dim}|{info.normalize}".encode("utf-8"),
+        usedforsecurity=False,
+    ).hexdigest()[:8]
     return f"{safe}-{digest}"
 
 

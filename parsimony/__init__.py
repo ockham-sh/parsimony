@@ -22,6 +22,7 @@ import importlib
 from importlib.metadata import PackageNotFoundError, version
 from typing import Any
 
+from parsimony import cache as cache  # re-export so ``from parsimony import cache`` works
 from parsimony import discover as discover  # re-export so ``from parsimony import discover`` works
 from parsimony.connector import (
     Connector,

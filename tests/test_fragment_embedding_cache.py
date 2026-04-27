@@ -177,15 +177,37 @@ def test_persist_and_reload_round_trip(tmp_path: Path) -> None:
     assert emb2.calls == []  # pure cache hit on reload
 
 
-def test_persist_is_noop_without_cache_dir(tmp_path: Path) -> None:
+def test_default_cache_dir_lands_under_pinned_root(
+    _pin_parsimony_cache_dir: Path,
+) -> None:
+    """Without an explicit ``cache_dir``, persist writes under
+    ``parsimony.cache.embeddings_dir(slug)`` — pinned to a per-test tmp by the
+    autouse fixture."""
     emb = _CountingStubEmbedder()
-    cache = FragmentEmbeddingCache(emb)  # no cache_dir
+    cache = FragmentEmbeddingCache(emb)  # no cache_dir → default
 
     asyncio.run(cache.compose_many([["alpha"]]))
-    cache.persist()  # must not raise
+    cache.persist()
 
-    # Nothing written.
-    assert list(tmp_path.iterdir()) == []
+    embeddings_root = _pin_parsimony_cache_dir / "embeddings"
+    assert embeddings_root.is_dir()
+    # Exactly one slug-named subdirectory, holding both expected files.
+    (slug_dir,) = list(embeddings_root.iterdir())
+    assert (slug_dir / "fragments.parquet").exists()
+    assert (slug_dir / "meta.json").exists()
+
+
+def test_persist_noop_when_nothing_embedded(tmp_path: Path) -> None:
+    """Persist before any compose_many call is a no-op (no parquet written)."""
+    emb = _CountingStubEmbedder()
+    cache_dir = tmp_path / "fragments"
+    cache = FragmentEmbeddingCache(emb, cache_dir=cache_dir)
+
+    cache.persist()  # must not raise; nothing in self._cache
+
+    # Directory may exist (constructor may create it) but no parquet yet.
+    if cache_dir.exists():
+        assert not (cache_dir / "fragments.parquet").exists()
 
 
 def test_reload_with_mismatched_embedder_identity_discards_cache(tmp_path: Path) -> None:

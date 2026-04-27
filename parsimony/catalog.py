@@ -1021,7 +1021,14 @@ async def _push_file(catalog: Catalog, root: str) -> None:
 async def _load_hf(root: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
     from huggingface_hub import snapshot_download
 
-    local = await asyncio.to_thread(lambda: Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE)))
+    from parsimony import cache
+
+    cache_dir = cache.catalogs_dir()
+    local = await asyncio.to_thread(
+        lambda: Path(
+            snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir)
+        )
+    )
     return await Catalog.load(local, embedder=embedder)
 
 

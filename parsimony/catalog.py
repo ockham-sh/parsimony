@@ -110,7 +110,7 @@ class SeriesEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    embedding: list[float] | None = None
+    embedding: bytes | None = None #: Packed ``np.float32`` bytes
 
     @field_validator("namespace")
     @classmethod
@@ -514,7 +514,24 @@ class Catalog:
     # ------------------------------------------------------------------
 
     async def add(self, entries: list[SeriesEntry]) -> None:
-        """Insert or update *entries*. Computes missing embeddings and rebuilds indices."""
+        """Insert or update *entries*. Computes missing embeddings and rebuilds indices.
+
+        Equivalent to :meth:`add_all` — kept as the :class:`CatalogBackend`
+        protocol method so interactive callers (that interleave :meth:`search`
+        between inserts) have a stable, expected-to-rebuild entry point.
+        Bulk-ingest paths (publish pipelines) should prefer :meth:`add_all`
+        for documentary intent; the concrete behavior is identical today.
+        """
+        await self.add_all(entries)
+
+    async def add_all(self, entries: list[SeriesEntry]) -> None:
+        """Bulk insert or update *entries*; rebuild FAISS+BM25 exactly once.
+
+        Publish pipelines used to loop ``add()`` in batches of 100, forcing
+        a per-batch ``_rebuild_indices`` call — at 500k series that is
+        ~5000 rebuilds dominated by FAISS/HNSW construction. This method
+        collapses the whole input into a single embed/append/rebuild cycle.
+        """
         if not entries:
             return
         async with self._lock:
@@ -641,33 +658,58 @@ class Catalog:
         batch_size: int = 100,
         dry_run: bool = False,
     ) -> IndexResult:
+        # ``batch_size`` is accepted for API compat; the method no longer
+        # chunks because the hot path (index rebuild) is now amortized
+        # by ``add_all``. Chunking existed solely to bound per-batch
+        # rebuild cost, which no longer exists.
+        del batch_size
+
         result = IndexResult()
         result.total = len(entries)
         if not entries:
             return result
 
-        for start in range(0, len(entries), batch_size):
-            batch = entries[start : start + batch_size]
-            keys = [(e.namespace, e.code) for e in batch]
-            existing = await self.exists(keys)
-            to_insert = [e for e in batch if (e.namespace, e.code) not in existing]
-            result.skipped += len(batch) - len(to_insert)
-            if not to_insert:
-                continue
-            if dry_run:
-                result.indexed += len(to_insert)
-                continue
-            try:
-                await self.add(to_insert)
-                result.indexed += len(to_insert)
-            except (OSError, RuntimeError, httpx.HTTPError) as exc:
-                logger.warning("ingest batch failed: %s", exc)
-                result.errors += len(to_insert)
+        keys = [(e.namespace, e.code) for e in entries]
+        existing = await self.exists(keys)
+        to_insert = [e for e in entries if (e.namespace, e.code) not in existing]
+        result.skipped = len(entries) - len(to_insert)
+        if not to_insert:
+            return result
+
+        if dry_run:
+            result.indexed = len(to_insert)
+            return result
+
+        try:
+            await self.add_all(to_insert)
+            result.indexed = len(to_insert)
+        except (OSError, RuntimeError, httpx.HTTPError) as exc:
+            logger.warning("ingest failed: %s", exc)
+            result.errors = len(to_insert)
         return result
 
     # ------------------------------------------------------------------
     # On-disk snapshot
     # ------------------------------------------------------------------
+
+    def release_index(self) -> None:
+        """Drop in-memory indices and entries after the catalog has been pushed.
+
+        Publish pipelines build a Catalog, ``save`` or ``push`` it, and then
+        throw it away. Until the caller releases its reference, the FAISS
+        graph (~hundreds of MB on a large flow), the per-entry embedding
+        matrix, and the BM25 token lists stay resident, which delays
+        ``malloc_trim`` reclamation between flows. Calling this in a
+        ``finally`` after ``push`` makes the per-flow drop deterministic.
+
+        After release the catalog is no longer searchable; this is a
+        single-use teardown, not a pause/resume.
+        """
+        self._entries = []
+        self._key_to_idx = {}
+        self._faiss = None
+        self._bm25 = None
+        self._tokens = []
 
     async def save(self, path: str | Path, *, builder: str | None = None) -> None:
         """Atomically write the three-file snapshot to *path*."""
@@ -705,15 +747,19 @@ class Catalog:
                 normalize=meta.embedder.normalize,
             )
         )
-        if chosen.dimension != meta.embedder.dim:
+        chosen_info = chosen.info()
+        expected = (meta.embedder.model, meta.embedder.dim, meta.embedder.normalize)
+        actual = (chosen_info.model, chosen_info.dim, chosen_info.normalize)
+        if expected != actual:
             raise ValueError(
-                f"Embedder dimension {chosen.dimension} does not match meta.embedder.dim "
-                f"{meta.embedder.dim} for catalog at {src}"
+                f"Embedder identity mismatch for catalog at {src}:\n"
+                f"  expected (model, dim, normalize): {expected}\n"
+                f"  actual:                           {actual}"
             )
 
         catalog = cls(meta.name, embedder=chosen)
         catalog._embedder_info = meta.embedder
-        entries, _ = await asyncio.to_thread(_read_parquet, src / ENTRIES_FILENAME)
+        entries = await asyncio.to_thread(_read_parquet, src / ENTRIES_FILENAME)
         catalog._entries = entries
         catalog._key_to_idx = {(e.namespace, e.code): i for i, e in enumerate(entries)}
         catalog._tokens = [tokenize(e.keyword_text()) for e in entries]
@@ -759,7 +805,9 @@ class Catalog:
             texts = [e.semantic_text() for _, e in chunk]
             vectors = await self._embedder.embed_texts(texts)
             for (i, entry), vec in zip(chunk, vectors, strict=True):
-                out[i] = entry.model_copy(update={"embedding": list(vec)})
+                out[i] = entry.model_copy(
+                    update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()}
+                )
         return out
 
     def _rebuild_indices(self) -> None:
@@ -768,7 +816,21 @@ class Catalog:
             self._bm25 = None
             return
         info = self.embedder_info
-        matrix = np.asarray([e.embedding for e in self._entries], dtype=np.float32)
+        # Stack packed-float32 bytes into a contiguous (N, dim) matrix.
+        # ``np.frombuffer`` views the bytes without copying; the explicit
+        # ``np.empty`` + assignment keeps the matrix writable (FAISS may
+        # normalize in place) without paying for an intermediate
+        # ``b"".join`` of all entries.
+        n = len(self._entries)
+        matrix = np.empty((n, info.dim), dtype=np.float32)
+        for i, e in enumerate(self._entries):
+            if e.embedding is None:
+                raise RuntimeError(
+                    f"entry {i} ({e.namespace}/{e.code}) has no embedding "
+                    "at index-rebuild time — _embed_missing should have "
+                    "populated it before _rebuild_indices runs"
+                )
+            matrix[i, :] = np.frombuffer(e.embedding, dtype=np.float32)
         self._faiss = build_faiss(matrix, dim=info.dim, normalize=info.normalize)
         from rank_bm25 import BM25Okapi
 
@@ -787,6 +849,9 @@ class Catalog:
         return faiss_query(self._faiss, query_vec, k=k, normalize=info.normalize)
 
     def _write_parquet(self, target: Path, info: EmbedderInfo) -> None:
+        # Vectors live exclusively in embeddings.faiss; keeping them here
+        # duplicated the payload and ~2x'd bundle size for no benefit (load
+        # reads FAISS directly; entries-side .embedding is unused post-load).
         if not self._entries:
             schema = pa.schema(
                 [
@@ -796,7 +861,6 @@ class Catalog:
                     ("description", pa.string()),
                     ("tags_json", pa.string()),
                     ("metadata_json", pa.string()),
-                    ("embedding", pa.list_(pa.float32(), info.dim)),
                 ]
             )
             pq.write_table(pa.Table.from_pylist([], schema=schema), target)
@@ -809,7 +873,6 @@ class Catalog:
                 "description": e.description,
                 "tags_json": json.dumps(e.tags),
                 "metadata_json": json.dumps(e.metadata),
-                "embedding": e.embedding,
             }
             for e in self._entries
         ]
@@ -826,10 +889,13 @@ class Catalog:
         target.write_text(meta.model_dump_json(indent=2))
 
 
-def _read_parquet(target: Path) -> tuple[list[SeriesEntry], np.ndarray]:
+def _read_parquet(target: Path) -> list[SeriesEntry]:
+    # Tolerates both shapes: current bundles omit `embedding`; legacy
+    # bundles (pre-split) carry it and we silently ignore it — FAISS is
+    # the source of truth for vectors.
     table = pq.read_table(target)
     rows = table.to_pylist()
-    entries = [
+    return [
         SeriesEntry(
             namespace=row["namespace"],
             code=row["code"],
@@ -837,14 +903,9 @@ def _read_parquet(target: Path) -> tuple[list[SeriesEntry], np.ndarray]:
             description=row.get("description"),
             tags=json.loads(row["tags_json"]) if row.get("tags_json") else [],
             metadata=json.loads(row["metadata_json"]) if row.get("metadata_json") else {},
-            embedding=list(row["embedding"]) if row.get("embedding") is not None else None,
         )
         for row in rows
     ]
-    embeddings = (
-        np.asarray([e.embedding for e in entries], dtype=np.float32) if entries else np.zeros((0, 0), dtype=np.float32)
-    )
-    return entries, embeddings
 
 
 # ---------------------------------------------------------------------------

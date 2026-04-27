@@ -265,8 +265,8 @@ from the recorded `model` string.
 `Catalog.search(query, limit, *, namespaces=None)` runs a hybrid search:
 
 1. Pull candidates from each retriever over the full corpus:
-   - BM25 over whitespace-lowercased `entry.embedding_text()`.
-   - FAISS inner-product over the embedded query vector.
+   - BM25 over whitespace-lowercased `entry.keyword_text()` (title + description + metadata + tags — cheap linear cost, so keyword-rich).
+   - FAISS inner-product over the embedded query vector; entries are indexed via `entry.semantic_text()` (title + description only — O(N²) attention makes it expensive to pollute with identifiers).
 2. Fuse the two ranked lists with reciprocal rank fusion (`rrf_fuse`, k=60).
 3. Filter by `namespaces` (if given) and truncate to `limit`.
 

@@ -385,10 +385,12 @@ SeriesEntry(
 )
 ```
 
-**Stable.** `embedding_text()` composes the string an embedder indexes:
-title, then `", ".join("k: v")` over metadata, then `"tags: a, b"`, joined
-with `" | "`. The representation is fixed — changing it would require
-reindexing.
+**Stable.** Two text projections with different cost models:
+
+- `semantic_text()` — short and semantic. `title | description` (description omitted when unset). Fed to the embedder. Kept short because attention cost is O(N²); metadata and tags are excluded here so constant-per-catalog boilerplate doesn't dilute the embedding.
+- `keyword_text()` — long and keyword-rich. `title | description | "k: v, …" | tags: a, b`. Fed to BM25, whose cost is linear in tokens, so adding identifiers lets exact-keyword queries hit without hurting the embedding.
+
+Both representations are fixed — changing either would require reindexing.
 
 ### `SeriesMatch`
 

@@ -57,7 +57,7 @@ def test_series_entry_first_class_tags_metadata() -> None:
     assert e.metadata == {"k": "v"}
 
 
-def test_embedding_text_joins_title_metadata_tags() -> None:
+def test_semantic_text_is_title_only_when_no_description() -> None:
     e = SeriesEntry(
         namespace="fred",
         code="GDPC1",
@@ -65,22 +65,56 @@ def test_embedding_text_joins_title_metadata_tags() -> None:
         metadata={"frequency_short": "Q", "units_short": "Bil. of $"},
         tags=["macro", "usa"],
     )
-    text = e.embedding_text()
+    # Semantic text is for the embedder: short, title-based. Metadata and
+    # tags stay out — they're identifiers, not semantic content.
+    assert e.semantic_text() == "Real GDP"
+
+
+def test_semantic_text_includes_description() -> None:
+    e = SeriesEntry(
+        namespace="fred",
+        code="GDPC1",
+        title="Real GDP",
+        description="Inflation-adjusted value of the goods and services produced",
+    )
+    text = e.semantic_text()
     assert "Real GDP" in text
+    assert "Inflation-adjusted" in text
+
+
+def test_keyword_text_includes_all_searchable_fields() -> None:
+    e = SeriesEntry(
+        namespace="fred",
+        code="GDPC1",
+        title="Real GDP",
+        description="Inflation-adjusted output",
+        metadata={"frequency_short": "Q", "units_short": "Bil. of $"},
+        tags=["macro", "usa"],
+    )
+    text = e.keyword_text()
+    # Every catalog-worthy field is searchable — if it's stored, it's findable.
+    assert "fred" in text
+    assert "GDPC1" in text
+    assert "Real GDP" in text
+    assert "Inflation-adjusted output" in text
     assert "frequency_short: Q" in text
     assert "units_short: Bil. of $" in text
     assert "tags: macro, usa" in text
 
 
-def test_embedding_text_omits_empty_metadata() -> None:
+def test_keyword_text_with_minimal_entry_still_includes_namespace_and_code() -> None:
     e = SeriesEntry(
         namespace="fred",
         code="X",
         title="T",
         metadata={},
     )
-    text = e.embedding_text()
-    assert text == "T"
+    text = e.keyword_text()
+    assert "fred" in text
+    assert "X" in text
+    assert "T" in text
+    # Empty metadata/tags/description contribute nothing
+    assert "tags:" not in text
 
 
 def test_entries_from_result_unions_provenance_tags_source_and_extra_tags() -> None:

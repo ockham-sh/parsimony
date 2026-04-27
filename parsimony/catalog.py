@@ -130,20 +130,52 @@ class SeriesEntry(BaseModel):
             raise ValueError("title must be non-empty")
         return normalized
 
-    def embedding_text(self) -> str:
-        """Compose the text an embedder should index for this entry."""
-        parts = [self.title]
+    def semantic_text(self) -> str:
+        """Text fed to the embedder. Short, semantic — title (+ description if set).
+
+        Semantic similarity is quadratic in token count, so only the
+        naturally-descriptive fields go here. Identifiers and filter
+        keys live in ``keyword_text()``.
+        """
+        if self.description:
+            return f"{self.title} | {self.description}"
+        return self.title
+
+    def keyword_text(self) -> str:
+        """Text fed to BM25 — every searchable field on the entry.
+
+        Concatenates ``namespace | code | title | description | metadata |
+        tags``. Only ``embedding`` is excluded (it's the vector, not text).
+        Principle: if a field lives on the entry, it's catalog-worthy and
+        therefore search-worthy. Users who query by series key, provider
+        id, or any metadata value should find the entry.
+
+        BM25 cost is linear, so the extra tokens are effectively free at
+        query time. Index-time memory scales with corpus × average
+        tokens-per-entry, still dwarfed by the FAISS float matrix.
+        """
+        parts = [self.namespace, self.code, self.title]
+        if self.description:
+            parts.append(self.description)
         if self.metadata:
-            meta_parts = [f"{k}: {v}" for k, v in self.metadata.items() if v is not None]
-            if meta_parts:
-                parts.append(", ".join(meta_parts))
+            kv = [f"{k}: {v}" for k, v in self.metadata.items() if v is not None]
+            if kv:
+                parts.append(", ".join(kv))
         if self.tags:
             parts.append(f"tags: {', '.join(self.tags)}")
         return " | ".join(parts)
 
 
 class SeriesMatch(BaseModel):
-    """Search projection: catalog row fields needed for display + fetch, plus similarity."""
+    """Search projection: catalog row fields needed for display + fetch, plus similarity.
+
+    :attr:`similarity` is the fused Reciprocal Rank Fusion score. When the
+    match originated from a hybrid :meth:`Catalog.search` call,
+    :attr:`bm25_rank` and :attr:`dense_rank` expose the zero-indexed rank
+    each retriever assigned this entry, or ``None`` if that retriever did
+    not return it in its candidate pool. Useful for debugging why a given
+    entry surfaced (or didn't).
+    """
 
     namespace: str
     code: str
@@ -152,6 +184,8 @@ class SeriesMatch(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    bm25_rank: int | None = None
+    dense_rank: int | None = None
 
     @field_validator("namespace")
     @classmethod
@@ -172,7 +206,13 @@ class SeriesMatch(BaseModel):
         return normalized
 
 
-def series_match_from_entry(entry: SeriesEntry, *, similarity: float) -> SeriesMatch:
+def series_match_from_entry(
+    entry: SeriesEntry,
+    *,
+    similarity: float,
+    bm25_rank: int | None = None,
+    dense_rank: int | None = None,
+) -> SeriesMatch:
     """Build a :class:`SeriesMatch` from a stored catalog row."""
     return SeriesMatch(
         namespace=entry.namespace,
@@ -182,6 +222,8 @@ def series_match_from_entry(entry: SeriesEntry, *, similarity: float) -> SeriesM
         tags=list(entry.tags),
         description=entry.description,
         metadata=dict(entry.metadata),
+        bm25_rank=bm25_rank,
+        dense_rank=dense_rank,
     )
 
 
@@ -345,6 +387,16 @@ def entries_from_result(
     if title_name is not None and title_name not in df.columns:
         raise ValueError(f"Result missing TITLE column {title_name!r}. Available: {list(df.columns)}")
 
+    desc_cols = [c for c in cols if c.role == ColumnRole.DESCRIPTION]
+    if len(desc_cols) > 1:
+        raise ValueError(
+            f"Result must have at most one DESCRIPTION column, found {len(desc_cols)}: "
+            f"{[c.name for c in desc_cols]}"
+        )
+    desc_name = desc_cols[0].name if desc_cols else None
+    if desc_name is not None and desc_name not in df.columns:
+        raise ValueError(f"Result missing DESCRIPTION column {desc_name!r}. Available: {list(df.columns)}")
+
     meta_names = [c.name for c in cols if c.role == ColumnRole.METADATA]
     for mn in meta_names:
         if mn not in df.columns:
@@ -378,6 +430,13 @@ def entries_from_result(
         else:
             title = code
 
+        description: str | None = None
+        if desc_name and desc_name in sub.columns:
+            descs = sub[desc_name].dropna()
+            if len(descs) > 0:
+                raw_desc = str(descs.iloc[0]).strip()
+                description = raw_desc or None
+
         meta: dict[str, Any] = {}
         for mn in meta_names:
             vals = sub[mn].dropna()
@@ -391,6 +450,7 @@ def entries_from_result(
                 code=code,
                 title=title,
                 tags=deduped_tags,
+                description=description,
                 metadata=meta,
             )
         )
@@ -464,11 +524,11 @@ class Catalog:
                 if key in self._key_to_idx:
                     idx = self._key_to_idx[key]
                     self._entries[idx] = entry
-                    self._tokens[idx] = tokenize(entry.embedding_text())
+                    self._tokens[idx] = tokenize(entry.keyword_text())
                 else:
                     self._key_to_idx[key] = len(self._entries)
                     self._entries.append(entry)
-                    self._tokens.append(tokenize(entry.embedding_text()))
+                    self._tokens.append(tokenize(entry.keyword_text()))
             self._rebuild_indices()
 
     async def search(
@@ -487,12 +547,22 @@ class Catalog:
         vec_ranks = await self._faiss_ranks(query, candidate_k)
         fused = rrf_fuse(bm25_ranks, vec_ranks)
 
+        bm25_rank_by_idx = {idx: rank for idx, rank in bm25_ranks}
+        dense_rank_by_idx = {idx: rank for idx, rank in vec_ranks}
+
         out: list[SeriesMatch] = []
         for idx, score in fused:
             entry = self._entries[idx]
             if ns_filter is not None and entry.namespace not in ns_filter:
                 continue
-            out.append(series_match_from_entry(entry, similarity=score))
+            out.append(
+                series_match_from_entry(
+                    entry,
+                    similarity=score,
+                    bm25_rank=bm25_rank_by_idx.get(idx),
+                    dense_rank=dense_rank_by_idx.get(idx),
+                )
+            )
             if len(out) >= limit:
                 break
         return out
@@ -646,7 +716,7 @@ class Catalog:
         entries, _ = await asyncio.to_thread(_read_parquet, src / ENTRIES_FILENAME)
         catalog._entries = entries
         catalog._key_to_idx = {(e.namespace, e.code): i for i, e in enumerate(entries)}
-        catalog._tokens = [tokenize(e.embedding_text()) for e in entries]
+        catalog._tokens = [tokenize(e.keyword_text()) for e in entries]
         catalog._faiss = await asyncio.to_thread(read_faiss, str(src / INDEX_FILENAME), expected_rows=len(entries))
         if catalog._tokens:
             from rank_bm25 import BM25Okapi
@@ -686,7 +756,7 @@ class Catalog:
         out = list(entries)
         for start in range(0, len(missing), EMBED_BATCH):
             chunk = missing[start : start + EMBED_BATCH]
-            texts = [e.embedding_text() for _, e in chunk]
+            texts = [e.semantic_text() for _, e in chunk]
             vectors = await self._embedder.embed_texts(texts)
             for (i, entry), vec in zip(chunk, vectors, strict=True):
                 out[i] = entry.model_copy(update={"embedding": list(vec)})

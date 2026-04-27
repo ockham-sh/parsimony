@@ -514,6 +514,11 @@ def _validate_loader_output(output: OutputConfig) -> None:
     title_names = [c.name for c in cols if c.role == ColumnRole.TITLE]
     if title_names:
         raise ValueError(f"Loader output must not include TITLE columns; remove or reassign roles for: {title_names!r}")
+    desc_names = [c.name for c in cols if c.role == ColumnRole.DESCRIPTION]
+    if desc_names:
+        raise ValueError(
+            f"Loader output must not include DESCRIPTION columns; remove or reassign roles for: {desc_names!r}"
+        )
     meta_names = [c.name for c in cols if c.role == ColumnRole.METADATA]
     if meta_names:
         raise ValueError(

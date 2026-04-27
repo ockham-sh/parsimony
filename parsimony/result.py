@@ -34,6 +34,13 @@ class ColumnRole(StrEnum):
     DATA = "data"
     KEY = "key"
     TITLE = "title"
+    #: Free-form per-entry text folded into :attr:`SeriesEntry.description`.
+    #: Unlike METADATA (which only reaches BM25 via ``keyword_text``), a
+    #: DESCRIPTION column also feeds :meth:`SeriesEntry.semantic_text` —
+    #: so the embedder sees it at index time. Use for rich definitional
+    #: text (upstream field definitions, provider-authored descriptions)
+    #: where semantic recall on the phrase itself matters.
+    DESCRIPTION = "description"
     METADATA = "metadata"
 
 
@@ -63,6 +70,8 @@ class Column(BaseModel):
             raise ValueError("exclude_from_llm_view is not allowed for data columns")
         if self.exclude_from_llm_view and self.role == ColumnRole.TITLE:
             raise ValueError("exclude_from_llm_view is not allowed for title columns")
+        if self.exclude_from_llm_view and self.role == ColumnRole.DESCRIPTION:
+            raise ValueError("exclude_from_llm_view is not allowed for description columns")
         if self.namespace is not None:
             if self.role != ColumnRole.KEY:
                 raise ValueError("namespace is only allowed on KEY columns")

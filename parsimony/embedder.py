@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import os
@@ -34,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
+    import numpy as np
     from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,209 @@ class EmbeddingProvider(Protocol):
     def info(self) -> EmbedderInfo:
         """Persisted identity for this embedder, used in catalog metadata."""
         ...
+
+
+class FragmentEmbeddingCache:
+    """Cache unique fragment vectors; compose per-item vectors via mean-pool.
+
+    Given per-item fragment lists (``list[list[str]]``), this utility
+    embeds each *unique* fragment exactly once via the wrapped
+    :class:`EmbeddingProvider`, then returns each item's L2-renormalized
+    mean of its fragment vectors. Amortizes expensive tokenizer +
+    inference cost across every series that shares a fragment
+    ("Monthly", "Spain", …).
+
+    Not an :class:`EmbeddingProvider`: composing is a different operation
+    from embedding, and pretending otherwise forced delimiter-parsing
+    contortions in earlier drafts. The signature is structural
+    (``list[list[str]]``) — no opinions about what fragments represent.
+
+    Optional cross-run persistence via :meth:`persist` / automatic load
+    on construction when ``cache_dir`` is provided. The cache directory
+    is keyed per-embedder (model + normalize + package) so mismatched
+    embedders don't corrupt the cache. Typical layout::
+
+        .parsimony/fragments/<embedder-slug>/fragments.parquet
+
+    Callers own the lifecycle: load happens on construction when
+    ``cache_dir`` is set; save only when :meth:`persist` is called.
+    """
+
+    _FRAGMENT_CACHE_FILE = "fragments.parquet"
+    _FRAGMENT_CACHE_META = "meta.json"
+
+    def __init__(
+        self,
+        base: EmbeddingProvider,
+        *,
+        cache_dir: Path | None = None,
+    ) -> None:
+        import numpy as np
+
+        self._base = base
+        # Vectors stored as ``np.ndarray[float32]`` (1.5 KB each at 384 dim)
+        # rather than ``list[float]`` (~9 KB each: 24 B/Python-float +
+        # list overhead). For an ESTAT-scale publish that hits ~1-2 M
+        # unique fragments, this is the difference between ~3 GiB and
+        # ~18 GiB resident — list[float] was the dominant memory hog
+        # observed during the 2026-04 publishes.
+        self._cache: dict[str, np.ndarray] = {}
+        self._hits = 0
+        self._misses = 0
+        self._cache_dir = Path(cache_dir) if cache_dir is not None else None
+        if self._cache_dir is not None:
+            self._try_load(self._cache_dir)
+
+    async def compose_many(
+        self,
+        fragments_per_item: list[list[str]],
+    ) -> list[list[float]]:
+        """Return composed vectors (L2-renormalized mean-pool) for each item.
+
+        Empty per-item fragment lists raise :class:`ValueError` — they
+        signal a pipeline bug (the enumerator produced a row without
+        fragments even though the FRAGMENTS column was declared).
+        """
+        if not fragments_per_item:
+            return []
+        for i, frags in enumerate(fragments_per_item):
+            if not frags:
+                raise ValueError(
+                    f"FragmentEmbeddingCache: item {i} has no fragments. "
+                    "Empty fragment lists indicate a pipeline bug — check "
+                    "that the enumerator populated them."
+                )
+
+        # "miss" = fragment required a base embed call this batch (either
+        # not in cache, or not yet seen in the current batch).
+        # "hit"  = fragment already available without triggering base embed
+        # (already cached *or* dedup within this batch).
+        unseen: list[str] = []
+        seen_in_batch: set[str] = set()
+        total_refs = 0
+        for frags in fragments_per_item:
+            for frag in frags:
+                total_refs += 1
+                if frag in self._cache or frag in seen_in_batch:
+                    continue
+                seen_in_batch.add(frag)
+                unseen.append(frag)
+
+        self._misses += len(unseen)
+        self._hits += total_refs - len(unseen)
+
+        import numpy as np
+
+        if unseen:
+            vectors = await self._base.embed_texts(unseen)
+            for frag, vec in zip(unseen, vectors, strict=True):
+                self._cache[frag] = np.asarray(vec, dtype=np.float32)
+
+        out: list[list[float]] = []
+        for frags in fragments_per_item:
+            matrix = np.asarray(
+                [self._cache[f] for f in frags], dtype=np.float32
+            )
+            pooled = matrix.mean(axis=0)
+            norm = float(np.linalg.norm(pooled))
+            if norm > 1e-12:
+                pooled = pooled / norm
+            out.append(pooled.astype(np.float32).tolist())
+        return out
+
+    def stats(self) -> dict[str, int]:
+        """Return ``{hits, misses, unique_fragments}`` for observability.
+
+        Callers log this after each publish so cache utilization is
+        visible without re-instrumenting. Essential for distinguishing
+        cold-cache from cache-identity-mismatch from slow-embedder when
+        debugging ESTAT-scale publishes.
+        """
+        return {
+            "hits": self._hits,
+            "misses": self._misses,
+            "unique_fragments": len(self._cache),
+        }
+
+    def persist(self) -> None:
+        """Save the current cache to ``cache_dir`` if configured; otherwise no-op.
+
+        Writes a parquet of ``(fragment, vector)`` rows plus a small
+        ``meta.json`` carrying the embedder's identity. The identity
+        guards against stale-cache reuse when the embedder changes.
+        """
+        if self._cache_dir is None:
+            return
+        if not self._cache:
+            return
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        fragments = list(self._cache.keys())
+        # Convert np.float32 arrays back to Python lists for the parquet
+        # write so the on-disk schema (list<double>) is unchanged. This
+        # is a per-publish cost; the in-memory cache stays as np.float32.
+        vectors = [v.tolist() for v in self._cache.values()]
+        table = pa.table(
+            {
+                "fragment": fragments,
+                "vector": vectors,
+            }
+        )
+        pq.write_table(
+            table,
+            self._cache_dir / self._FRAGMENT_CACHE_FILE,
+            compression="zstd",
+        )
+        info = self._base.info()
+        meta_payload = {
+            "model": info.model,
+            "dim": info.dim,
+            "normalize": info.normalize,
+        }
+        (self._cache_dir / self._FRAGMENT_CACHE_META).write_text(
+            json.dumps(meta_payload, indent=2)
+        )
+
+    def _try_load(self, cache_dir: Path) -> None:
+        meta_path = cache_dir / self._FRAGMENT_CACHE_META
+        data_path = cache_dir / self._FRAGMENT_CACHE_FILE
+        if not meta_path.exists() or not data_path.exists():
+            return
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            logger.warning("FragmentEmbeddingCache: could not read %s", meta_path)
+            return
+        info = self._base.info()
+        expected = (info.model, info.dim, info.normalize)
+        actual = (
+            meta.get("model"),
+            meta.get("dim"),
+            meta.get("normalize"),
+        )
+        if expected != actual:
+            logger.warning(
+                "FragmentEmbeddingCache: on-disk cache identity %r does "
+                "not match embedder %r; discarding cached vectors.",
+                actual,
+                expected,
+            )
+            return
+        import pyarrow.parquet as pq
+
+        try:
+            table = pq.read_table(data_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("FragmentEmbeddingCache: could not read %s: %s", data_path, exc)
+            return
+        import numpy as np
+
+        frags = table.column("fragment").to_pylist()
+        vecs = table.column("vector").to_pylist()
+        for frag, vec in zip(frags, vecs, strict=True):
+            self._cache[str(frag)] = np.asarray(vec, dtype=np.float32)
 
 
 class SentenceTransformerEmbedder:
@@ -516,6 +721,7 @@ __all__ = [
     "DEFAULT_MODEL",
     "EmbedderInfo",
     "EmbeddingProvider",
+    "FragmentEmbeddingCache",
     "LiteLLMEmbeddingProvider",
     "OnnxEmbedder",
     "SentenceTransformerEmbedder",

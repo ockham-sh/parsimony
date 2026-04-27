@@ -42,6 +42,12 @@ class ColumnRole(StrEnum):
     #: where semantic recall on the phrase itself matters.
     DESCRIPTION = "description"
     METADATA = "metadata"
+    #: Per-row list-of-strings. Atomic compositional units consumed by
+    #: :class:`~parsimony.FragmentEmbeddingCache` when wired on the
+    #: catalog. Enumerators declare the FRAGMENTS column; when no cache
+    #: is provided, the column is ignored and the catalog embeds via
+    #: :meth:`SeriesEntry.semantic_text` as today.
+    FRAGMENTS = "fragments"
 
 
 class Column(BaseModel):

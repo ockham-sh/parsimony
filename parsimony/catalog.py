@@ -39,7 +39,12 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import BaseModel, Field, field_validator
 
-from parsimony.embedder import EmbedderInfo, EmbeddingProvider, SentenceTransformerEmbedder
+from parsimony.embedder import (
+    EmbedderInfo,
+    EmbeddingProvider,
+    FragmentEmbeddingCache,
+    SentenceTransformerEmbedder,
+)
 from parsimony.indexes import bm25_query, build_faiss, faiss_query, read_faiss, rrf_fuse, tokenize, write_faiss
 from parsimony.result import ColumnRole, Result
 
@@ -102,11 +107,18 @@ class SeriesEntry(BaseModel):
 
     Identity is ``(namespace, code)``. ``code`` is the connector-native
     identifier string for that namespace (e.g. FRED ``GDPC1``, FMP ``AAPL``).
+
+    :attr:`fragments` is an optional transient field — never persisted to
+    ``entries.parquet``. When populated and a
+    :class:`~parsimony.FragmentEmbeddingCache` is wired on the catalog,
+    the compose path produces the embedding; otherwise the entry embeds
+    via :meth:`semantic_text` as today.
     """
 
     namespace: str
     code: str
     title: str
+    fragments: list[str] | None = None
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -397,6 +409,16 @@ def entries_from_result(
     if desc_name is not None and desc_name not in df.columns:
         raise ValueError(f"Result missing DESCRIPTION column {desc_name!r}. Available: {list(df.columns)}")
 
+    frag_cols = [c for c in cols if c.role == ColumnRole.FRAGMENTS]
+    if len(frag_cols) > 1:
+        raise ValueError(
+            f"Result must have at most one FRAGMENTS column, found {len(frag_cols)}: "
+            f"{[c.name for c in frag_cols]}"
+        )
+    frag_name = frag_cols[0].name if frag_cols else None
+    if frag_name is not None and frag_name not in df.columns:
+        raise ValueError(f"Result missing FRAGMENTS column {frag_name!r}. Available: {list(df.columns)}")
+
     meta_names = [c.name for c in cols if c.role == ColumnRole.METADATA]
     for mn in meta_names:
         if mn not in df.columns:
@@ -444,17 +466,45 @@ def entries_from_result(
                 v = vals.iloc[0]
                 meta[mn] = v.item() if hasattr(v, "item") else v
 
+        fragments: list[str] | None = None
+        if frag_name is not None and frag_name in sub.columns:
+            raw_vals = [v for v in sub[frag_name].tolist() if v is not None]
+            # Pandas can turn pyarrow ``list_(string)`` columns into
+            # ``np.ndarray`` on groupby; cast defensively so the
+            # downstream dict key / embedder input stays ``list[str]``.
+            tupled = {tuple(str(x) for x in v) for v in raw_vals if _is_iterable(v)}
+            if len(tupled) > 1:
+                raise ValueError(
+                    f"FRAGMENTS column {frag_name!r} disagreement for key={raw_code!r}: "
+                    f"{len(tupled)} distinct fragment tuples. Same KEY with divergent "
+                    "structured fragments is a pipeline bug."
+                )
+            if tupled:
+                fragments = list(next(iter(tupled)))
+
         entries.append(
             SeriesEntry(
                 namespace=static_ns,
                 code=code,
                 title=title,
+                fragments=fragments,
                 tags=deduped_tags,
                 description=description,
                 metadata=meta,
             )
         )
     return entries
+
+
+def _is_iterable(value: Any) -> bool:
+    """True iff *value* is a non-string iterable (list, tuple, ndarray)."""
+    if isinstance(value, str):
+        return False
+    try:
+        iter(value)
+    except TypeError:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -480,9 +530,16 @@ class Catalog:
     Conforms structurally to :class:`CatalogBackend` (``add`` + ``search``).
     """
 
-    def __init__(self, name: str, *, embedder: EmbeddingProvider | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        *,
+        embedder: EmbeddingProvider | None = None,
+        fragment_cache: FragmentEmbeddingCache | None = None,
+    ) -> None:
         self.name = normalize_code(name)
         self._embedder: EmbeddingProvider = embedder if embedder is not None else SentenceTransformerEmbedder()
+        self._fragment_cache = fragment_cache
         self._embedder_info: EmbedderInfo | None = None
         self._entries: list[SeriesEntry] = []
         self._key_to_idx: dict[tuple[str, str], int] = {}
@@ -490,6 +547,7 @@ class Catalog:
         self._bm25: BM25Okapi | None = None
         self._tokens: list[list[str]] = []
         self._lock = asyncio.Lock()
+        self._warned_missing_cache = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -800,8 +858,44 @@ class Catalog:
         if not missing:
             return entries
         out = list(entries)
-        for start in range(0, len(missing), EMBED_BATCH):
-            chunk = missing[start : start + EMBED_BATCH]
+
+        # Partition by path:
+        #   compose: entry.fragments populated and a fragment_cache is wired.
+        #   direct:  everything else — including entries with fragments but
+        #            no cache (warned once, then degraded to title embedding).
+        compose: list[tuple[int, SeriesEntry]] = []
+        direct: list[tuple[int, SeriesEntry]] = []
+        for i, entry in missing:
+            if entry.fragments:
+                if self._fragment_cache is not None:
+                    compose.append((i, entry))
+                else:
+                    if not self._warned_missing_cache:
+                        logger.warning(
+                            "Catalog %r: entries carry fragments but no "
+                            "fragment_cache is configured — embedding via "
+                            "semantic_text() (title) instead. Pass "
+                            "fragment_cache= to the constructor to enable "
+                            "compositional embedding.",
+                            self.name,
+                        )
+                        self._warned_missing_cache = True
+                    direct.append((i, entry))
+            else:
+                direct.append((i, entry))
+
+        if compose:
+            assert self._fragment_cache is not None
+            vectors = await self._fragment_cache.compose_many(
+                [e.fragments or [] for _, e in compose]
+            )
+            for (i, entry), vec in zip(compose, vectors, strict=True):
+                out[i] = entry.model_copy(
+                    update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()}
+                )
+
+        for start in range(0, len(direct), EMBED_BATCH):
+            chunk = direct[start : start + EMBED_BATCH]
             texts = [e.semantic_text() for _, e in chunk]
             vectors = await self._embedder.embed_texts(texts)
             for (i, entry), vec in zip(chunk, vectors, strict=True):

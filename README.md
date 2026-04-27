@@ -104,6 +104,37 @@ Provenance on every result:
 result.provenance  # Provenance(source="fred", params={"series_id": "UNRATE"}, fetched_at=...)
 ```
 
+## Repo boundaries
+
+Parsimony ships across three repos, each with a single job:
+
+| Repo | PyPI | Role |
+|---|---|---|
+| [`parsimony`](https://github.com/ockham-sh/parsimony) | `parsimony-core` | The kernel — primitives, discovery, catalog, publish CLI |
+| [`parsimony-connectors`](https://github.com/ockham-sh/parsimony-connectors) | `parsimony-<name>` | First-party data source plugins |
+| [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp) | `parsimony-mcp` | MCP server |
+
+Dependencies go one way. The kernel knows nothing about specific
+connectors; connectors depend on the kernel through the stable
+`parsimony.providers` entry-point contract; consumers like the MCP
+server call `discover.load_all()` and pick up whatever the user has
+installed. Private and customer-internal connectors follow the same
+contract — at discovery time the kernel cannot tell first-party, third-
+party, and private apart.
+
+A few invariants keep the seams sharp:
+
+- **The connectors monorepo is publishers-only.** Every
+  `packages/*/` subdirectory ships a `parsimony.providers` entry point;
+  CI fails any `pyproject.toml` without one. Consumers live elsewhere.
+- **Plugin metadata lives on the decorator or `pyproject.toml`** —
+  `@connector(env={...})` for env vars, `[project]` for homepage and
+  version. No module-level metadata dicts.
+- **Single discovery surface.** Everything the kernel knows about
+  installed plugins flows through `parsimony.discover`. The public
+  catalog of first-party connectors is regenerated at release time from
+  `pyproject.toml` metadata, not hand-maintained.
+
 ## The plugin contract
 
 Every data source is a separate distribution implementing one contract:

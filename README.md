@@ -36,9 +36,21 @@ pip install parsimony-core                       # kernel only (tiny footprint)
 pip install parsimony-core parsimony-fred        # + FRED
 pip install parsimony-core parsimony-sdmx        # + SDMX (ECB, Eurostat, IMF, OECD, BIS, World Bank, ILO)
 pip install 'parsimony-core[standard]'           # + canonical Catalog (FAISS + BM25 + sentence-transformers, hf:// loader)
+pip install 'parsimony-core[standard-onnx]'      # + fast CPU-only embedder via ONNX Runtime + int8 quantization (2-3× faster, 4× smaller model)
 pip install 'parsimony-core[standard,litellm]'   # + LiteLLMEmbeddingProvider (OpenAI, Gemini, Cohere, Voyage, Bedrock)
 pip install parsimony-mcp                        # MCP server (separate distribution)
 ```
+
+> **CPU-only deployments**: `[standard]` pulls `torch` from the default
+> PyPI channel, which is a CUDA wheel (~4 GB of GPU libraries). On
+> servers without a GPU — including most CI, Docker, and HF Spaces
+> builds — install the CPU wheel explicitly first to keep the image
+> small:
+>
+> ```bash
+> pip install torch --index-url https://download.pytorch.org/whl/cpu
+> pip install 'parsimony-core[standard]'
+> ```
 
 > Imports are always `from parsimony import ...`; the bare `parsimony`
 > PyPI name is squatted, so the distribution ships as `parsimony-core`.

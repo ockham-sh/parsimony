@@ -44,13 +44,23 @@ standard = [
     "sentence-transformers>=3.0.0",
     "huggingface_hub>=0.25.0",
 ]
+# ONNX Runtime path for the standard embedder — 2-3× faster than the
+# PyTorch-backed SentenceTransformerEmbedder on x86 CPUs with AVX2 /
+# AVX_VNNI (Intel Core Ultra, Xeon, Ryzen) via int8 dynamic quantization.
+# Adds no GPU dependencies; the ONNX model is ~4× smaller than the PyTorch
+# one. See :class:`parsimony.embedder.OnnxEmbedder`.
+standard-onnx = [
+    "parsimony-core[standard]",
+    "optimum[onnxruntime]>=1.22.0",
+    "onnxruntime>=1.18.0",
+]
 # Hosted-API embedder via the litellm unified API (OpenAI, Gemini, Cohere,
 # Voyage, Bedrock).
 litellm = ["litellm>=1.59.0,<2"]
 # s3:// catalog URL support (read/write). Source handler is still a stub —
 # adding this extra does not yet enable the scheme.
 s3 = ["s3fs>=2024.0"]
-all = ["parsimony-core[standard,litellm,s3]"]
+all = ["parsimony-core[standard,standard-onnx,litellm,s3]"]
 dev = [
     "pytest>=9.0.3",
     "pytest-asyncio>=1.3.0",

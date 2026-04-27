@@ -6,6 +6,7 @@ class to keep the latter focused on orchestration.
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -21,9 +22,20 @@ HNSW_EF_SEARCH = 64
 RRF_K = 60
 
 
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
 def tokenize(text: str) -> list[str]:
-    """Whitespace + lowercase tokenization for BM25."""
-    return text.lower().split()
+    """Lowercase + split on any non-alphanumeric char for BM25.
+
+    Whitespace splitting alone leaves identifier-style tokens like
+    ``debt_to_penny`` or ``v2/accounting/od/debt_to_penny#tot_pub_debt_out_amt``
+    as single opaque tokens — a query of ``debt_to_penny`` then never matches
+    the stored row and BM25 silently returns zero hits. Splitting on any
+    non-``[a-z0-9]`` run makes code fragments, snake_case columns, and
+    hash-separated compound keys all tokenize into their constituent words.
+    """
+    return _TOKEN_RE.findall(text.lower())
 
 
 def build_faiss(matrix: np.ndarray, *, dim: int, normalize: bool) -> faiss.Index:

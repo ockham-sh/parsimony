@@ -98,6 +98,21 @@ def test_safe_mkdir_rejects_world_writable_ancestor(tmp_path: Path) -> None:
         _safe_mkdir(target)
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX-only mode bits")
+def test_safe_mkdir_accepts_sticky_world_writable_ancestor(tmp_path: Path) -> None:
+    """Sticky bit (canonical: ``/tmp``) makes world-writable safe to traverse.
+
+    Sticky restricts rename/unlink to file owner, so a world-writable sticky
+    parent cannot be used to swap our cache subtree out from under us.
+    """
+    parent = tmp_path / "tmp-like"
+    parent.mkdir()
+    os.chmod(parent, 0o1777)  # sticky + rwxrwxrwx — exactly /tmp's mode
+    target = parent / "child"
+    _safe_mkdir(target)  # must not raise
+    assert target.is_dir()
+
+
 def test_safe_mkdir_idempotent(tmp_path: Path) -> None:
     target = tmp_path / "idempotent"
     _safe_mkdir(target)

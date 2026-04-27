@@ -248,6 +248,42 @@ When path 2 or 3 is preferable:
 - Enumerate on a build machine, push from a deploy machine.
 - Publish the same bundle to multiple targets (HF + S3 mirror).
 
+## Cache
+
+Heavy artefacts (HF catalog snapshots, ONNX embedder models, fragment
+embeddings, connector-owned scratch) live in a single user-home cache
+shared across processes — so a `parsimony-mcp` server and a `terminal`
+session running in parallel reuse the same downloads.
+
+The cache root is `platformdirs.user_cache_dir("parsimony")` by default
+(`~/.cache/parsimony` on Linux, `~/Library/Caches/parsimony` on macOS,
+`%LOCALAPPDATA%/parsimony/Cache` on Windows). Set `PARSIMONY_CACHE_DIR`
+to override.
+
+Layout — each subdirectory holds one class of artefact:
+
+| Subdir | Contents | Lifetime |
+|---|---|---|
+| `catalogs/` | HF snapshot downloads (read-side: search) | Until cleared |
+| `models/` | ONNX models + tokenizers | Until cleared |
+| `embeddings/<slug>/` | `FragmentEmbeddingCache` parquet, identity-keyed per embedder | Until cleared |
+| `connectors/<provider>/` | Connector-owned scratch (e.g. dataflow listings) | Per-connector TTL |
+
+Inspect or clear via the CLI:
+
+```bash
+parsimony cache path                              # print the resolved root
+parsimony cache info                              # table of subdir, files, size, path
+parsimony cache info --json                       # same, as JSON
+parsimony cache clear --subdir embeddings --yes   # remove just one subdir
+parsimony cache clear --yes                       # wipe everything under root
+```
+
+Connector authors who want to memoize plugin-specific data should write
+into `parsimony.cache.connectors_dir("<provider>")` rather than a
+repo-relative path — the cache is shared across publishes and survives
+process recycles.
+
 ## Security
 
 - **Credential redaction.** `parsimony.transport.HttpClient` redacts

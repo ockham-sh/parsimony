@@ -110,7 +110,13 @@ def _ensure_safe(path: Path) -> None:
         return
     if not stat.S_ISDIR(st.st_mode):
         raise RuntimeError(f"Cache path {path} exists and is not a directory")
-    if st.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    # World/group-writable directories are a poisoning vector EXCEPT when
+    # the sticky bit is set (canonical example: ``/tmp``). Sticky restricts
+    # rename/unlink to the file's owner, so an attacker cannot replace
+    # our cache subtree.
+    writable_by_others = bool(st.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+    sticky = bool(st.st_mode & stat.S_ISVTX)
+    if writable_by_others and not sticky:
         raise RuntimeError(
             f"Refusing to use world-writable or group-writable cache dir {path}; "
             f"pick a user-private directory or unset {_PARSIMONY_CACHE_ENV}."

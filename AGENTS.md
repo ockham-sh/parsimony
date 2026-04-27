@@ -16,7 +16,8 @@ make format   # ruff format + auto-fix
 | `CatalogBackend` Protocol, `Catalog` | `parsimony/catalog.py` |
 | Plugin discovery | `parsimony/discover.py` |
 | Publish orchestrator (`CATALOGS`) | `parsimony/publish.py` |
-| CLI (`list`, `publish`) | `parsimony/cli.py` |
+| CLI (`list`, `publish`, `cache`) | `parsimony/cli.py` |
+| Global cache (root, subdirs, `TTLDiskCache`) | `parsimony/cache.py` |
 | Conformance suite | `parsimony/testing.py` |
 | Error hierarchy | `parsimony/errors.py` |
 | HTTP transport | `parsimony/transport.py` |
@@ -31,4 +32,8 @@ make format   # ruff format + auto-fix
 - Raise `ConnectorError` subclasses, never bare `Exception`
 - Never log API keys; no `print()`; no hardcoded secrets
 - No provider-specific code in the kernel — `test_kernel_purity.py` enforces this
+- All cache writes go under `parsimony.cache.root()` (the
+  `PARSIMONY_CACHE_DIR` / `platformdirs.user_cache_dir("parsimony")`
+  tree). No repo-relative cache paths. Connector authors use
+  `parsimony.cache.connectors_dir("<provider>")` for scratch
 - Run `make check` before any commit

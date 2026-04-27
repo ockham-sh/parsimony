@@ -1,6 +1,6 @@
 """``parsimony`` command-line interface.
 
-Two verbs:
+Three verbs:
 
 * ``parsimony list`` — enumerate installed plugins and their declared
   catalogs. ``--strict`` folds the conformance suite in: exit non-zero on
@@ -8,6 +8,9 @@ Two verbs:
 * ``parsimony publish --provider NAME --target URL_TEMPLATE`` — build one
   :class:`~parsimony.Catalog` per declared namespace and push to
   ``URL_TEMPLATE.format(namespace=...)``.
+* ``parsimony cache {path,info,clear}`` — inspect or clear the global
+  parsimony cache (HF snapshots, ONNX models, fragment embeddings,
+  connector scratch).
 
 Wired as the ``parsimony`` console script in ``pyproject.toml``.
 """
@@ -25,6 +28,7 @@ from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, TextIO
 
+from parsimony import cache
 from parsimony.discover import Provider, iter_providers
 from parsimony.publish import publish_provider
 
@@ -84,6 +88,34 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     pub.add_argument("--dry-run", action="store_true", help="Resolve catalogs and targets, skip enumerate + push.")
 
+    cc = subparsers.add_parser(
+        "cache",
+        help="Inspect or clear the parsimony cache.",
+        description=(
+            "Manage the global parsimony cache. The root resolves through "
+            "PARSIMONY_CACHE_DIR (defaulting to "
+            "platformdirs.user_cache_dir('parsimony')) and contains four "
+            "named subdirectories: catalogs, models, embeddings, connectors."
+        ),
+    )
+    cc_sub = cc.add_subparsers(dest="cache_action", required=True)
+    cc_sub.add_parser("path", help="Print the resolved cache root.")
+    cc_info = cc_sub.add_parser("info", help="Show occupancy of each cache subdirectory.")
+    cc_info.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Emit JSON instead of a table.",
+    )
+    cc_clear = cc_sub.add_parser(
+        "clear", help="Remove a cache subdirectory (or all of them)."
+    )
+    cc_clear.add_argument(
+        "--subdir", metavar="NAME",
+        help="Clear only this subdir (catalogs, models, embeddings, connectors).",
+    )
+    cc_clear.add_argument(
+        "--yes", action="store_true", help="Skip the confirmation prompt.",
+    )
+
     return parser
 
 
@@ -99,6 +131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             only=list(args.only or []) or None,
             dry_run=bool(args.dry_run),
         )
+    if args.command == "cache":
+        return _run_cache(args)
     return 2  # argparse raises before we get here
 
 
@@ -290,6 +324,108 @@ def _provider_by_name(name: str) -> Provider:
         if p.name == name:
             return p
     raise ValueError(f"no parsimony provider named {name!r}")
+
+
+# ---------------------------------------------------------------------------
+# cache
+# ---------------------------------------------------------------------------
+
+
+def _run_cache(args: argparse.Namespace) -> int:
+    if args.cache_action == "path":
+        print(cache.root())
+        return 0
+    if args.cache_action == "info":
+        report = cache.info()
+        if args.json_output:
+            print(json.dumps(report, indent=2))
+        else:
+            _render_cache_info(report, sys.stdout)
+        return 0
+    if args.cache_action == "clear":
+        return _run_cache_clear(subdir=args.subdir, assume_yes=args.yes)
+    return 2
+
+
+def _human_size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    units = ("KB", "MB", "GB", "TB")
+    size = float(n)
+    for unit in units:
+        size /= 1024
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+    return f"{size:.1f} PB"
+
+
+def _render_cache_info(report: dict[str, Any], stream: TextIO) -> None:
+    header = ["SUBDIR", "FILES", "SIZE", "PATH"]
+    body: list[list[str]] = [header]
+    for name, entry in report["subdirs"].items():
+        if entry["exists"]:
+            body.append(
+                [
+                    name,
+                    str(entry["files"]),
+                    _human_size(entry["size_bytes"]),
+                    entry["path"],
+                ]
+            )
+        else:
+            body.append([name, "-", "-", entry["path"]])
+
+    widths = [max(len(row[i]) for row in body) for i in range(len(header))]
+    for i, row in enumerate(body):
+        line = "  ".join(cell.ljust(widths[j]) for j, cell in enumerate(row))
+        print(line, file=stream)
+        if i == 0:
+            print("  ".join("-" * w for w in widths), file=stream)
+    print(file=stream)
+    print(f"root: {report['root']}", file=stream)
+
+
+def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
+    report = cache.info()
+    known = sorted(report["subdirs"])
+    if subdir is not None and subdir not in report["subdirs"]:
+        print(
+            f"error: unknown cache subdir {subdir!r}; expected one of {known}",
+            file=sys.stderr,
+        )
+        return 2
+
+    targets = (
+        {subdir: report["subdirs"][subdir]}
+        if subdir is not None
+        else report["subdirs"]
+    )
+    total_files = sum(s["files"] for s in targets.values())
+    total_bytes = sum(s["size_bytes"] for s in targets.values())
+
+    label = f"subdir {subdir!r}" if subdir else "all subdirs"
+    if total_files == 0:
+        print(f"Nothing to clear ({label} are empty).")
+        return 0
+
+    if not assume_yes:
+        prompt = (
+            f"Remove {label} ({total_files} file(s), "
+            f"{_human_size(total_bytes)})? [y/N] "
+        )
+        try:
+            answer = input(prompt).strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return 0
+
+    cache.clear(subdir=subdir)
+    print(
+        f"Cleared {label} ({total_files} file(s), {_human_size(total_bytes)})."
+    )
+    return 0
 
 
 if __name__ == "__main__":

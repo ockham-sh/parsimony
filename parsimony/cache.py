@@ -153,9 +153,21 @@ def root() -> Path:
     return r
 
 
-def catalogs_dir() -> Path:
-    """Return ``$ROOT/catalogs/`` — HuggingFace catalog snapshots."""
+def catalogs_dir(provider: str | None = None) -> Path:
+    """Return ``$ROOT/catalogs/[<provider>/]`` — HuggingFace catalog snapshots.
+
+    With *provider* set, returns the per-provider staging directory used
+    by publish drivers in ``parsimony-connectors/packages/<provider>/scripts/``.
+    Each ``<provider>/`` mirrors ``hf://ockham/<provider>`` 1:1: namespace
+    directories sit directly under it (``<provider>/<namespace>/...``)
+    so ``hf upload ockham/<provider> <provider>/`` is a no-transform push.
+
+    With *provider* omitted, returns the parent — useful for callers that
+    iterate every provider (cache info, integration tests).
+    """
     p = root() / "catalogs"
+    if provider is not None:
+        p = p / _sanitize_subkey(provider)
     _safe_mkdir(p)
     return p
 

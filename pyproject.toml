@@ -73,7 +73,13 @@ dev = [
     # FAISS + BM25 + sentence-transformers paths.
     "parsimony-core[standard,litellm]",
 ]
-docs = ["mkdocs-material"]
+docs = [
+    "mkdocs-material",
+    # Pulls parsimony-connectors and parsimony-mcp docs into the unified
+    # site at build time. See `nav:` in mkdocs.yml — `!import` directives
+    # clone each sibling repo's `docs/` subtree.
+    "mkdocs-multirepo-plugin>=0.7",
+]
 
 [project.urls]
 Homepage = "https://parsimony.dev"

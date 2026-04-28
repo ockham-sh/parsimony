@@ -4,6 +4,14 @@
 
 Every financial data project starts the same way: write API wrappers, parse responses into DataFrames, track where data came from. `parsimony` replaces that boilerplate with a declarative `@connector` system that gives you Pydantic-validated parameters, standardized `Result` outputs with provenance tracking, composable routing across sources, and an optional vector-searchable catalog for entity discovery.
 
+## Ecosystem
+
+parsimony is split into three pip-installable pieces:
+
+- **`parsimony-core`** — the kernel. Connector contract, `Result` type, catalog, discovery. This site documents it.
+- **[parsimony-connectors](connectors/)** — 24 first-party connectors (FRED, SDMX, FMP, SEC EDGAR, Polymarket, central banks, …). Each is a standalone PyPI distribution; the kernel discovers them at runtime via Python entry-points.
+- **[parsimony-mcp](mcp-server/)** — MCP stdio server that exposes any installed connector as a tool to Claude Desktop, Claude Code, Cursor, and other MCP-compatible agent runtimes.
+
 ## Quick Start
 
 ```python

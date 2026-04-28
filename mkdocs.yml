@@ -8,6 +8,9 @@ edit_uri: edit/main/docs/
 
 theme:
   name: material
+  font:
+    text: Ubuntu
+    code: Ubuntu Mono
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
@@ -37,11 +40,16 @@ theme:
   icon:
     repo: fontawesome/brands/github
 
+extra_css:
+  - stylesheets/terminal.css
+
 nav:
   - Home: index.md
   - Getting Started:
       - Quick Start: quickstart.md
       - User Guide: user-guide.md
+  - Connectors: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
+  - MCP Server: '!import https://github.com/ockham-sh/parsimony-mcp?branch=main&docs_dir=docs'
   - Guides:
       - Building Connectors: connector-implementation-guide.md
       - New Plugin Guide: guide-new-plugin.md
@@ -71,6 +79,7 @@ markdown_extensions:
 
 plugins:
   - search
+  - multirepo
 
 extra:
   social:

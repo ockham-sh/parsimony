@@ -1,0 +1,108 @@
+/* Terminal-inspired palette — mirrors terminal/web/design/tokens.css.
+   Surfaces near-black, foreground near-white, Ockham blue accent,
+   sharp corners, no transitions. */
+
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  /* Surfaces */
+  --md-default-bg-color:           hsl(0 0% 3%);
+  --md-default-bg-color--light:    hsl(0 0% 5%);
+  --md-default-bg-color--lighter:  hsl(0 0% 8%);
+  --md-default-bg-color--lightest: hsl(0 0% 12%);
+
+  /* Foreground */
+  --md-default-fg-color:            hsl(0 0% 98%);
+  --md-default-fg-color--light:     hsl(0 0% 70%);
+  --md-default-fg-color--lighter:   hsl(0 0% 50%);
+  --md-default-fg-color--lightest:  hsl(0 0% 20%);
+
+  /* Header / brand chrome */
+  --md-primary-fg-color:        hsl(0 0% 3%);
+  --md-primary-fg-color--light: hsl(0 0% 8%);
+  --md-primary-fg-color--dark:  hsl(0 0% 0%);
+  --md-primary-bg-color:        hsl(0 0% 98%);
+  --md-primary-bg-color--light: hsl(0 0% 70%);
+
+  /* Links + accent — Ockham blue */
+  --md-accent-fg-color:         hsl(217 91% 53%);
+  --md-accent-fg-color--transparent: hsla(217 91% 53% / 0.1);
+  --md-accent-bg-color:         hsl(0 0% 98%);
+  --md-typeset-a-color:         hsl(217 91% 53%);
+
+  /* Code surfaces */
+  --md-code-bg-color:           hsl(0 0% 6%);
+  --md-code-fg-color:           hsl(0 0% 92%);
+  --md-code-hl-color:           hsla(217 91% 53% / 0.18);
+
+  /* Footer */
+  --md-footer-bg-color:         hsl(0 0% 3%);
+  --md-footer-bg-color--dark:   hsl(0 0% 2%);
+  --md-footer-fg-color:         hsl(0 0% 70%);
+  --md-footer-fg-color--light:  hsl(0 0% 50%);
+  --md-footer-fg-color--lighter: hsl(0 0% 35%);
+}
+
+/* Sharp corners, no rounding — terminals are square. */
+.md-typeset code,
+.md-typeset pre,
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset .highlighttable,
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset table:not([class]),
+.md-typeset .tabbed-set,
+.md-typeset .tabbed-content,
+.md-button,
+.md-search__input,
+.md-search__output,
+.md-search-result__article,
+.md-tabs__link,
+.md-nav__title,
+.md-typeset blockquote,
+.md-clipboard {
+  border-radius: 0 !important;
+}
+
+/* Code block border — matches terminal/web card style. */
+.md-typeset pre,
+.md-typeset .highlight,
+.md-typeset code {
+  border: 1px solid hsl(0 0% 20%);
+}
+
+/* Inline code: tighter, no border bloat. */
+.md-typeset :not(pre) > code {
+  border: none;
+  background-color: hsl(0 0% 8%);
+  color: hsl(0 0% 92%);
+  padding: 0.1em 0.3em;
+}
+
+/* Tables: sharp, terminal-style. */
+.md-typeset table:not([class]) {
+  border: 1px solid hsl(0 0% 20%);
+}
+.md-typeset table:not([class]) th {
+  background-color: hsl(0 0% 8%);
+  border-bottom: 1px solid hsl(0 0% 20%);
+}
+.md-typeset table:not([class]) td {
+  border-bottom: 1px solid hsl(0 0% 14%);
+}
+
+/* Header underline matches terminal accent. */
+.md-header {
+  border-bottom: 1px solid hsl(0 0% 20%);
+}
+.md-tabs {
+  border-bottom: 1px solid hsl(0 0% 20%);
+}
+
+/* Admonition blocks: muted backgrounds, square corners. */
+.md-typeset .admonition,
+.md-typeset details {
+  border-left-width: 3px;
+  background-color: hsl(0 0% 6%);
+}

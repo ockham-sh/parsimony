@@ -416,7 +416,7 @@ For non-env dependencies — DB pools, HTTP clients, caches — drop the
 To make your connectors discoverable via `discover.load_all()`, ship them
 as a separate `parsimony-<name>` distribution registering the
 `parsimony.providers` entry point. See
-[`guide-new-plugin.md`](guide-new-plugin.md) for the public path and
+[`connector-implementation-guide.md`](connector-implementation-guide.md) for the public path and
 [`building-a-private-connector.md`](building-a-private-connector.md) for
 the internal/private path.
 
@@ -574,4 +574,4 @@ pip install parsimony-mcp
 }
 ```
 
-See [`mcp-setup.md`](mcp-setup.md) for full configuration.
+See the [MCP Server section](mcp-server/index.md) for full configuration.

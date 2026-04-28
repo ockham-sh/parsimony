@@ -50,18 +50,16 @@ nav:
       - User Guide: user-guide.md
   - Connectors: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
   - MCP Server: '!import https://github.com/ockham-sh/parsimony-mcp?branch=main&docs_dir=docs'
-  - Guides:
-      - Building Connectors: connector-implementation-guide.md
-      - New Plugin Guide: guide-new-plugin.md
+  - Building Plugins:
+      - Walkthrough: connector-implementation-guide.md
       - Private Connectors: building-a-private-connector.md
       - Internal Connectors: internal-connectors.md
-      - MCP Setup: mcp-setup.md
-      - Cookbook: cookbook.md
-      - FAQ: faq.md
+  - Recipes: cookbook.md
   - Reference:
       - Plugin Contract: contract.md
       - API Reference: api-reference.md
       - Architecture: architecture.md
+      - FAQ: faq.md
 
 markdown_extensions:
   - pymdownx.highlight:

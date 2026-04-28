@@ -34,7 +34,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pandas as pd
-from pydantic import ValidationError
 
 from parsimony.publish import publish
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result

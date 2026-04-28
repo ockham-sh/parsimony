@@ -66,7 +66,7 @@ def test_large_n_picks_ivfflat(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ivf_threshold_env_resolution() -> None:
     # The module-level constant is captured at import time from the env.
     # Asserting the default matches the documented value.
-    assert IVF_THRESHOLD == int(os.environ.get("PARSIMONY_FAISS_IVF_THRESHOLD", "500000"))
+    assert int(os.environ.get("PARSIMONY_FAISS_IVF_THRESHOLD", "500000")) == IVF_THRESHOLD
 
 
 # --- Persistence round-trip ------------------------------------------------

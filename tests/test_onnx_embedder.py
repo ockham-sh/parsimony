@@ -8,7 +8,6 @@ the kernel's default test profile does not pull onnxruntime/optimum.
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pytest
@@ -67,7 +66,10 @@ async def test_onnx_query_matches_related_doc_better(tmp_path: Path) -> None:
 
     related = dot(query, docs[0])
     unrelated = dot(query, docs[1])
-    assert related > unrelated, f"expected yield-curve doc to outrank stock doc (related={related}, unrelated={unrelated})"
+    assert related > unrelated, (
+        f"expected yield-curve doc to outrank stock doc "
+        f"(related={related}, unrelated={unrelated})"
+    )
 
 
 async def test_onnx_and_sentence_transformer_agree_on_ordering(tmp_path: Path) -> None:

@@ -121,7 +121,6 @@ class FragmentEmbeddingCache:
         *,
         cache_dir: Path | None = None,
     ) -> None:
-        import numpy as np
 
         self._base = base
         # Vectors stored as ``np.ndarray[float32]`` (1.5 KB each at 384 dim)
@@ -619,7 +618,7 @@ def _embedder_slug(info: EmbedderInfo) -> str:
     """
     safe = info.model.replace("/", "__").replace(":", "_")
     digest = hashlib.sha1(
-        f"{info.model}|{info.dim}|{info.normalize}".encode("utf-8"),
+        f"{info.model}|{info.dim}|{info.normalize}".encode(),
         usedforsecurity=False,
     ).hexdigest()[:8]
     return f"{safe}-{digest}"

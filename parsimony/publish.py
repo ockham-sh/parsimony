@@ -404,6 +404,7 @@ async def publish(
             if err is not None:
                 failed.append((namespace, err))
                 continue
+            assert parquet_path is not None  # _fetch_one invariant: (path, err) — exactly one is None
             url = target.format(namespace=namespace)
             logger.info("[%d/%d] publishing %s/%s", processed, total, report_name, namespace)
             catalog: Catalog | None = None
@@ -517,7 +518,7 @@ def _staging_root(staging_dir: Path | None) -> Iterator[Path]:
         yield staging_dir
 
 
-def _resolve_malloc_trim() -> "ctypes._FuncPointer | None":
+def _resolve_malloc_trim() -> ctypes._FuncPointer | None:
     """Bind ``malloc_trim`` from libc, or return None on non-glibc systems."""
     if not sys.platform.startswith("linux"):
         return None
@@ -533,7 +534,7 @@ def _resolve_malloc_trim() -> "ctypes._FuncPointer | None":
         return None
     fn.argtypes = [ctypes.c_size_t]
     fn.restype = ctypes.c_int
-    return fn
+    return fn  # type: ignore[no-any-return]  # ctypes getattr returns Any
 
 
 _MALLOC_TRIM = _resolve_malloc_trim()
@@ -576,13 +577,13 @@ def _make_rss_reader() -> Callable[[], float | None] | None:
     on Linux. Returns ``None`` from the reader on failure rather than raising.
     """
     try:
-        import psutil  # type: ignore[import-not-found]
+        import psutil
 
         proc = psutil.Process()
 
         def _read_psutil() -> float | None:
             try:
-                return proc.memory_info().rss / 1e9
+                return float(proc.memory_info().rss) / 1e9
             except Exception:  # pragma: no cover — defensive
                 return None
 

@@ -33,6 +33,7 @@ __all__ = [
     "root",
 ]
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -91,11 +92,9 @@ def _safe_mkdir(path: Path) -> None:
     _ensure_safe(path)
     path.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
-        try:
+        # Best-effort. The world-writable check above is the actual safety gate.
+        with contextlib.suppress(OSError):
             os.chmod(path, 0o700)
-        except OSError:
-            # Best-effort. The world-writable check above is the actual safety gate.
-            pass
 
 
 def _ensure_safe(path: Path) -> None:

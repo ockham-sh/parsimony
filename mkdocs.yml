@@ -45,9 +45,8 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Getting Started:
-      - Quick Start: quickstart.md
-      - User Guide: user-guide.md
+  - Quickstart: quickstart.md
+  - Guide: guide.md
   - Connectors: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
   - MCP Server: '!import https://github.com/ockham-sh/parsimony-mcp?branch=main&docs_dir=docs'
   - Building Plugins:

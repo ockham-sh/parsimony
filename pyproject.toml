@@ -127,6 +127,7 @@ asyncio_mode = "auto"
 pythonpath = ["."]
 markers = [
     "integration: hits live APIs (may be slow, requires env vars)",
+    "slow: heavy local test (e.g. large fixture); opt-in",
 ]
 
 [tool.coverage.run]

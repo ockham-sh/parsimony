@@ -408,23 +408,42 @@ async def publish(
             logger.info("[%d/%d] publishing %s/%s", processed, total, report_name, namespace)
             catalog: Catalog | None = None
             try:
+                t_load = time.monotonic()
                 try:
                     result = await asyncio.to_thread(Result.from_parquet, parquet_path)
                 except Exception as exc:
                     logger.exception("publish failed for %s/%s (parquet load)", report_name, namespace)
                     failed.append((namespace, f"parquet load: {exc}"))
                     continue
+                logger.info(
+                    "[%d/%d] %s/%s parquet load: %.2fs",
+                    processed, total, report_name, namespace,
+                    time.monotonic() - t_load,
+                )
 
                 try:
                     catalog = Catalog(namespace, embedder=embedder, fragment_cache=fragment_cache)
+                    t_ingest = time.monotonic()
                     index = await catalog.add_from_result(result)
+                    logger.info(
+                        "[%d/%d] %s/%s add_from_result: indexed=%d skipped=%d in %.2fs",
+                        processed, total, report_name, namespace,
+                        index.indexed, index.skipped,
+                        time.monotonic() - t_ingest,
+                    )
                     # Drop the staged DataFrame before push so the upload
                     # doesn't carry it.
                     del result
                     if index.indexed == 0 and index.total == 0:
                         skipped.append(namespace)
                         continue
+                    t_push = time.monotonic()
                     await catalog.push(url)
+                    logger.info(
+                        "[%d/%d] %s/%s push: %.2fs",
+                        processed, total, report_name, namespace,
+                        time.monotonic() - t_push,
+                    )
                     published.append(namespace)
                 except Exception as exc:  # broad — one bad flow shouldn't abort the batch
                     logger.exception("publish failed for %s/%s", report_name, namespace)
@@ -439,6 +458,27 @@ async def publish(
                     catalog.release_index()
                 parquet_path.unlink(missing_ok=True)
                 _release_memory()
+                # Persist the fragment cache after every flow so a kill
+                # (OOM, SIGKILL, host crash) cannot drop the in-memory
+                # vectors accumulated across this batch. Atomic write
+                # under the hood — safe to call on every iteration.
+                if fragment_cache is not None:
+                    try:
+                        fragment_cache.persist()
+                    except Exception:
+                        logger.exception(
+                            "[%d/%d] %s/%s fragment_cache.persist failed",
+                            processed, total, report_name, namespace,
+                        )
+                    stats = fragment_cache.stats()
+                    refs = stats["hits"] + stats["misses"]
+                    hit_rate = stats["hits"] / refs if refs else 0.0
+                    logger.info(
+                        "[%d/%d] %s/%s cache: hits=%d misses=%d unique=%d hit_rate=%.1f%%",
+                        processed, total, report_name, namespace,
+                        stats["hits"], stats["misses"],
+                        stats["unique_fragments"], hit_rate * 100,
+                    )
                 if rss_reader is not None:
                     rss_gb = rss_reader()
                     if rss_gb is not None:

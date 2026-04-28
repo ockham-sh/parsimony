@@ -217,9 +217,15 @@ class FragmentEmbeddingCache:
         Writes a parquet of ``(fragment, vector)`` rows plus a small
         ``meta.json`` carrying the embedder's identity. The identity
         guards against stale-cache reuse when the embedder changes.
+
+        Writes are atomic via ``.tmp`` + ``os.replace`` so a kill (SIGKILL,
+        OOM) mid-write cannot leave a half-written parquet that
+        ``_try_load`` would then refuse and start cold from.
         """
         if not self._cache:
             return
+        import os
+
         import pyarrow as pa
         import pyarrow.parquet as pq
 
@@ -235,20 +241,20 @@ class FragmentEmbeddingCache:
                 "vector": vectors,
             }
         )
-        pq.write_table(
-            table,
-            self._cache_dir / self._FRAGMENT_CACHE_FILE,
-            compression="zstd",
-        )
+        data_path = self._cache_dir / self._FRAGMENT_CACHE_FILE
+        meta_path = self._cache_dir / self._FRAGMENT_CACHE_META
+        data_tmp = data_path.with_suffix(data_path.suffix + ".tmp")
+        meta_tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
+        pq.write_table(table, data_tmp, compression="zstd")
         info = self._base.info()
         meta_payload = {
             "model": info.model,
             "dim": info.dim,
             "normalize": info.normalize,
         }
-        (self._cache_dir / self._FRAGMENT_CACHE_META).write_text(
-            json.dumps(meta_payload, indent=2)
-        )
+        meta_tmp.write_text(json.dumps(meta_payload, indent=2))
+        os.replace(data_tmp, data_path)
+        os.replace(meta_tmp, meta_path)
 
     def _try_load(self, cache_dir: Path) -> None:
         meta_path = cache_dir / self._FRAGMENT_CACHE_META

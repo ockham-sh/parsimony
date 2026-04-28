@@ -2,10 +2,25 @@
 
 Pure functions over numpy arrays and token lists, separated from the catalog
 class to keep the latter focused on orchestration.
+
+Index choice in :func:`build_faiss` is adaptive on row count:
+
+* ``N < HNSW_THRESHOLD`` (4 096): ``IndexFlatIP`` — exact, no build cost.
+* ``HNSW_THRESHOLD ≤ N < IVF_THRESHOLD`` (500 000): ``IndexHNSWFlat`` —
+  highest recall, fits in RAM for medium catalogs.
+* ``N ≥ IVF_THRESHOLD``: ``IndexIVFFlat`` — ~3× lower build peak. HNSW's
+  build memory is ~3-5× the raw embeddings; on a 27 GB host it OOM-kills
+  around 1.27 M rows. IVFFlat trades a few percent recall for the
+  headroom we need at scale.
+
+Override the threshold via ``PARSIMONY_FAISS_IVF_THRESHOLD``.
 """
 
 from __future__ import annotations
 
+import logging
+import math
+import os
 import re
 from typing import TYPE_CHECKING
 
@@ -14,10 +29,22 @@ import numpy as np
 if TYPE_CHECKING:
     import faiss
 
+logger = logging.getLogger(__name__)
+
 HNSW_THRESHOLD = 4096
 HNSW_M = 16
 HNSW_EF_CONSTRUCTION = 200
 HNSW_EF_SEARCH = 64
+
+# IVFFlat path. Defaults derived from FAISS conventions (nlist ≈ 4·√N,
+# nprobe ≈ 5-15 % of nlist) plus a training-sample cap that keeps k-means
+# time bounded on very large catalogs while staying ≫ 50× nlist.
+IVF_THRESHOLD = int(os.environ.get("PARSIMONY_FAISS_IVF_THRESHOLD", "500000"))
+IVF_NLIST_FACTOR = 4
+IVF_NLIST_MIN = 64
+IVF_NLIST_MAX = 65_536
+IVF_NPROBE_FRACTION = 0.10
+IVF_TRAIN_SAMPLE_CAP = 256_000
 
 RRF_K = 60
 
@@ -38,21 +65,64 @@ def tokenize(text: str) -> list[str]:
     return _TOKEN_RE.findall(text.lower())
 
 
+def _ivf_nlist(n: int) -> int:
+    """Pick ``nlist`` for an IVF index over *n* vectors.
+
+    ``4·√N`` clamped to ``[IVF_NLIST_MIN, IVF_NLIST_MAX]``: gives ~280
+    vectors per cell at N=1.27 M, well above the FAISS rule-of-thumb
+    minimum of 30-100.
+    """
+    return max(IVF_NLIST_MIN, min(IVF_NLIST_MAX, IVF_NLIST_FACTOR * int(math.sqrt(n))))
+
+
+def _build_ivfflat(matrix: np.ndarray, *, dim: int) -> faiss.Index:
+    """Build a trained, populated ``IndexIVFFlat`` over *matrix*."""
+    import faiss
+
+    n = matrix.shape[0]
+    nlist = _ivf_nlist(n)
+    quantizer = faiss.IndexFlatIP(dim)
+    index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_INNER_PRODUCT)
+
+    if n > IVF_TRAIN_SAMPLE_CAP:
+        rng = np.random.default_rng(seed=0)
+        sample_ids = rng.choice(n, size=IVF_TRAIN_SAMPLE_CAP, replace=False)
+        train = matrix[sample_ids]
+    else:
+        train = matrix
+    index.train(train)
+    index.nprobe = max(1, int(nlist * IVF_NPROBE_FRACTION))
+    index.add(matrix)
+    logger.info(
+        "build_faiss: IndexIVFFlat n=%d nlist=%d nprobe=%d trained_on=%d",
+        n, nlist, index.nprobe, train.shape[0],
+    )
+    return index
+
+
 def build_faiss(matrix: np.ndarray, *, dim: int, normalize: bool) -> faiss.Index:
-    """Build a FAISS index from *matrix* (shape ``(n, dim)``)."""
+    """Build a FAISS index from *matrix* (shape ``(n, dim)``).
+
+    Adaptive on ``n``: :class:`faiss.IndexFlatIP` for tiny catalogs,
+    :class:`faiss.IndexHNSWFlat` for medium, :class:`faiss.IndexIVFFlat`
+    once the HNSW build peak would exceed comfortable host RAM.
+    """
     import faiss
 
     if normalize:
         faiss.normalize_L2(matrix)
-    if matrix.shape[0] < HNSW_THRESHOLD:
+    n = matrix.shape[0]
+    if n < HNSW_THRESHOLD:
         index: faiss.Index = faiss.IndexFlatIP(dim)
-    else:
+        index.add(matrix)
+        return index
+    if n < IVF_THRESHOLD:
         hnsw = faiss.IndexHNSWFlat(dim, HNSW_M, faiss.METRIC_INNER_PRODUCT)
         hnsw.hnsw.efConstruction = HNSW_EF_CONSTRUCTION
         hnsw.hnsw.efSearch = HNSW_EF_SEARCH
-        index = hnsw
-    index.add(matrix)
-    return index
+        hnsw.add(matrix)
+        return hnsw
+    return _build_ivfflat(matrix, dim=dim)
 
 
 def read_faiss(path: str, *, expected_rows: int) -> faiss.Index:
@@ -66,6 +136,10 @@ def read_faiss(path: str, *, expected_rows: int) -> faiss.Index:
         )
     if isinstance(index, faiss.IndexHNSW):
         index.hnsw.efSearch = HNSW_EF_SEARCH
+    elif isinstance(index, faiss.IndexIVF):
+        # Re-derive nprobe on load so a tuning change to IVF_NPROBE_FRACTION
+        # propagates without re-publishing every snapshot.
+        index.nprobe = max(1, int(index.nlist * IVF_NPROBE_FRACTION))
     return index
 
 
@@ -119,6 +193,7 @@ def rrf_fuse(*rankings: list[tuple[int, int]]) -> list[tuple[int, float]]:
 
 __all__ = [
     "HNSW_THRESHOLD",
+    "IVF_THRESHOLD",
     "RRF_K",
     "bm25_query",
     "build_faiss",

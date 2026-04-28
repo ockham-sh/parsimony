@@ -26,7 +26,8 @@ import logging
 import re
 import shutil
 import tempfile
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -424,7 +425,6 @@ def entries_from_result(
         if mn not in df.columns:
             raise ValueError(f"Result missing METADATA column {mn!r}. Available: {list(df.columns)}")
 
-    raw_codes = df[key_name].dropna().unique()
     static_ns = normalize_code(resolved_ns)
     tag_list: list[str] = []
     if table.provenance.source:
@@ -440,11 +440,26 @@ def entries_from_result(
         seen_tags.add(tag)
         deduped_tags.append(tag)
 
+    # Single hash-grouping pass instead of a per-key boolean mask scan.
+    # The previous loop was O(K×N) (full DataFrame scan per unique key);
+    # for ESTAT MIGR_* flows with hundreds of thousands of series and
+    # rows that scaled to hours per flow. groupby is O(N).
+    t0 = time.monotonic()
+    needed_cols = {key_name}
+    if title_name:
+        needed_cols.add(title_name)
+    if desc_name:
+        needed_cols.add(desc_name)
+    if frag_name:
+        needed_cols.add(frag_name)
+    needed_cols.update(meta_names)
+    sub_df = df[list(needed_cols)]
+    n_rows = len(sub_df)
+    grouped = sub_df.groupby(key_name, sort=False, dropna=True)
+
     entries: list[SeriesEntry] = []
-    for raw_code in raw_codes:
+    for raw_code, sub in grouped:
         code = normalize_entity_code(str(raw_code))
-        mask = df[key_name] == raw_code
-        sub = df.loc[mask]
 
         if title_name and title_name in sub.columns:
             titles = sub[title_name].dropna()
@@ -493,6 +508,10 @@ def entries_from_result(
                 metadata=meta,
             )
         )
+    logger.info(
+        "entries_from_result: built %d entries from %d rows in %.2fs",
+        len(entries), n_rows, time.monotonic() - t0,
+    )
     return entries
 
 
@@ -654,15 +673,42 @@ class Catalog:
         return {catalog_key(ns, code) for ns, code in keys if catalog_key(ns, code) in self._key_to_idx}
 
     async def delete(self, namespace: str, code: str) -> None:
-        key = catalog_key(namespace, code)
+        """Remove one entry; rebuilds FAISS+BM25 once. For multiple
+        deletions, prefer :meth:`delete_many` — looping ``delete`` is
+        O(K×N) (per-call list shifts and full index rebuild)."""
+        await self.delete_many([(namespace, code)])
+
+    async def delete_many(self, keys: Iterable[tuple[str, str]]) -> int:
+        """Remove multiple entries; rebuild FAISS+BM25 exactly once.
+
+        A loop of :meth:`delete` is O(K×N) — every call shifts the
+        ``_entries`` and ``_tokens`` lists, rebuilds ``_key_to_idx``,
+        and rebuilds the FAISS+BM25 indices. Batching collapses the
+        whole input into a single O(N+K) pass.
+
+        Returns the count of entries actually removed; keys not present
+        are silently skipped. Order of *keys* is irrelevant — duplicates
+        are deduped by index.
+        """
         async with self._lock:
-            idx = self._key_to_idx.pop(key, None)
-            if idx is None:
-                return
-            del self._entries[idx]
-            del self._tokens[idx]
-            self._key_to_idx = {(e.namespace, e.code): i for i, e in enumerate(self._entries)}
+            targets: set[int] = set()
+            for ns, code in keys:
+                idx = self._key_to_idx.get(catalog_key(ns, code))
+                if idx is not None:
+                    targets.add(idx)
+            if not targets:
+                return 0
+            self._entries = [
+                e for i, e in enumerate(self._entries) if i not in targets
+            ]
+            self._tokens = [
+                t for i, t in enumerate(self._tokens) if i not in targets
+            ]
+            self._key_to_idx = {
+                (e.namespace, e.code): i for i, e in enumerate(self._entries)
+            }
             self._rebuild_indices()
+            return len(targets)
 
     async def list_namespaces(self) -> list[str]:
         return sorted({e.namespace for e in self._entries})
@@ -857,6 +903,7 @@ class Catalog:
         missing = [(i, e) for i, e in enumerate(entries) if e.embedding is None]
         if not missing:
             return entries
+        t0 = time.monotonic()
         out = list(entries)
 
         # Partition by path:
@@ -902,6 +949,11 @@ class Catalog:
                 out[i] = entry.model_copy(
                     update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()}
                 )
+        logger.info(
+            "_embed_missing: %d entries (compose=%d direct=%d) in %.2fs",
+            len(missing), len(compose), len(direct),
+            time.monotonic() - t0,
+        )
         return out
 
     def _rebuild_indices(self) -> None:
@@ -909,6 +961,7 @@ class Catalog:
             self._faiss = None
             self._bm25 = None
             return
+        t0 = time.monotonic()
         info = self.embedder_info
         # Stack packed-float32 bytes into a contiguous (N, dim) matrix.
         # ``np.frombuffer`` views the bytes without copying; the explicit
@@ -925,10 +978,18 @@ class Catalog:
                     "populated it before _rebuild_indices runs"
                 )
             matrix[i, :] = np.frombuffer(e.embedding, dtype=np.float32)
+        t_faiss = time.monotonic()
         self._faiss = build_faiss(matrix, dim=info.dim, normalize=info.normalize)
+        t_bm25 = time.monotonic()
         from rank_bm25 import BM25Okapi
 
         self._bm25 = BM25Okapi(self._tokens)
+        t_done = time.monotonic()
+        logger.info(
+            "_rebuild_indices: n=%d index=%s faiss=%.2fs bm25=%.2fs total=%.2fs",
+            n, type(self._faiss).__name__,
+            t_bm25 - t_faiss, t_done - t_bm25, t_done - t0,
+        )
 
     def _bm25_ranks(self, query: str, k: int) -> list[tuple[int, int]]:
         if self._bm25 is None:

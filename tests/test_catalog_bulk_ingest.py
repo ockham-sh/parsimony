@@ -269,3 +269,98 @@ async def test_ingest_empty_input_short_circuits() -> None:
     assert result.total == 0
     assert result.indexed == 0
     assert result.skipped == 0
+
+
+# ---------------------------------------------------------------------------
+# delete_many: bulk-delete parity + single rebuild
+# ---------------------------------------------------------------------------
+
+
+async def test_delete_many_matches_delete_loop_state() -> None:
+    """Two catalogs — one looping ``delete()``, the other a single
+    ``delete_many()`` — must converge to identical observable state."""
+    cat_loop = Catalog("t", embedder=_StubEmbedder())
+    cat_bulk = Catalog("t", embedder=_StubEmbedder())
+    entries = _make_entries(60)
+    await cat_loop.add_all(entries)
+    await cat_bulk.add_all(entries)
+
+    to_remove = [("t", f"C{i:04d}") for i in range(0, 60, 3)]  # 20 keys
+    for ns, code in to_remove:
+        await cat_loop.delete(ns, code)
+    removed = await cat_bulk.delete_many(to_remove)
+
+    assert removed == 20
+    assert len(cat_loop) == len(cat_bulk) == 40
+    assert cat_loop.entries == cat_bulk.entries
+    # pylint: disable=protected-access
+    assert cat_loop._key_to_idx == cat_bulk._key_to_idx
+    assert cat_loop._tokens == cat_bulk._tokens
+    assert cat_loop._faiss is not None and cat_bulk._faiss is not None
+    assert cat_loop._faiss.ntotal == cat_bulk._faiss.ntotal == 40
+
+
+async def test_delete_many_rebuilds_indices_exactly_once(monkeypatch: Any) -> None:
+    cat = Catalog("t", embedder=_StubEmbedder())
+    await cat.add_all(_make_entries(30))
+
+    calls = {"n": 0}
+    original = cat._rebuild_indices
+
+    def _counting_rebuild() -> None:
+        calls["n"] += 1
+        original()
+
+    monkeypatch.setattr(cat, "_rebuild_indices", _counting_rebuild)
+
+    removed = await cat.delete_many([("t", f"C{i:04d}") for i in range(10)])
+    assert removed == 10
+    assert calls["n"] == 1
+
+
+async def test_delete_many_silently_skips_missing_keys() -> None:
+    cat = Catalog("t", embedder=_StubEmbedder())
+    await cat.add_all(_make_entries(5))
+
+    removed = await cat.delete_many(
+        [("t", "C0001"), ("t", "MISSING"), ("other", "C0002")]
+    )
+    assert removed == 1
+    assert len(cat) == 4
+
+
+async def test_delete_many_empty_input_is_noop(monkeypatch: Any) -> None:
+    cat = Catalog("t", embedder=_StubEmbedder())
+    await cat.add_all(_make_entries(5))
+
+    calls = {"n": 0}
+    original = cat._rebuild_indices
+
+    def _counting_rebuild() -> None:
+        calls["n"] += 1
+        original()
+
+    monkeypatch.setattr(cat, "_rebuild_indices", _counting_rebuild)
+
+    removed = await cat.delete_many([])
+    assert removed == 0
+    assert calls["n"] == 0
+    assert len(cat) == 5
+
+
+async def test_delete_delegates_to_delete_many() -> None:
+    """``delete()`` must remain a single-key convenience wrapper that
+    leaves the catalog in the same state as ``delete_many([key])``."""
+    cat_single = Catalog("t", embedder=_StubEmbedder())
+    cat_bulk1 = Catalog("t", embedder=_StubEmbedder())
+    entries = _make_entries(10)
+    await cat_single.add_all(entries)
+    await cat_bulk1.add_all(entries)
+
+    await cat_single.delete("t", "C0003")
+    removed = await cat_bulk1.delete_many([("t", "C0003")])
+
+    assert removed == 1
+    assert cat_single.entries == cat_bulk1.entries
+    # pylint: disable=protected-access
+    assert cat_single._key_to_idx == cat_bulk1._key_to_idx

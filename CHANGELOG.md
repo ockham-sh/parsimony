@@ -4,6 +4,16 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.1]
+
+### Fixed
+
+- Removed unused `toon-format` runtime dependency. The kernel never imported it
+  — it was declared for downstream consumers (`parsimony-mcp`, future
+  `parsimony-agents`) which now declare it themselves. Eliminates the
+  `--prerelease=allow` requirement that propagated to every project depending
+  on `parsimony-core` due to `toon-format>=0.9.0b1` being a beta.
+
 ## [0.4.0]
 
 ### Breaking changes

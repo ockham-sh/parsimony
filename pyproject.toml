@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.4.0"
+version = "0.4.1"
 description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
@@ -29,9 +29,6 @@ dependencies = [
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
     "tenacity>=9.0.0,<10",
-    # TOON encoder used by downstream agent contexts (parsimony-mcp bridge,
-    # parsimony-agents fetch_log) for token-efficient tabular previews.
-    "toon-format>=0.9.0b1,<0.10",
 ]
 
 [project.optional-dependencies]

@@ -2115,7 +2115,7 @@ wheels = [
 
 [[package]]
 name = "parsimony-core"
-version = "0.4.0"
+version = "0.4.1"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -2124,7 +2124,6 @@ dependencies = [
     { name = "pyarrow" },
     { name = "pydantic" },
     { name = "tenacity" },
-    { name = "toon-format" },
 ]
 
 [package.optional-dependencies]
@@ -2204,7 +2203,6 @@ requires-dist = [
     { name = "s3fs", marker = "extra == 's3'", specifier = ">=2024.0" },
     { name = "sentence-transformers", marker = "extra == 'standard'", specifier = ">=3.0.0" },
     { name = "tenacity", specifier = ">=9.0.0,<10" },
-    { name = "toon-format", specifier = ">=0.9.0b1,<0.10" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.31" },
 ]
 provides-extras = ["standard", "standard-onnx", "litellm", "s3", "all", "dev", "docs"]
@@ -3445,15 +3443,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/19/75/241269d1da26b624c0d5e110e8149093c759b7a286138f4efd61a60e75fe/tomli_w-1.2.0.tar.gz", hash = "sha256:2dd14fac5a47c27be9cd4c976af5a12d87fb1f0b4512f81d69cce3b35ae25021", size = 7184, upload-time = "2025-01-15T12:07:24.262Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c7/18/c86eb8e0202e32dd3df50d43d7ff9854f8e0603945ff398974c1d91ac1ef/tomli_w-1.2.0-py3-none-any.whl", hash = "sha256:188306098d013b691fcadc011abd66727d3c414c571bb01b1a174ba8c983cf90", size = 6675, upload-time = "2025-01-15T12:07:22.074Z" },
-]
-
-[[package]]
-name = "toon-format"
-version = "0.9.0b1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fa/15/d23d6d3e36aa4ec96dd5692bc7715fe17015b669e8f0d1c5c7fa906a3ceb/toon_format-0.9.0b1.tar.gz", hash = "sha256:8f391dd6ad9677c78366bd8eb6762d064a2183f67b9b7da1f348fdb6ee8738e7", size = 87398, upload-time = "2025-11-08T19:22:53.059Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/f3/27ab1d982bb81bf9ac5be70b4c774996eb8562b93c77e93c253c22be951f/toon_format-0.9.0b1-py3-none-any.whl", hash = "sha256:efeee919501f91137f017f7bed34789c067f76178111aa872a49bc8653dce3be", size = 36173, upload-time = "2025-11-08T19:22:51.523Z" },
 ]
 
 [[package]]

@@ -26,7 +26,7 @@ external users yet).
 
 ## 2. Target architecture
 
-```
+```text
 parsimony/
   __init__.py          ~80 LOC    public surface (lazy re-exports)
   connector.py        ~500 LOC    @connector / @enumerator / @loader + Connector + Connectors

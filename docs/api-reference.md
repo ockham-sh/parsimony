@@ -761,7 +761,7 @@ from parsimony import (
 
 All **stable**. Hierarchy:
 
-```
+```text
 ConnectorError(provider: str)
 ├── UnauthorizedError      — 401/403 credentials rejected, OR connector is bound=False (see Connectors.bind_env)
 ├── PaymentRequiredError   — 402 plan restriction

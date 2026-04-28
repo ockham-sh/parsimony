@@ -54,7 +54,7 @@ result.data.tail()
 
 Expected output:
 
-```
+```text
   series_key         title                ... TIME_PERIOD    value
   D.USD.EUR.SP00.A   US dollar/Euro       ... 2024-12-27   1.0427
   D.USD.EUR.SP00.A   US dollar/Euro       ... 2024-12-30   1.0389
@@ -136,7 +136,7 @@ search = await fred["fred_search"](search_text="US unemployment rate")
 print(search.data[["id", "title"]].head())
 ```
 
-```
+```text
           id                                   title
 0      UNRATE             Unemployment Rate
 1    UNRATENSA  Unemployment Rate (Not Seasonally Adjusted)
@@ -153,7 +153,7 @@ result = await fred["fred_fetch"](
 print(result.data.tail())
 ```
 
-```
+```text
   series_id                 title  ... date        value
   UNRATE     Unemployment Rate    ... 2024-11-01    4.2
   UNRATE     Unemployment Rate    ... 2024-12-01    4.1

@@ -21,7 +21,7 @@ matches every plugin, from the minimal `parsimony-treasury` (no
 credentials, flat REST) up to `parsimony-sdmx` (multi-agency SDMX with
 catalog publishing).
 
-```
+```text
 parsimony-<name>/
 ├── parsimony_<name>/
 │   ├── __init__.py         CONNECTORS (+ optional CATALOGS / RESOLVE_CATALOG)

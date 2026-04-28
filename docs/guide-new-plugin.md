@@ -15,7 +15,7 @@ The reference implementation is
 [`ockham-sh/parsimony-connectors/packages/fred`](https://github.com/ockham-sh/parsimony-connectors/tree/main/packages/fred).
 Copy its structure and adjust:
 
-```
+```text
 parsimony-<yourname>/
 ├── parsimony_<yourname>/
 │   ├── __init__.py         CONNECTORS (+ optional CATALOGS / RESOLVE_CATALOG)

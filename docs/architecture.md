@@ -38,7 +38,7 @@ its reference implementation in one scroll.
 
 ## Module layout
 
-```
+```text
 parsimony/
 ├── __init__.py         Public surface (lazy-loaded via PEP 562 __getattr__).
 ├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
@@ -151,7 +151,7 @@ Keyword-only parameters after `*` declare runtime dependencies. The
 decorator's `env={...}` keyword maps each one to the env var that should
 back it:
 
-```
+```python
 @connector(env={"api_key": "FRED_API_KEY"})
 async def connector_fn(params, *, api_key: str): ...
      ↓
@@ -191,7 +191,7 @@ appear in lineage records, logs, or serialized results.
 
 ## Result pipeline
 
-```
+```text
 Raw API response (JSON/CSV/XML)
     ↓ connector implementation
 pd.DataFrame
@@ -242,7 +242,7 @@ class PgVectorCatalog:
 `Catalog.save(path)` writes three files into one directory, atomically via
 temp-directory rename:
 
-```
+```text
 <dir>/
 ├── meta.json           name, namespaces, entry count, embedder identity, build info
 ├── entries.parquet     namespace, code, title, description, tags_json, metadata_json, embedding
@@ -297,7 +297,7 @@ Retryable transport failures inside `add` are caught and counted in
 plus one frozen dataclass. No cache, no singleton, no import-time side
 effects. Consumers cache at their own level if they need to.
 
-```
+```text
 parsimony.providers entry point(s)
     ↓ discover.iter_providers()
     ↓ for each ep: yield Provider(name, module_path, dist_name, version)
@@ -360,7 +360,7 @@ def RESOLVE_CATALOG(namespace: str) -> Callable | None:
 
 The publisher pipeline:
 
-```
+```text
 parsimony publish --provider NAME --target 'hf://org/catalog-{namespace}'
     ↓ discover.iter_providers() → find NAME → p.load() → CATALOGS / RESOLVE_CATALOG
     ↓ if --only and RESOLVE_CATALOG:
@@ -424,7 +424,7 @@ helpers so the agent-facing error surface is consistent.
 
 ## Error hierarchy
 
-```
+```text
 ConnectorError(provider: str)
 ├── UnauthorizedError      (401/403 — bad credentials)
 ├── PaymentRequiredError   (402 — plan restriction)
@@ -491,7 +491,7 @@ gate per connector, and as a security-review artefact via
 
 Two verbs, wired as the `parsimony` console script:
 
-```
+```text
 parsimony list [--json] [--strict]
 parsimony publish --provider NAME --target URL_TEMPLATE [--only NS]... [--dry-run]
 ```

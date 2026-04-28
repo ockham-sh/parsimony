@@ -250,6 +250,5 @@ async def test_phase_separation_no_fetch_during_embed(tmp_path: Path) -> None:
     first_embed = min(embed_started_ts)
     # Strict invariant: phase 2 cannot start before phase 1 finishes.
     assert first_embed >= last_fetch, (
-        f"embed started at {first_embed:.3f} before last fetch finished at "
-        f"{last_fetch:.3f}; phase separation broken"
+        f"embed started at {first_embed:.3f} before last fetch finished at {last_fetch:.3f}; phase separation broken"
     )

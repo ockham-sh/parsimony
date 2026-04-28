@@ -324,7 +324,9 @@ async def publish(
     sem = asyncio.Semaphore(max(1, fetch_concurrency))
 
     async def _fetch_one(
-        namespace: str, fn: CatalogFn, staging: Path,
+        namespace: str,
+        fn: CatalogFn,
+        staging: Path,
     ) -> tuple[str, Path | None, str | None]:
         """Fetch + stage one catalog. Returns ``(ns, path|None, err|None)``."""
         async with sem:
@@ -371,7 +373,10 @@ async def publish(
                 size_mb = 0.0
             logger.info(
                 "[fetch] %s/%s done (%.1fs, %.0f MB staged)",
-                report_name, namespace, elapsed, size_mb,
+                report_name,
+                namespace,
+                elapsed,
+                size_mb,
             )
             return namespace, path, None
 
@@ -383,17 +388,19 @@ async def publish(
         # every Result is on disk and the parent holds only file paths.
         logger.info(
             "=== fetch phase: %d flows, K=%d ===",
-            total, max(1, fetch_concurrency),
+            total,
+            max(1, fetch_concurrency),
         )
         phase1_t0 = time.monotonic()
-        staged = await asyncio.gather(
-            *[_fetch_one(ns, fn, staging) for ns, fn in catalogs]
-        )
+        staged = await asyncio.gather(*[_fetch_one(ns, fn, staging) for ns, fn in catalogs])
         n_staged = sum(1 for _, p, _ in staged if p is not None)
         n_failed = total - n_staged
         logger.info(
             "=== fetch phase done: %d/%d staged in %.1fs (%d failed) ===",
-            n_staged, total, time.monotonic() - phase1_t0, n_failed,
+            n_staged,
+            total,
+            time.monotonic() - phase1_t0,
+            n_failed,
         )
 
         # PHASE 2 — strictly sequential embed/index/push. No fetch is
@@ -418,7 +425,10 @@ async def publish(
                     continue
                 logger.info(
                     "[%d/%d] %s/%s parquet load: %.2fs",
-                    processed, total, report_name, namespace,
+                    processed,
+                    total,
+                    report_name,
+                    namespace,
                     time.monotonic() - t_load,
                 )
 
@@ -428,8 +438,12 @@ async def publish(
                     index = await catalog.add_from_result(result)
                     logger.info(
                         "[%d/%d] %s/%s add_from_result: indexed=%d skipped=%d in %.2fs",
-                        processed, total, report_name, namespace,
-                        index.indexed, index.skipped,
+                        processed,
+                        total,
+                        report_name,
+                        namespace,
+                        index.indexed,
+                        index.skipped,
                         time.monotonic() - t_ingest,
                     )
                     # Drop the staged DataFrame before push so the upload
@@ -442,7 +456,10 @@ async def publish(
                     await catalog.push(url)
                     logger.info(
                         "[%d/%d] %s/%s push: %.2fs",
-                        processed, total, report_name, namespace,
+                        processed,
+                        total,
+                        report_name,
+                        namespace,
                         time.monotonic() - t_push,
                     )
                     published.append(namespace)
@@ -469,23 +486,35 @@ async def publish(
                     except Exception:
                         logger.exception(
                             "[%d/%d] %s/%s fragment_cache.persist failed",
-                            processed, total, report_name, namespace,
+                            processed,
+                            total,
+                            report_name,
+                            namespace,
                         )
                     stats = fragment_cache.stats()
                     refs = stats["hits"] + stats["misses"]
                     hit_rate = stats["hits"] / refs if refs else 0.0
                     logger.info(
                         "[%d/%d] %s/%s cache: hits=%d misses=%d unique=%d hit_rate=%.1f%%",
-                        processed, total, report_name, namespace,
-                        stats["hits"], stats["misses"],
-                        stats["unique_fragments"], hit_rate * 100,
+                        processed,
+                        total,
+                        report_name,
+                        namespace,
+                        stats["hits"],
+                        stats["misses"],
+                        stats["unique_fragments"],
+                        hit_rate * 100,
                     )
                 if rss_reader is not None:
                     rss_gb = rss_reader()
                     if rss_gb is not None:
                         logger.info(
                             "[%d/%d] %s/%s done — rss=%.2f GB",
-                            processed, total, report_name, namespace, rss_gb,
+                            processed,
+                            total,
+                            report_name,
+                            namespace,
+                            rss_gb,
                         )
 
     return PublishReport(

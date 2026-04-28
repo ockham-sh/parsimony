@@ -186,9 +186,7 @@ class FragmentEmbeddingCache:
 
         out: list[list[float]] = []
         for frags in fragments_per_item:
-            matrix = np.asarray(
-                [self._cache[f] for f in frags], dtype=np.float32
-            )
+            matrix = np.asarray([self._cache[f] for f in frags], dtype=np.float32)
             pooled = matrix.mean(axis=0)
             norm = float(np.linalg.norm(pooled))
             if norm > 1e-12:

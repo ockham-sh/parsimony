@@ -72,9 +72,7 @@ def test_ivf_threshold_env_resolution() -> None:
 # --- Persistence round-trip ------------------------------------------------
 
 
-def test_ivfflat_persists_through_read_faiss(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ivfflat_persists_through_read_faiss(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexes, "IVF_THRESHOLD", HNSW_THRESHOLD + 100)
     n = HNSW_THRESHOLD + 500
     matrix = _random_matrix(n, dim=64, seed=1)

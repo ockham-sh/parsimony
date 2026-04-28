@@ -45,6 +45,7 @@ async def test_onnx_embed_texts_roundtrip(tmp_path: Path) -> None:
     assert all(len(v) == 384 for v in vectors)
     # L2-normalized — norm ~ 1
     import math
+
     for v in vectors:
         assert math.isclose(math.sqrt(sum(x * x for x in v)), 1.0, abs_tol=1e-3)
 
@@ -67,8 +68,7 @@ async def test_onnx_query_matches_related_doc_better(tmp_path: Path) -> None:
     related = dot(query, docs[0])
     unrelated = dot(query, docs[1])
     assert related > unrelated, (
-        f"expected yield-curve doc to outrank stock doc "
-        f"(related={related}, unrelated={unrelated})"
+        f"expected yield-curve doc to outrank stock doc (related={related}, unrelated={unrelated})"
     )
 
 

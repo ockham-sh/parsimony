@@ -123,7 +123,7 @@ class SeriesEntry(BaseModel):
     tags: list[str] = Field(default_factory=list)
     description: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-    embedding: bytes | None = None #: Packed ``np.float32`` bytes
+    embedding: bytes | None = None  #: Packed ``np.float32`` bytes
 
     @field_validator("namespace")
     @classmethod
@@ -403,8 +403,7 @@ def entries_from_result(
     desc_cols = [c for c in cols if c.role == ColumnRole.DESCRIPTION]
     if len(desc_cols) > 1:
         raise ValueError(
-            f"Result must have at most one DESCRIPTION column, found {len(desc_cols)}: "
-            f"{[c.name for c in desc_cols]}"
+            f"Result must have at most one DESCRIPTION column, found {len(desc_cols)}: {[c.name for c in desc_cols]}"
         )
     desc_name = desc_cols[0].name if desc_cols else None
     if desc_name is not None and desc_name not in df.columns:
@@ -413,8 +412,7 @@ def entries_from_result(
     frag_cols = [c for c in cols if c.role == ColumnRole.FRAGMENTS]
     if len(frag_cols) > 1:
         raise ValueError(
-            f"Result must have at most one FRAGMENTS column, found {len(frag_cols)}: "
-            f"{[c.name for c in frag_cols]}"
+            f"Result must have at most one FRAGMENTS column, found {len(frag_cols)}: {[c.name for c in frag_cols]}"
         )
     frag_name = frag_cols[0].name if frag_cols else None
     if frag_name is not None and frag_name not in df.columns:
@@ -510,7 +508,9 @@ def entries_from_result(
         )
     logger.info(
         "entries_from_result: built %d entries from %d rows in %.2fs",
-        len(entries), n_rows, time.monotonic() - t0,
+        len(entries),
+        n_rows,
+        time.monotonic() - t0,
     )
     return entries
 
@@ -698,15 +698,9 @@ class Catalog:
                     targets.add(idx)
             if not targets:
                 return 0
-            self._entries = [
-                e for i, e in enumerate(self._entries) if i not in targets
-            ]
-            self._tokens = [
-                t for i, t in enumerate(self._tokens) if i not in targets
-            ]
-            self._key_to_idx = {
-                (e.namespace, e.code): i for i, e in enumerate(self._entries)
-            }
+            self._entries = [e for i, e in enumerate(self._entries) if i not in targets]
+            self._tokens = [t for i, t in enumerate(self._tokens) if i not in targets]
+            self._key_to_idx = {(e.namespace, e.code): i for i, e in enumerate(self._entries)}
             self._rebuild_indices()
             return len(targets)
 
@@ -933,25 +927,21 @@ class Catalog:
 
         if compose:
             assert self._fragment_cache is not None
-            vectors = await self._fragment_cache.compose_many(
-                [e.fragments or [] for _, e in compose]
-            )
+            vectors = await self._fragment_cache.compose_many([e.fragments or [] for _, e in compose])
             for (i, entry), vec in zip(compose, vectors, strict=True):
-                out[i] = entry.model_copy(
-                    update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()}
-                )
+                out[i] = entry.model_copy(update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()})
 
         for start in range(0, len(direct), EMBED_BATCH):
             chunk = direct[start : start + EMBED_BATCH]
             texts = [e.semantic_text() for _, e in chunk]
             vectors = await self._embedder.embed_texts(texts)
             for (i, entry), vec in zip(chunk, vectors, strict=True):
-                out[i] = entry.model_copy(
-                    update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()}
-                )
+                out[i] = entry.model_copy(update={"embedding": np.asarray(vec, dtype=np.float32).tobytes()})
         logger.info(
             "_embed_missing: %d entries (compose=%d direct=%d) in %.2fs",
-            len(missing), len(compose), len(direct),
+            len(missing),
+            len(compose),
+            len(direct),
             time.monotonic() - t0,
         )
         return out
@@ -987,8 +977,11 @@ class Catalog:
         t_done = time.monotonic()
         logger.info(
             "_rebuild_indices: n=%d index=%s faiss=%.2fs bm25=%.2fs total=%.2fs",
-            n, type(self._faiss).__name__,
-            t_bm25 - t_faiss, t_done - t_bm25, t_done - t0,
+            n,
+            type(self._faiss).__name__,
+            t_bm25 - t_faiss,
+            t_done - t_bm25,
+            t_done - t0,
         )
 
     def _bm25_ranks(self, query: str, k: int) -> list[tuple[int, int]]:
@@ -1086,9 +1079,7 @@ async def _load_hf(root: str, *, embedder: EmbeddingProvider | None = None) -> C
 
     cache_dir = cache.catalogs_dir()
     local = await asyncio.to_thread(
-        lambda: Path(
-            snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir)
-        )
+        lambda: Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
     )
     return await Catalog.load(local, embedder=embedder)
 

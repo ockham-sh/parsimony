@@ -133,10 +133,7 @@ def _sanitize_subkey(name: str) -> str:
     if not name:
         raise ValueError("cache subkey must be non-empty")
     if not _VALID_SUBKEY.fullmatch(name):
-        raise ValueError(
-            f"invalid cache subkey {name!r}: must match "
-            "[A-Za-z0-9_][A-Za-z0-9_\\-.]*"
-        )
+        raise ValueError(f"invalid cache subkey {name!r}: must match [A-Za-z0-9_][A-Za-z0-9_\\-.]*")
     return name
 
 
@@ -258,9 +255,7 @@ def clear(subdir: str | None = None) -> None:
     r = _resolve_root()
     if subdir is not None:
         if subdir not in _SUBDIRS:
-            raise ValueError(
-                f"unknown cache subdir {subdir!r}; expected one of {_SUBDIRS}"
-            )
+            raise ValueError(f"unknown cache subdir {subdir!r}; expected one of {_SUBDIRS}")
         target = r / subdir
         if target.exists():
             shutil.rmtree(target)

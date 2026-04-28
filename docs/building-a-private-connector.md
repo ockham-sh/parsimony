@@ -1,67 +1,47 @@
-# Building a Private Parsimony Connector
+# Building a private connector
 
-This guide walks through building a parsimony connector for an internal or
-proprietary data source — one that cannot ship to public PyPI because the
-underlying data, API credentials, or provider terms of service forbid it.
-The final package installs from your private Python index (Artifactory,
-internal Nexus, GitHub Packages, wheel file) and plugs into the kernel
-exactly like an officially-maintained connector.
+For data sources you can't ship to public PyPI: vendor SaaS under restrictive
+ToS, internal databases (Postgres, Snowflake, S3), or anything firewalled.
+Same plugin shape as a public connector — different distribution and
+credential injection.
 
-**Authoritative contract:** [`contract.md`](contract.md). If anything below
-contradicts the contract spec, the spec wins.
+**Authoritative contract:** [`contract.md`](contract.md). When this guide and
+the contract disagree, the contract wins.
 
 ---
 
-## 1. When this guide applies
+## Two paths, one shape
 
-Use this path when any of the following is true:
+| Path | Distribution | Credential injection |
+|---|---|---|
+| **Private package** — vendor SaaS, proprietary feed | Private PyPI / Artifactory / wheel | `@connector(env={...})` + `bind_env()` |
+| **Internal data source** — Postgres, Snowflake, S3 | Same, but typically not redistributed | Plain `bind(pool=...)` at startup |
 
-- The data source is behind your company's firewall (trading system,
-  internal pricing feed, proprietary research database).
-- The upstream provider's Terms of Service forbid redistributing their
-  client code, endpoint documentation, or example responses under
-  Apache 2.0.
-- You want your own release cadence separate from the
-  [`parsimony-connectors`](https://github.com/ockham-sh/parsimony-connectors)
-  monorepo.
-
-If none apply and your connector can ship under Apache 2.0, contribute it
-to `parsimony-connectors` instead — you get free matrix CI, shared trust-
-root identity, and the monorepo's maintainer rotation.
+The kernel doesn't differentiate. `discover.load_all()` picks up both.
 
 ---
 
-## 2. Scaffold the package
+## Path 1 — private package
 
-Use the [plugin template](https://github.com/ockham-sh/parsimony-plugin-template):
+Use this when the connector wraps a credential-bearing API (string keys or
+tokens) and ships as an installable distribution.
+
+### Scaffold
 
 ```bash
 uvx cookiecutter gh:ockham-sh/parsimony-plugin-template
 ```
 
-Answer the prompts (`provider_name`, `description`, author info). The
-scaffold writes a minimal working connector with:
+You get a working connector skeleton: `pyproject.toml` with the entry-point
+already wired, a placeholder `CONNECTORS` export, a release-blocking
+conformance test, and CI.
 
-- `pyproject.toml` — entry-point registration, kernel version pin, Python
-  classifier range
-- `parsimony_<name>/__init__.py` — a placeholder `CONNECTORS` export
-- `tests/test_conformance.py` — release-blocking conformance test
-- `.github/workflows/ci.yml` — test + lint + conformance on every PR
-
-Commit and push to your internal repository (or GitHub, if public).
-
----
-
-## 3. Write the connector
-
-Replace the placeholder in `parsimony_<name>/__init__.py`. The minimum
-shape:
+### Connector shape
 
 ```python
 from pydantic import BaseModel, Field
 from parsimony import (
-    Column, ColumnRole, Connectors, OutputConfig, Provenance, Result,
-    connector,
+    Column, ColumnRole, Connectors, OutputConfig, connector,
 )
 
 
@@ -70,223 +50,231 @@ class YourFetchParams(BaseModel):
     start: str | None = None
 
 
-_OUTPUT = OutputConfig(
-    columns=[
-        Column(name="entity_id", role=ColumnRole.KEY, namespace="your_name"),
-        Column(name="title", role=ColumnRole.TITLE),
-        Column(name="date", dtype="datetime", role=ColumnRole.DATA),
-        Column(name="value", dtype="numeric", role=ColumnRole.DATA),
-    ]
-)
+_OUTPUT = OutputConfig(columns=[
+    Column(name="entity_id", role=ColumnRole.KEY, namespace="your_name"),
+    Column(name="title", role=ColumnRole.TITLE),
+    Column(name="date", dtype="datetime", role=ColumnRole.DATA),
+    Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+])
 
 
 @connector(output=_OUTPUT, env={"api_key": "YOUR_API_KEY"}, tags=["your_name", "tool"])
-async def your_fetch(params: YourFetchParams, *, api_key: str) -> Result:
+async def your_fetch(params: YourFetchParams, *, api_key: str):
     """One-line description. First sentence becomes the MCP tool description."""
-    # ... call your internal API, return a Result ...
+    # ... call your API, return a Result or DataFrame ...
 
 
 CONNECTORS = Connectors([your_fetch])
 ```
 
-Add a `[project.urls] Homepage = "https://your-provider.example"` entry
-to `pyproject.toml` so the kernel can surface it via `Provider.homepage`.
-There is no module-level `ENV_VARS`, `PROVIDER_METADATA`, or
-`__version__` — env-var backings live on the decorator and provider
-metadata lives in the package's PEP 621 metadata.
+The decorator's `env={"api_key": "YOUR_API_KEY"}` is the binding for
+`Connectors.bind_env()`; it reads `os.environ["YOUR_API_KEY"]` at bind time
+and never serializes the value into `Provenance.params`.
 
-Run the conformance suite locally:
+Add a `[project.urls] Homepage = ...` to `pyproject.toml` so the kernel can
+surface it via `Provider.homepage`. There is no module-level `ENV_VARS`,
+`PROVIDER_METADATA`, or `__version__` — those live on the decorator and in
+PEP 621 metadata.
 
-```bash
-pip install -e .[dev]
-pytest tests/test_conformance.py
-parsimony list --strict                        # fails if any plugin flunks conformance
-```
+### Publish to your private index
 
-`parsimony list --strict` exits non-zero on any conformance failure; the
-report (in `--json` mode) is the machine-readable artefact your security
-team can consume.
-
-### Publishing catalogs (optional)
-
-If your internal connector should produce searchable catalog bundles for
-your agents to load via `Catalog.from_url(...)`, export `CATALOGS` on
-the module:
-
-```python
-# Static — namespaces known at import time
-CATALOGS = [("your_name", your_enumerate)]
-
-# Or async generator — namespaces discovered at build time
-async def CATALOGS():
-    async for division in _fetch_divisions():
-        yield f"your_name_{division.code.lower()}", partial(your_enumerate, division=division)
-```
-
-Run `parsimony publish --provider your_name --target 'file:///shared/catalogs/{namespace}'`
-(or against your internal Hugging Face mirror / S3 bucket) to build and
-push catalogs. See [`contract.md`](contract.md) §6 for the full spec and
-optional `RESOLVE_CATALOG` reverse lookup.
-
----
-
-## 4. Publish to your private index
-
-### Artifactory / internal Nexus
-
-Configure a per-package trusted-publisher or API-token credential on your
-private index. Your CI workflow builds the wheel and uploads:
-
-```yaml
-# .github/workflows/release.yml (or your CI system equivalent)
-- name: Build
-  run: uv build
-
-- name: Publish
-  env:
-    TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
-    TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_PASSWORD }}
-  run: |
-    uvx twine upload --repository-url https://your-artifactory.example/api/pypi/internal \
-                     dist/*
-```
-
-### Wheel file distribution
-
-No index, just a wheel:
+The simplest path is wheel + private index:
 
 ```bash
 uv build
-# produces dist/parsimony_yourname-0.1.0-py3-none-any.whl
-# ship the wheel file via your normal internal distribution channel
+uvx twine upload --repository-url https://artifactory.example/api/pypi/internal dist/*
 ```
 
-### GitHub Package Registry (private repo)
-
-Same shape as public PyPI but against the GitHub-hosted index; see
-[GitHub's Python package docs](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-pypi-registry).
-
----
-
-## 5. Install and compose against the kernel
-
-Your users install from the private index:
-
-```bash
-pip install --index-url https://your-artifactory.example/api/pypi/internal/simple/ \
-            parsimony-core parsimony-<yourname>
-```
-
-Or, in a `uv sync` workflow with a pinned private index in the
-consuming project's `pyproject.toml`:
+Pinned consumer install:
 
 ```toml
+# consumer's pyproject.toml
 [[tool.uv.index]]
 name = "internal"
-url = "https://your-artifactory.example/api/pypi/internal/simple/"
+url = "https://artifactory.example/api/pypi/internal/simple/"
 explicit = true
 
 [tool.uv.sources]
 "parsimony-yourname" = { index = "internal" }
 ```
 
-### Discovery
+For GitHub Package Registry or wheel-file distribution, the build step is
+identical — only the upload target changes.
 
-The kernel walks the `parsimony.providers` entry-point group on
-`discover.load_all()` and loads every installed plugin. Your internal
-plugin is treated identically to officially-maintained ones — the kernel
-does not differentiate.
+---
+
+## Path 2 — internal data source
+
+Parsimony ships no Postgres, Snowflake, or S3 connector on purpose. Every
+organization's schema is different; a generic `run_sql` blob would be
+opaque, and a hard-coded schema would be too rigid. The kernel gives you
+the layer above the raw client:
+
+- `@connector` / `@enumerator` for typed params, provenance, agent-discoverable schemas
+- `bind` for credential injection (pools, connection parameter dicts)
+- `OutputConfig` for KEY / TITLE / DATA / METADATA roles
+
+You bring the client (`asyncpg`, `snowflake-connector-python`, `boto3`).
+
+### Postgres example
 
 ```python
-from parsimony import discover
-connectors = discover.load_all().bind_env()
-# "your_fetch" is now available alongside any other installed plugin
-result = await connectors["your_fetch"](entity_id="E123")
+"""Internal Postgres connectors for the analytics warehouse."""
+from __future__ import annotations
+
+import asyncpg
+import pandas as pd
+from pydantic import BaseModel, Field
+
+from parsimony import (
+    Column, ColumnRole, Connectors, OutputConfig, connector, enumerator,
+)
+
+
+class PgQueryParams(BaseModel):
+    metric_id: str = Field(..., description="Metric identifier (e.g. revenue_monthly)")
+    start_date: str | None = None
+    end_date: str | None = None
+
+
+METRIC_OUTPUT = OutputConfig(columns=[
+    Column(name="metric_id", role=ColumnRole.KEY, namespace="pg_metrics"),
+    Column(name="metric_name", role=ColumnRole.TITLE),
+    Column(name="date", dtype="datetime", role=ColumnRole.DATA),
+    Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+])
+
+
+@connector(output=METRIC_OUTPUT, tags=["internal", "postgres"])
+async def pg_fetch_metric(
+    params: PgQueryParams,
+    *,
+    pool: asyncpg.Pool,        # bound at startup; never in provenance
+) -> pd.DataFrame:
+    """Fetch time series observations for an internal metric."""
+    rows = await pool.fetch(
+        """
+        SELECT metric_id, metric_name, date, value
+        FROM analytics.metrics_timeseries
+        WHERE metric_id = $1
+          AND ($2::date IS NULL OR date >= $2::date)
+          AND ($3::date IS NULL OR date <= $3::date)
+        ORDER BY date
+        """,
+        params.metric_id, params.start_date, params.end_date,
+    )
+    if not rows:
+        raise ValueError(f"No data for metric_id={params.metric_id!r}")
+    return pd.DataFrame([dict(r) for r in rows])
+
+
+CONNECTORS = Connectors([pg_fetch_metric])
 ```
 
-If `YOUR_API_KEY` is not set in the environment, `your_fetch` stays in
-the collection but is marked `bound=False`; calling it raises
-`UnauthorizedError("YOUR_API_KEY is not set")`. Inspect via
-`connectors.unbound`.
+Wire it at startup:
+
+```python
+import asyncpg
+from my_connectors.postgres import CONNECTORS as PG
+
+pool = await asyncpg.create_pool(dsn="postgresql://user:pass@host/db")
+bound = PG.bind(pool=pool)
+```
+
+### Patterns for sync SDKs and cloud clients
+
+Snowflake's connector and `boto3` are sync. Wrap them in
+`asyncio.to_thread()` so the connector stays async:
+
+```python
+def _sf_query(conn_params, sql, binds):
+    with snowflake.connector.connect(**conn_params) as conn, conn.cursor() as cur:
+        cur.execute(sql, binds)
+        cols = [d[0].lower() for d in cur.description]
+        return pd.DataFrame(cur.fetchall(), columns=cols)
+
+
+@connector(output=KPI_OUTPUT, tags=["internal", "snowflake"])
+async def sf_fetch_kpi(params, *, sf_conn_params: dict):
+    return await asyncio.to_thread(_sf_query, sf_conn_params, SQL, (params.kpi_code,))
+```
+
+Same pattern for `boto3` (S3 list/read), Snowflake, BigQuery, and any other
+sync SDK. The connector signature stays async; the thread offload is
+internal.
 
 ---
 
-## 6. Regulated-finance security review checklist
+## Composing internal + standard connectors
 
-If your security team needs to approve `parsimony-yourname` before
-production rollout, the deliverable for them is:
+```python
+from parsimony import Connectors
+from parsimony_fred import CONNECTORS as fred
+from my_connectors.postgres import CONNECTORS as pg
+
+all_connectors = Connectors.merge(
+    fred.bind_env(),                # reads FRED_API_KEY
+    pg.bind(pool=pg_pool),          # internal pool
+)
+```
+
+---
+
+## Conformance and security review
+
+Run the conformance suite locally — it's the same gate the public monorepo
+uses:
 
 ```bash
-parsimony list --strict --json > verify-report.json
+pip install -e .[dev]
+pytest tests/test_conformance.py
+parsimony list --strict             # exits non-zero on any conformance failure
 ```
 
-Exit code `0` and no `"conformance": {"passed": false}` entries in the
-JSON is the machine-readable pass. The report schema is **stable** across
-kernel MINOR releases — see [`contract.md`](contract.md) §7.
+For a regulated-finance security review, `parsimony list --strict --json`
+produces a machine-readable artefact. The schema is **stable** across kernel
+MINOR releases (see [`contract.md`](contract.md) §7). Pair it with
+`pip-audit` on the wheel, `bandit` on the source, and a human read of the
+contract spec.
 
-Pair it with:
+### Security checklist
 
-- `pip-audit` on the built wheel
-- `bandit` on the source
-- Your internal static-analysis pipeline
-- A human review against the contract spec
-
-### What the conformance suite verifies
-
-Three checks run against every plugin module:
-
-1. `check_connectors_exported` — module exports `CONNECTORS`, a non-empty
-   `parsimony.Connectors`.
-2. `check_descriptions_non_empty` — every connector carries a non-empty
-   description (no silently empty LLM tool schemas).
-3. `check_env_map_matches_deps` — for every connector, each key in its
-   decorator-declared `env_map` names a real keyword-only dependency on
-   that connector (catches typos and renames).
-
-These are integrity checks, not behavioural tests. Your
-`tests/test_<name>_connectors.py` file is where behavioural coverage
-lives (happy path, 401 → `UnauthorizedError`, 429 → `RateLimitError`).
+1. **Environment variables only.** No hardcoded credentials. String creds
+   on the decorator (`env={"api_key": "..."}`); rich deps (DB pools,
+   connection dicts) read `os.environ` once at startup and inject via
+   `bind`.
+2. **`bind` keeps secrets out of provenance.** Keyword-only deps are never
+   serialized into `Provenance.params`.
+3. **Parameterized queries always.** `$1` (asyncpg) or `%s` (Snowflake) —
+   never f-strings or concatenation.
+4. **Least-privilege roles.** Read-only DB roles. The connector never needs
+   `INSERT`, `UPDATE`, or DDL.
+5. **Fail fast at startup.** Validate required env vars before building
+   pools or clients.
 
 ---
 
-## 7. Upgrading across kernel releases
+## Upgrading across kernel releases
 
-Plugins pin a range on the kernel distribution, not a single version:
+Plugins pin a range, not a single version:
 
 ```toml
 dependencies = ["parsimony-core>=0.4,<0.5"]
 ```
 
-When a kernel MAJOR release lands (e.g. `0.5.0`), your plugin keeps
-working until you update the pin. The kernel publishes a changelog
-naming any **stable** symbols that were removed — see
-[`contract.md`](contract.md) §8 for the deprecation window guarantees.
-
-The upgrade recipe:
-
-1. Bump the pin: `"parsimony-core>=0.5,<0.7"`.
-2. Re-run `parsimony list --strict` against the new kernel to catch any
-   provisional-surface breakage flagged by the suite.
-3. Run your unit tests to catch behavioural drift.
-4. Release a new patch version of your plugin.
-
-There is no separate contract-version classifier or keyword to bump.
+When a kernel MAJOR release lands, your plugin keeps working until you
+update the pin. The recipe: bump the pin → re-run `parsimony list --strict`
+→ run unit tests → release a patch. See [`contract.md`](contract.md) §8 for
+deprecation guarantees.
 
 ---
 
-## 8. Getting help
+## Getting help
 
-- **Contract questions:** [`contract.md`](contract.md) is the
-  authoritative spec; file an issue at
+- **Contract questions:** [`contract.md`](contract.md) — file an issue at
   [ockham-sh/parsimony](https://github.com/ockham-sh/parsimony/issues) if
-  it's ambiguous.
-- **Scaffolding issues:** [ockham-sh/parsimony-plugin-template](https://github.com/ockham-sh/parsimony-plugin-template)
-- **Security disclosures:** see `SECURITY.md` at the kernel repo root on
-  [GitHub](https://github.com/ockham-sh/parsimony/blob/main/SECURITY.md)
-  — do **not** open a public issue.
-
----
-
-*This guide covers the private-connector path. For contributions to the
-officially-maintained set, see
-[parsimony-connectors/CONTRIBUTING.md](https://github.com/ockham-sh/parsimony-connectors/blob/main/CONTRIBUTING.md).*
+  ambiguous.
+- **Scaffolding:** [ockham-sh/parsimony-plugin-template](https://github.com/ockham-sh/parsimony-plugin-template).
+- **Security disclosures:** see
+  [`SECURITY.md`](https://github.com/ockham-sh/parsimony/blob/main/SECURITY.md)
+  — do not open a public issue.

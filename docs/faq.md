@@ -190,8 +190,8 @@ Inspect which connectors are unbound across a whole collection via
 
 You called a connector that has non-env keyword-only dependencies that
 were never bound. Provide them via `Connector.bind(**deps)` — see
-[Internal Connectors](internal-connectors.md) for the DB-pool / HTTP-client
-binding pattern.
+the [private &amp; internal connector guide](building-a-private-connector.md)
+for the DB-pool / HTTP-client binding pattern.
 
 ### Rate limit errors
 

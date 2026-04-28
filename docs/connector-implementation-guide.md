@@ -6,7 +6,7 @@ integration.
 
 For the **authoritative** plugin contract, see [`contract.md`](contract.md).
 For private / internal connectors (Postgres, Snowflake, S3), see
-[`internal-connectors.md`](internal-connectors.md). To contribute a public
+[`building-a-private-connector.md`](building-a-private-connector.md). To contribute a public
 connector to the official monorepo, start with
 [ockham-sh/parsimony-connectors CONTRIBUTING.md](https://github.com/ockham-sh/parsimony-connectors/blob/main/CONTRIBUTING.md).
 

@@ -408,8 +408,8 @@ bound = my_authenticated.bind(api_key="secret-key")
 ```
 
 For non-env dependencies — DB pools, HTTP clients, caches — drop the
-`env=` kwarg and bind manually via `Connectors.bind(**deps)`. See
-[Internal Connectors](internal-connectors.md).
+`env=` kwarg and bind manually via `Connectors.bind(**deps)`. See the
+[private &amp; internal connector guide](building-a-private-connector.md).
 
 ### Packaging as a plugin
 

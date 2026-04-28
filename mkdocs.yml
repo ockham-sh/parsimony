@@ -52,8 +52,7 @@ nav:
   - MCP Server: '!import https://github.com/ockham-sh/parsimony-mcp?branch=main&docs_dir=docs'
   - Building Plugins:
       - Walkthrough: connector-implementation-guide.md
-      - Private Connectors: building-a-private-connector.md
-      - Internal Connectors: internal-connectors.md
+      - Private &amp; Internal: building-a-private-connector.md
   - Recipes: cookbook.md
   - Reference:
       - Plugin Contract: contract.md

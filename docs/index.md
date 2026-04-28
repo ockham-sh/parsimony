@@ -8,8 +8,8 @@ Every financial data project starts the same way: write API wrappers, parse resp
 
 parsimony is split into three pip-installable pieces:
 
-- **`parsimony-core`** — the kernel. Connector contract, `Result` type, catalog, discovery. This site documents it.
-- **[parsimony-connectors](connectors/index.md)** — 24 first-party connectors (FRED, SDMX, FMP, SEC EDGAR, Polymarket, central banks, …). Each is a standalone PyPI distribution; the kernel discovers them at runtime via Python entry-points.
+- **[parsimony-core](user-guide.md)** — the kernel: `@connector`, `@enumerator`, `@loader` decorators that produce typed `Result`s with provenance, plus an optional vector-searchable `Catalog`. Install alongside the connector packages below.
+- **[parsimony-connectors](connectors/index.md)** — official connectors for FRED, SDMX, FMP, SEC EDGAR, Polymarket, central banks, and more. Each is a standalone PyPI distribution; the kernel discovers them at runtime via Python entry-points.
 - **[parsimony-mcp](mcp-server/index.md)** — MCP stdio server that exposes any installed connector as a tool to Claude Desktop, Claude Code, Cursor, and other MCP-compatible agent runtimes.
 
 ## Quick Start

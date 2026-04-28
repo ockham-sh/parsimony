@@ -170,3 +170,29 @@
 .md-typeset a:hover {
   color: hsl(217 91% 75%);
 }
+
+/* Sidebar section titles — uppercase, tracked, bright white, with a
+   thin underline so the eye lands on group boundaries first. Targets
+   both `navigation.sections` items and Material's standalone titles. */
+.md-nav__item--section > .md-nav__link,
+.md-nav--lifted > .md-nav__list > .md-nav__item--section > .md-nav__link,
+.md-nav--primary > .md-nav__title {
+  color: hsl(0 0% 100%) !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  border-bottom: 1px solid hsl(0 0% 14%);
+  padding-bottom: 0.4em;
+  margin-top: 0.4em;
+}
+
+/* Leaf nav links: a touch brighter so the section/leaf hierarchy is
+   visible without color. */
+.md-nav__link {
+  color: hsl(0 0% 75%);
+}
+.md-nav__link--active {
+  color: hsl(217 91% 70%);
+  font-weight: 600;
+}

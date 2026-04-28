@@ -6,6 +6,7 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
+      - "pyproject.toml"
       - ".github/workflows/deploy-docs.yml"
   workflow_dispatch: {}
 
@@ -29,7 +30,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install mkdocs-material
+        # Pulls mkdocs-material plus mkdocs-multirepo-plugin (which
+        # imports parsimony-connectors and parsimony-mcp docs at build
+        # time). Single source of truth: the [docs] extra in pyproject.
+        run: pip install '.[docs]'
 
       - name: Build docs
         run: mkdocs build --strict

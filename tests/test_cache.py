@@ -17,13 +17,12 @@ import pytest
 
 from parsimony import cache
 from parsimony.cache import (
-    TTLDiskCache,
     _PARSIMONY_CACHE_ENV,
+    TTLDiskCache,
     _resolve_root,
     _safe_mkdir,
     _sanitize_subkey,
 )
-
 
 # ---------------------------------------------------------------------------
 # _resolve_root — pure path resolution

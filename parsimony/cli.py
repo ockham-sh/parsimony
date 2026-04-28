@@ -102,18 +102,21 @@ def _build_parser() -> argparse.ArgumentParser:
     cc_sub.add_parser("path", help="Print the resolved cache root.")
     cc_info = cc_sub.add_parser("info", help="Show occupancy of each cache subdirectory.")
     cc_info.add_argument(
-        "--json", dest="json_output", action="store_true",
+        "--json",
+        dest="json_output",
+        action="store_true",
         help="Emit JSON instead of a table.",
     )
-    cc_clear = cc_sub.add_parser(
-        "clear", help="Remove a cache subdirectory (or all of them)."
-    )
+    cc_clear = cc_sub.add_parser("clear", help="Remove a cache subdirectory (or all of them).")
     cc_clear.add_argument(
-        "--subdir", metavar="NAME",
+        "--subdir",
+        metavar="NAME",
         help="Clear only this subdir (catalogs, models, embeddings, connectors).",
     )
     cc_clear.add_argument(
-        "--yes", action="store_true", help="Skip the confirmation prompt.",
+        "--yes",
+        action="store_true",
+        help="Skip the confirmation prompt.",
     )
 
     return parser
@@ -395,11 +398,7 @@ def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
         )
         return 2
 
-    targets = (
-        {subdir: report["subdirs"][subdir]}
-        if subdir is not None
-        else report["subdirs"]
-    )
+    targets = {subdir: report["subdirs"][subdir]} if subdir is not None else report["subdirs"]
     total_files = sum(s["files"] for s in targets.values())
     total_bytes = sum(s["size_bytes"] for s in targets.values())
 
@@ -409,10 +408,7 @@ def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
         return 0
 
     if not assume_yes:
-        prompt = (
-            f"Remove {label} ({total_files} file(s), "
-            f"{_human_size(total_bytes)})? [y/N] "
-        )
+        prompt = f"Remove {label} ({total_files} file(s), {_human_size(total_bytes)})? [y/N] "
         try:
             answer = input(prompt).strip().lower()
         except EOFError:
@@ -422,9 +418,7 @@ def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
             return 0
 
     cache.clear(subdir=subdir)
-    print(
-        f"Cleared {label} ({total_files} file(s), {_human_size(total_bytes)})."
-    )
+    print(f"Cleared {label} ({total_files} file(s), {_human_size(total_bytes)}).")
     return 0
 
 

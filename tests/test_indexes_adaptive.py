@@ -66,15 +66,13 @@ def test_large_n_picks_ivfflat(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ivf_threshold_env_resolution() -> None:
     # The module-level constant is captured at import time from the env.
     # Asserting the default matches the documented value.
-    assert IVF_THRESHOLD == int(os.environ.get("PARSIMONY_FAISS_IVF_THRESHOLD", "500000"))
+    assert int(os.environ.get("PARSIMONY_FAISS_IVF_THRESHOLD", "500000")) == IVF_THRESHOLD
 
 
 # --- Persistence round-trip ------------------------------------------------
 
 
-def test_ivfflat_persists_through_read_faiss(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ivfflat_persists_through_read_faiss(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(indexes, "IVF_THRESHOLD", HNSW_THRESHOLD + 100)
     n = HNSW_THRESHOLD + 500
     matrix = _random_matrix(n, dim=64, seed=1)

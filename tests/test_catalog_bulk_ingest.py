@@ -322,9 +322,7 @@ async def test_delete_many_silently_skips_missing_keys() -> None:
     cat = Catalog("t", embedder=_StubEmbedder())
     await cat.add_all(_make_entries(5))
 
-    removed = await cat.delete_many(
-        [("t", "C0001"), ("t", "MISSING"), ("other", "C0002")]
-    )
+    removed = await cat.delete_many([("t", "C0001"), ("t", "MISSING"), ("other", "C0002")])
     assert removed == 1
     assert len(cat) == 4
 

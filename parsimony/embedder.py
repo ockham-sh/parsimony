@@ -121,7 +121,6 @@ class FragmentEmbeddingCache:
         *,
         cache_dir: Path | None = None,
     ) -> None:
-        import numpy as np
 
         self._base = base
         # Vectors stored as ``np.ndarray[float32]`` (1.5 KB each at 384 dim)
@@ -187,9 +186,7 @@ class FragmentEmbeddingCache:
 
         out: list[list[float]] = []
         for frags in fragments_per_item:
-            matrix = np.asarray(
-                [self._cache[f] for f in frags], dtype=np.float32
-            )
+            matrix = np.asarray([self._cache[f] for f in frags], dtype=np.float32)
             pooled = matrix.mean(axis=0)
             norm = float(np.linalg.norm(pooled))
             if norm > 1e-12:
@@ -619,7 +616,7 @@ def _embedder_slug(info: EmbedderInfo) -> str:
     """
     safe = info.model.replace("/", "__").replace(":", "_")
     digest = hashlib.sha1(
-        f"{info.model}|{info.dim}|{info.normalize}".encode("utf-8"),
+        f"{info.model}|{info.dim}|{info.normalize}".encode(),
         usedforsecurity=False,
     ).hexdigest()[:8]
     return f"{safe}-{digest}"

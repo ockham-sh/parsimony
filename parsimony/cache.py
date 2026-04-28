@@ -33,6 +33,7 @@ __all__ = [
     "root",
 ]
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -91,11 +92,9 @@ def _safe_mkdir(path: Path) -> None:
     _ensure_safe(path)
     path.mkdir(parents=True, exist_ok=True)
     if os.name == "posix":
-        try:
+        # Best-effort. The world-writable check above is the actual safety gate.
+        with contextlib.suppress(OSError):
             os.chmod(path, 0o700)
-        except OSError:
-            # Best-effort. The world-writable check above is the actual safety gate.
-            pass
 
 
 def _ensure_safe(path: Path) -> None:
@@ -134,10 +133,7 @@ def _sanitize_subkey(name: str) -> str:
     if not name:
         raise ValueError("cache subkey must be non-empty")
     if not _VALID_SUBKEY.fullmatch(name):
-        raise ValueError(
-            f"invalid cache subkey {name!r}: must match "
-            "[A-Za-z0-9_][A-Za-z0-9_\\-.]*"
-        )
+        raise ValueError(f"invalid cache subkey {name!r}: must match [A-Za-z0-9_][A-Za-z0-9_\\-.]*")
     return name
 
 
@@ -259,9 +255,7 @@ def clear(subdir: str | None = None) -> None:
     r = _resolve_root()
     if subdir is not None:
         if subdir not in _SUBDIRS:
-            raise ValueError(
-                f"unknown cache subdir {subdir!r}; expected one of {_SUBDIRS}"
-            )
+            raise ValueError(f"unknown cache subdir {subdir!r}; expected one of {_SUBDIRS}")
         target = r / subdir
         if target.exists():
             shutil.rmtree(target)

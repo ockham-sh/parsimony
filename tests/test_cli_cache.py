@@ -26,9 +26,7 @@ def _seed(path: Path, *, n_bytes: int = 1024) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cache_path_prints_root(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_path_prints_root(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cache", "path"])
     out = capsys.readouterr().out.strip()
     assert rc == 0
@@ -40,9 +38,7 @@ def test_cache_path_prints_root(
 # ---------------------------------------------------------------------------
 
 
-def test_cache_info_table_when_empty(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_info_table_when_empty(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cache", "info"])
     out = capsys.readouterr().out
     assert rc == 0
@@ -52,9 +48,7 @@ def test_cache_info_table_when_empty(
     assert f"root: {_pin_parsimony_cache_dir}" in out
 
 
-def test_cache_info_table_after_seed(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_info_table_after_seed(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed(_pin_parsimony_cache_dir / "embeddings" / "foo" / "vec.bin", n_bytes=2048)
 
     rc = main(["cache", "info"])
@@ -66,9 +60,7 @@ def test_cache_info_table_after_seed(
     assert "2.0 KB" in embedding_line
 
 
-def test_cache_info_json_emits_valid_json(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_info_json_emits_valid_json(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed(_pin_parsimony_cache_dir / "embeddings" / "foo" / "vec.bin", n_bytes=512)
     rc = main(["cache", "info", "--json"])
     payload = json.loads(capsys.readouterr().out)
@@ -84,9 +76,7 @@ def test_cache_info_json_emits_valid_json(
 # ---------------------------------------------------------------------------
 
 
-def test_cache_clear_yes_wipes_all_subdirs(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_clear_yes_wipes_all_subdirs(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed(_pin_parsimony_cache_dir / "embeddings" / "a" / "x.bin")
     _seed(_pin_parsimony_cache_dir / "connectors" / "b" / "y.json", n_bytes=8)
 
@@ -98,9 +88,7 @@ def test_cache_clear_yes_wipes_all_subdirs(
     assert not (_pin_parsimony_cache_dir / "connectors").exists()
 
 
-def test_cache_clear_specific_subdir(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_clear_specific_subdir(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _seed(_pin_parsimony_cache_dir / "embeddings" / "victim" / "x.bin")
     _seed(_pin_parsimony_cache_dir / "connectors" / "survivor" / "y.json", n_bytes=8)
 
@@ -112,18 +100,14 @@ def test_cache_clear_specific_subdir(
     assert (_pin_parsimony_cache_dir / "connectors" / "survivor" / "y.json").exists()
 
 
-def test_cache_clear_unknown_subdir_exits_2(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_clear_unknown_subdir_exits_2(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cache", "clear", "--subdir", "bogus", "--yes"])
     err = capsys.readouterr().err
     assert rc == 2
     assert "unknown cache subdir 'bogus'" in err
 
 
-def test_cache_clear_empty_is_noop(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_clear_empty_is_noop(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cache", "clear", "--yes"])
     out = capsys.readouterr().out
     assert rc == 0

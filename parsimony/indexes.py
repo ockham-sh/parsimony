@@ -95,7 +95,10 @@ def _build_ivfflat(matrix: np.ndarray, *, dim: int) -> faiss.Index:
     index.add(matrix)
     logger.info(
         "build_faiss: IndexIVFFlat n=%d nlist=%d nprobe=%d trained_on=%d",
-        n, nlist, index.nprobe, train.shape[0],
+        n,
+        nlist,
+        index.nprobe,
+        train.shape[0],
     )
     return index
 

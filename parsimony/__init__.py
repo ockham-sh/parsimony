@@ -20,10 +20,38 @@ from __future__ import annotations
 
 import importlib
 from importlib.metadata import PackageNotFoundError, version
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from parsimony import cache as cache  # re-export so ``from parsimony import cache`` works
 from parsimony import discover as discover  # re-export so ``from parsimony import discover`` works
+
+# Static re-exports for type checkers and linters (CodeQL py/undefined-export,
+# mypy, pyright). At runtime the names below are resolved by ``__getattr__``
+# from ``_LAZY_IMPORTS`` so heavy deps (FAISS, torch, huggingface-hub) stay
+# lazy; ``TYPE_CHECKING`` keeps the imports out of the runtime path.
+if TYPE_CHECKING:
+    from parsimony.catalog import (
+        Catalog,
+        CatalogBackend,
+        CatalogCache,
+        IndexResult,
+        SeriesEntry,
+        SeriesMatch,
+        catalog_key,
+        code_token,
+        normalize_code,
+        normalize_entity_code,
+        parse_catalog_url,
+        series_match_from_entry,
+    )
+    from parsimony.embedder import (
+        EmbedderInfo,
+        EmbeddingProvider,
+        FragmentEmbeddingCache,
+        LiteLLMEmbeddingProvider,
+        OnnxEmbedder,
+        SentenceTransformerEmbedder,
+    )
 from parsimony.connector import (
     Connector,
     Connectors,

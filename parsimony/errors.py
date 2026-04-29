@@ -86,10 +86,7 @@ class UnauthorizedError(ConnectorError):
                 f"with different arguments."
             )
         else:
-            msg = (
-                f"{provider}: API credentials missing or invalid. DO NOT retry "
-                f"with different arguments."
-            )
+            msg = f"{provider}: API credentials missing or invalid. DO NOT retry with different arguments."
         super().__init__(msg, provider=provider)
 
 
@@ -181,10 +178,7 @@ class ProviderError(ConnectorError):
                 f"do not loop."
             )
         else:
-            msg = (
-                f"{provider}: request rejected (HTTP {status_code}). DO NOT "
-                f"retry with the same parameters."
-            )
+            msg = f"{provider}: request rejected (HTTP {status_code}). DO NOT retry with the same parameters."
         super().__init__(msg, provider=provider)
 
 
@@ -204,8 +198,7 @@ class EmptyDataError(ConnectorError):
     ) -> None:
         self.query_params = query_params or {}
         msg = message or (
-            f"{provider}: no data returned for the given parameters. "
-            f"Adjust parameters or try a different connector."
+            f"{provider}: no data returned for the given parameters. Adjust parameters or try a different connector."
         )
         super().__init__(msg, provider=provider)
 

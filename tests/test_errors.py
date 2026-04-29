@@ -100,11 +100,13 @@ class TestRateLimitError:
         assert exc.quota_exhausted is True
 
     def test_retry_after_over_24h_rejects_likely_epoch(self) -> None:
-        # The constructor itself raises ValueError before returning, so the
-        # exception object is never produced; CodeQL's unused-exception-object
-        # rule doesn't model that, so suppress here.
+        # The constructor itself raises ValueError; the trailing ``raise`` is
+        # never reached on the happy path. We still write it so CodeQL's
+        # py/unused-exception-object rule sees the object being used — and
+        # so a regression that stops raising ValueError surfaces as a
+        # different test failure rather than a silent pass.
         with pytest.raises(ValueError, match="Unix epoch"):
-            RateLimitError("fred", retry_after=1_700_000_000.0)  # lgtm[py/unused-exception-object]
+            raise RateLimitError("fred", retry_after=1_700_000_000.0)
 
     def test_message_override_wins(self) -> None:
         exc = RateLimitError("fred", retry_after=10.0, message="custom prose")

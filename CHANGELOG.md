@@ -4,6 +4,33 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.2]
+
+### Changed
+
+- **Typed `ConnectorError` defaults now carry agent-loop directives.**
+  `UnauthorizedError`, `PaymentRequiredError`, `RateLimitError`,
+  `ProviderError`, and `ParseError` default messages embed explicit
+  `DO NOT retry` / `pick a different connector` / `inform the user`
+  prose sized to the class semantics. `ProviderError` defaults branch
+  on `status_code` (408 / 5xx / other 4xx). The `message=` keyword
+  remains as an escape hatch for connector authors who carry agent-
+  useful context the kernel cannot construct (e.g. an upstream
+  `error_code`); when overridden, authors take responsibility for the
+  agent-facing text being free of URLs, tokens, and upstream payloads.
+  `EmptyDataError` keeps its no-`DO NOT retry` default — empty is a
+  valid outcome, the agent SHOULD be free to adjust parameters and
+  retry. The locked contract lives in `tests/test_errors.py`.
+
+### Added
+
+- `UnauthorizedError.env_var: str | None = None` — names the environment
+  variable the agent should set to fix the failure. The kernel default
+  message embeds it when present.
+- `Connector.__call__` now passes `env_var=` automatically when raising
+  `UnauthorizedError` for an unbound connector, deriving the variable
+  name(s) from the connector's `env_map`.
+
 ## [0.4.1]
 
 ### Fixed

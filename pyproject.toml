@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.4.1"
+version = "0.4.2"
 description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"

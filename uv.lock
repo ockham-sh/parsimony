@@ -2115,7 +2115,7 @@ wheels = [
 
 [[package]]
 name = "parsimony-core"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

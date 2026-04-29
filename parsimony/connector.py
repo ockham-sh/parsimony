@@ -280,11 +280,23 @@ class Connector:
         """Execute the connector with validated parameters."""
         if not self.bound:
             env_vars = sorted(self.env_map.values())
-            detail = ", ".join(env_vars) if env_vars else "required credentials"
-            raise UnauthorizedError(
-                provider=self.name,
-                message=f"{detail} is not set",
-            )
+            # Pass the first env var name so the kernel default message can
+            # tell the agent exactly which variable to set. When a connector
+            # declares multiple env vars, the agent gets the canonical hint
+            # (the first by sorted order) plus a list in the message tail.
+            primary_env = env_vars[0] if env_vars else None
+            if len(env_vars) > 1:
+                others = ", ".join(env_vars[1:])
+                raise UnauthorizedError(
+                    provider=self.name,
+                    env_var=primary_env,
+                    message=(
+                        f"{self.name}: API credentials missing — set the "
+                        f"{primary_env} env var (also requires: {others}). "
+                        f"DO NOT retry with different arguments."
+                    ),
+                )
+            raise UnauthorizedError(provider=self.name, env_var=primary_env)
         if self.dep_names:
             raise TypeError(
                 f"Connector {self.name!r} has unbound dependencies {sorted(self.dep_names)}; "

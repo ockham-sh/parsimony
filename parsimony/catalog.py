@@ -27,6 +27,7 @@ import re
 import shutil
 import tempfile
 import time
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -298,11 +299,22 @@ class ParsedCatalogURL:
 
 
 def parse_catalog_url(url: str) -> ParsedCatalogURL:
-    """Parse ``scheme://path[/sub]`` into :class:`ParsedCatalogURL`.
+    """Parse ``scheme://...`` into :class:`ParsedCatalogURL`.
 
-    The root is everything after the scheme up to (and excluding) the first
-    slash that introduces a sub-path; the sub is the remainder. Paths
-    without a leading scheme raise :class:`ValueError`.
+    For ``hf://`` URLs, the repo id is exactly the first two
+    slash-separated segments (``<org>/<repo>``); anything after is the
+    sub-path inside the repo, used to load a single bundle from a
+    multi-bundle catalog repo. Examples::
+
+        hf://org/repo                  → root="org/repo"           sub=""
+        hf://org/repo/bundle           → root="org/repo"           sub="bundle"
+        hf://org/repo/nested/bundle    → root="org/repo"           sub="nested/bundle"
+
+    For other schemes (``file://``, future ``s3://``) the entire path
+    is the root; sub is unused — the URL points at a snapshot
+    directory directly.
+
+    Paths without a leading scheme raise :class:`ValueError`.
     """
     if "://" not in url:
         raise ValueError(f"URL must include a scheme (e.g. 'file://...'); got {url!r}")
@@ -312,7 +324,15 @@ def parse_catalog_url(url: str) -> ParsedCatalogURL:
         raise ValueError(f"URL has empty scheme: {url!r}")
     if not rest:
         raise ValueError(f"URL has empty path: {url!r}")
-    return ParsedCatalogURL(scheme=scheme, root=rest.rstrip("/"), sub="")
+    rest = rest.rstrip("/")
+    if scheme == "hf":
+        parts = rest.split("/")
+        if len(parts) < 2 or not parts[0] or not parts[1]:
+            raise ValueError(f"hf:// URL needs '<org>/<repo>'; got {url!r}")
+        root = "/".join(parts[:2])
+        sub = "/".join(parts[2:])
+        return ParsedCatalogURL(scheme=scheme, root=root, sub=sub)
+    return ParsedCatalogURL(scheme=scheme, root=rest, sub="")
 
 
 # ---------------------------------------------------------------------------
@@ -874,20 +894,32 @@ class Catalog:
 
     @classmethod
     async def from_url(cls, url: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
-        """Load from *url*. Schemes: ``file://``, ``hf://``."""
+        """Load from *url*. Schemes: ``file://``, ``hf://``.
+
+        ``hf://`` URLs may include a sub-path after ``<org>/<repo>`` to
+        load a single bundle from a multi-bundle catalog repo
+        (``hf://org/repo/bundle`` fetches only ``bundle/*`` and loads it).
+        ``file://`` URLs point at a snapshot directory directly.
+        """
         parsed = parse_catalog_url(url)
         handler = _url_handlers().get(parsed.scheme)
         if handler is None:
             raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: {sorted(_url_handlers())}")
-        return await handler[0](parsed.root, embedder=embedder)
+        return await handler[0](parsed.root, parsed.sub, embedder=embedder)
 
     async def push(self, url: str) -> None:
-        """Publish to *url*. Schemes: ``file://``, ``hf://``."""
+        """Publish to *url*. Schemes: ``file://``, ``hf://``.
+
+        ``hf://`` URLs may include a sub-path to upload the snapshot as
+        a folder *inside* an existing multi-bundle repo
+        (``hf://org/repo/bundle`` writes to ``repo/bundle/`` rather than
+        replacing the repo root).
+        """
         parsed = parse_catalog_url(url)
         handler = _url_handlers().get(parsed.scheme)
         if handler is None:
             raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: {sorted(_url_handlers())}")
-        await handler[1](self, parsed.root)
+        await handler[1](self, parsed.root, parsed.sub)
 
     # ------------------------------------------------------------------
     # Internals
@@ -1061,30 +1093,49 @@ def _read_parquet(target: Path) -> list[SeriesEntry]:
 # ---------------------------------------------------------------------------
 
 
-async def _load_file(root: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
-    path = Path(root)
+async def _load_file(root: str, sub: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
+    # ``file://`` URLs point at the snapshot directly; *sub* is unused
+    # (callers wanting a sub-bundle just compose it into the URL path).
+    path = Path(root) / sub if sub else Path(root)
     if not path.exists():
         raise FileNotFoundError(f"Catalog directory does not exist: {path}")
     return await Catalog.load(path, embedder=embedder)
 
 
-async def _push_file(catalog: Catalog, root: str) -> None:
-    await catalog.save(Path(root))
+async def _push_file(catalog: Catalog, root: str, sub: str) -> None:
+    target = Path(root) / sub if sub else Path(root)
+    await catalog.save(target)
 
 
-async def _load_hf(root: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
+async def _load_hf(root: str, sub: str, *, embedder: EmbeddingProvider | None = None) -> Catalog:
     from huggingface_hub import snapshot_download
 
     from parsimony import cache
 
     cache_dir = cache.catalogs_dir()
+    if sub:
+        # Lazy-fetch: pull only the requested bundle's files, not the
+        # whole repo. A multi-bundle repo (e.g. one HF dataset holding
+        # ``bundle_a/``, ``bundle_b/``, …) keeps cold-start cost bounded
+        # to the size of the bundle the caller actually asked for.
+        local = await asyncio.to_thread(
+            lambda: Path(
+                snapshot_download(
+                    repo_id=root,
+                    repo_type=REPO_TYPE,
+                    cache_dir=cache_dir,
+                    allow_patterns=[f"{sub}/*"],
+                )
+            )
+        )
+        return await Catalog.load(local / sub, embedder=embedder)
     local = await asyncio.to_thread(
         lambda: Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
     )
     return await Catalog.load(local, embedder=embedder)
 
 
-async def _push_hf(catalog: Catalog, root: str) -> None:
+async def _push_hf(catalog: Catalog, root: str, sub: str) -> None:
     from huggingface_hub import HfApi
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -1094,13 +1145,18 @@ async def _push_hf(catalog: Catalog, root: str) -> None:
         def _upload() -> None:
             api = HfApi()
             api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
-            api.upload_folder(folder_path=str(staging), repo_id=root, repo_type=REPO_TYPE)
+            api.upload_folder(
+                folder_path=str(staging),
+                repo_id=root,
+                repo_type=REPO_TYPE,
+                path_in_repo=sub or None,
+            )
 
         await asyncio.to_thread(_upload)
 
 
 _LoadFn = Callable[..., Awaitable["Catalog"]]
-_PushFn = Callable[["Catalog", str], Awaitable[None]]
+_PushFn = Callable[["Catalog", str, str], Awaitable[None]]
 
 
 def _url_handlers() -> dict[str, tuple[_LoadFn, _PushFn]]:
@@ -1111,10 +1167,79 @@ def _url_handlers() -> dict[str, tuple[_LoadFn, _PushFn]]:
     }
 
 
+# ---------------------------------------------------------------------------
+# In-memory cache of hydrated Catalog instances (layered above from_url)
+# ---------------------------------------------------------------------------
+
+
+class CatalogCache:
+    """Thread-safe LRU cache of hydrated :class:`Catalog` instances keyed by URL.
+
+    Layered above :meth:`Catalog.from_url`: first :meth:`get` triggers a
+    load (which itself uses ``parsimony.cache.catalogs_dir()`` for disk
+    caching); subsequent calls within the LRU window return the resident
+    object, skipping parquet decode + FAISS rebuild. The lock guards
+    against two coroutines racing to load the same URL.
+
+    Sizing — ``max_size=1`` is right for single-catalog providers (the
+    common case: one published catalog per provider). Multi-bundle
+    providers like SDMX, where each ``flow_id`` maps to its own bundle
+    URL, want a small handful — pick a size that fits the typical
+    agent's working set without ballooning RAM (an 89k-row catalog is
+    ~135 MB resident).
+    """
+
+    def __init__(self, *, max_size: int = 1) -> None:
+        if max_size < 1:
+            raise ValueError(f"max_size must be >= 1, got {max_size}")
+        self._max_size = max_size
+        self._lru: OrderedDict[str, Catalog] = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    @property
+    def max_size(self) -> int:
+        return self._max_size
+
+    async def get(
+        self,
+        url: str,
+        *,
+        embedder: EmbeddingProvider | None = None,
+    ) -> Catalog:
+        """Return the cached :class:`Catalog` for *url*, loading on miss.
+
+        Errors from :meth:`Catalog.from_url` propagate raw — wrapping
+        into provider-flavoured :class:`ConnectorError` is the caller's
+        responsibility, since each provider has its own recovery
+        directive.
+        """
+        async with self._lock:
+            if url in self._lru:
+                self._lru.move_to_end(url)
+                return self._lru[url]
+            catalog = await Catalog.from_url(url, embedder=embedder)
+            self._lru[url] = catalog
+            while len(self._lru) > self._max_size:
+                evicted_url, _ = self._lru.popitem(last=False)
+                logger.info("CatalogCache evicting %s", evicted_url)
+            return catalog
+
+    def clear(self) -> None:
+        """Drop all cached catalogs. Test-only / shutdown."""
+        self._lru.clear()
+
+    def __len__(self) -> int:
+        return len(self._lru)
+
+    def __contains__(self, url: str) -> bool:
+        return url in self._lru
+
+
 __all__ = [
     "BuildInfo",
     "Catalog",
     "CatalogBackend",
+    "CatalogCache",
     "CatalogMeta",
     "EmbedderInfo",
     "ENTRIES_FILENAME",

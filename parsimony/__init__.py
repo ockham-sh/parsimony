@@ -73,6 +73,7 @@ __all__ = [
     # --- Catalog (lazy) ---
     "Catalog",
     "CatalogBackend",
+    "CatalogCache",
     "EmbedderInfo",
     "EmbeddingProvider",
     "FragmentEmbeddingCache",
@@ -108,6 +109,7 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Catalog": ("parsimony.catalog", "Catalog"),
     "CatalogBackend": ("parsimony.catalog", "CatalogBackend"),
+    "CatalogCache": ("parsimony.catalog", "CatalogCache"),
     "EmbedderInfo": ("parsimony.embedder", "EmbedderInfo"),
     "EmbeddingProvider": ("parsimony.embedder", "EmbeddingProvider"),
     "FragmentEmbeddingCache": ("parsimony.embedder", "FragmentEmbeddingCache"),

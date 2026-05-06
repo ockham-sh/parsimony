@@ -32,7 +32,7 @@ async def demo_loader(_p: _Params) -> pd.DataFrame:
 def test_data_from_result_extracts_data_columns_only() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
-        provenance=Provenance(source="t"),
+        provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
     rows = _data_from_result(table)
@@ -52,7 +52,7 @@ def test_data_from_result_groups_by_key() -> None:
                 "obs": [1.0, 2.0, 3.0],
             }
         ),
-        provenance=Provenance(source="t"),
+        provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
     rows = _data_from_result(table)
@@ -66,7 +66,7 @@ def test_data_from_result_groups_by_key() -> None:
 def test_data_from_result_requires_key_namespace() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
-        provenance=Provenance(source="t"),
+        provenance=Provenance(source="t", source_description="t"),
         output_schema=OutputConfig(
             columns=[
                 Column(name="code_col", role=ColumnRole.KEY),
@@ -85,7 +85,7 @@ async def test_load_result_skips_existing_keys() -> None:
 
     table = Result(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
-        provenance=Provenance(source="t"),
+        provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
     r = await store.load_result(table, force=False)
@@ -105,7 +105,7 @@ async def test_load_result_force_upserts_existing() -> None:
 
     table = Result(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
-        provenance=Provenance(source="t"),
+        provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
     r = await store.load_result(table, force=True)

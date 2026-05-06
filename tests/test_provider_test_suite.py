@@ -22,7 +22,7 @@ class _Params(BaseModel):
 async def _demo_fn(params: _Params) -> Result:
     return Result.from_dataframe(
         pd.DataFrame({"x": [1]}),
-        Provenance(source="demo"),
+        Provenance(source="demo", source_description="demo"),
     )
 
 
@@ -115,7 +115,7 @@ def test_env_map_key_not_matching_dep_fails() -> None:
     async def _public(params: _Params) -> Result:
         return Result.from_dataframe(
             pd.DataFrame({"x": [1]}),
-            Provenance(source="public"),
+            Provenance(source="public", source_description="public"),
         )
 
     bad = connector(

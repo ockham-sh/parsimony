@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any as _Any
 
 import pandas as pd
 import pytest
 from pydantic import BaseModel, Field, ValidationError
+from pydantic import SecretStr as _SecretStr
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
 from parsimony.result import Column, ColumnRole, OutputConfig, Result
@@ -568,3 +570,119 @@ class TestConnectorsToLlm:
         c = _fake_connectors()
         text = c.to_llm()
         assert "───" not in text
+
+
+class TestProvenanceAuthorship:
+    def test_raw_dataframe_return_gets_full_framework_provenance(self) -> None:
+        c = _fake_connectors()
+        result = asyncio.run(c["demo_fetch"](FetchParams(series_id="GDPC1")))
+        assert result.provenance.source == "demo_fetch"
+        assert result.provenance.source_description == "Fetch test time series observations."
+        assert result.provenance.fetched_at is not None
+        assert result.provenance.params == {"series_id": "GDPC1"}
+        assert result.provenance.properties == {}
+
+    def test_framework_overwrites_anything_a_connector_put_on_provenance(self) -> None:
+        from datetime import UTC, datetime
+
+        from parsimony.result import Provenance, Result
+
+        pinned = datetime(2020, 1, 1, tzinfo=UTC)
+
+        @connector()
+        async def manual_result(params: FetchParams) -> Result:
+            """Real connector docstring."""
+            return Result(
+                data=_make_fetch_df(),
+                provenance=Provenance(
+                    source="forged",
+                    source_description="forged",
+                    fetched_at=pinned,
+                    params={"forged": True},
+                ),
+            )
+
+        result = asyncio.run(manual_result(FetchParams(series_id="GDPC1")))
+        assert result.provenance.source == "manual_result"
+        assert result.provenance.source_description == "Real connector docstring."
+        assert result.provenance.fetched_at != pinned
+        assert result.provenance.params == {"series_id": "GDPC1"}
+
+    def test_connector_properties_are_preserved(self) -> None:
+        from parsimony.result import Result
+
+        @connector()
+        async def with_props(params: FetchParams) -> Result:
+            """Attaches source-specific metadata."""
+            return Result.from_dataframe(_make_fetch_df()).with_properties(
+                series_url="https://example.com/x",
+                tier="free",
+            )
+
+        result = asyncio.run(with_props(FetchParams(series_id="GDPC1")))
+        assert result.provenance.properties == {
+            "series_url": "https://example.com/x",
+            "tier": "free",
+        }
+        assert result.provenance.source == "with_props"
+        assert result.provenance.source_description == "Attaches source-specific metadata."
+
+
+class _BadApiKey(BaseModel):
+    api_key: str
+
+
+class _BadAccessToken(BaseModel):
+    access_token: str
+
+
+class _BadSecretStr(BaseModel):
+    credentials: _SecretStr
+
+
+class _BadAnyAnnotation(BaseModel):
+    payload: _Any
+
+
+class _GoodParams(BaseModel):
+    series_id: str
+    ticker: str | None = None
+    limit: int = 10
+
+
+class TestParamModelSecretGuard:
+    def test_rejects_field_named_api_key(self) -> None:
+        with pytest.raises(TypeError, match="secret-name pattern"):
+
+            @connector()
+            async def evil(params: _BadApiKey) -> Result:
+                """forbidden."""
+
+    def test_rejects_field_named_token(self) -> None:
+        with pytest.raises(TypeError, match="secret-name pattern"):
+
+            @connector()
+            async def evil(params: _BadAccessToken) -> Result:
+                """forbidden."""
+
+    def test_rejects_secret_str_annotation(self) -> None:
+        with pytest.raises(TypeError):
+
+            @connector()
+            async def evil(params: _BadSecretStr) -> Result:
+                """forbidden."""
+
+    def test_rejects_any_annotation(self) -> None:
+        with pytest.raises(TypeError, match="Any"):
+
+            @connector()
+            async def evil(params: _BadAnyAnnotation) -> Result:
+                """forbidden."""
+
+    def test_accepts_legitimate_field_names(self) -> None:
+        @connector()
+        async def fine(params: _GoodParams) -> Result:
+            """legitimate connector."""
+            return Result(data=_make_fetch_df())
+
+        assert fine.name == "fine"

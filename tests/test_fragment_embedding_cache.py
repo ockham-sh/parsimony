@@ -245,7 +245,7 @@ def _result_with_fragments(
             Column(name="agency", role=ColumnRole.METADATA),
         ]
     )
-    return Result(data=df, provenance=Provenance(source="test"), output_schema=config)
+    return Result(data=df, provenance=Provenance(source="test", source_description="test"), output_schema=config)
 
 
 def test_entries_from_result_populates_fragments() -> None:
@@ -311,7 +311,7 @@ def test_entries_from_result_without_fragments_column_leaves_field_none() -> Non
             Column(name="agency", role=ColumnRole.METADATA),
         ]
     )
-    table = Result(data=df, provenance=Provenance(source="legacy"), output_schema=config)
+    table = Result(data=df, provenance=Provenance(source="legacy", source_description="legacy"), output_schema=config)
     (entry,) = entries_from_result(table)
 
     assert entry.fragments is None

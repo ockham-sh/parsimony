@@ -8,10 +8,12 @@ __all__ = [
     "OutputConfig",
     "Provenance",
     "Result",
+    "safe_dump_provenance",
 ]
 
 import json
 import logging
+import re
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -20,7 +22,15 @@ from typing import Any
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+SECRET_NAME_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)")
+
+# Oversized values are replaced with a structured marker rather than a
+# prefix — a prefix can leak the head of an unredacted secret.
+_PROVENANCE_FIELD_BUDGET = 2000
+
+REDACTED = "«redacted»"
 
 #: Key under which Result embeds its schema+provenance payload in Arrow table metadata.
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
@@ -114,34 +124,60 @@ def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
 
 
 class Provenance(BaseModel):
-    """Where and how tabular data was obtained."""
+    """Where and how tabular data was obtained.
 
-    source: str = ""
-    source_description: str = ""
+    Framework-only type. Connector code never imports this; the framework
+    builds it in :meth:`Connector._wrap_result`. Connectors contribute
+    source-specific extras through :meth:`Result.with_properties`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    source: str
+    source_description: str
     params: dict[str, Any] = Field(default_factory=dict)
     fetched_at: datetime | None = None
-    title: str | None = None
-    description: str | None = None
-    tags: list[str] = Field(default_factory=list)
     properties: dict[str, Any] = Field(default_factory=dict)
+    #: Optional pointer to a content-addressed snapshot of the bytes
+    #: returned by this fetch, set by an external persister callback.
+    data_object_path: str | None = None
+
+    def safe_dump(self) -> dict[str, Any]:
+        """Wire-safe JSON projection: redact secret-named keys, mark oversize values."""
+        return safe_dump_provenance(self)
+
+
+def safe_dump_provenance(provenance: Provenance) -> dict[str, Any]:
+    """Free-function form of :meth:`Provenance.safe_dump`."""
+    raw = provenance.model_dump(mode="json")
+    for key in ("params", "properties"):
+        if key in raw and raw[key]:
+            raw[key] = {k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v) for k, v in raw[key].items()}
+    for key in ("params", "properties"):
+        if key in raw and raw[key]:
+            blob = json.dumps(raw[key], default=str)
+            if len(blob) > _PROVENANCE_FIELD_BUDGET:
+                raw[key] = {
+                    "truncated": True,
+                    "byte_length": len(blob),
+                    "field": key,
+                }
+    return raw
 
 
 class Result(BaseModel):
     """Free-form connector output: any data plus provenance and optional tabular schema.
 
     ``data`` can be anything the connector returns — a pandas DataFrame,
-    a string, a dict, a Polars frame, etc. The framework wraps connector
-    return values automatically; connectors never need to construct this
-    directly.
-
-    A raw DataFrame/Series can live in :attr:`data`; applying an
-    :class:`OutputConfig` via :meth:`to_table` adds the semantic schema.
+    a string, a dict, etc. The framework wraps connector return values
+    automatically; connectors should not construct this directly. To attach
+    source-specific extras, use :meth:`with_properties`.
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
     data: Any
-    provenance: Provenance
+    provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
     output_schema: OutputConfig | None = Field(default=None)
 
     # ------------------------------------------------------------------
@@ -149,28 +185,25 @@ class Result(BaseModel):
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_dataframe(
-        cls,
-        df: pd.DataFrame | pd.Series,
-        provenance: Provenance | None = None,
-    ) -> Result:
+    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> Result:
         """Build a raw :class:`Result` containing tabular data with no schema applied."""
         frame = pd.DataFrame(df)
         if frame.empty:
             raise ValueError("Returned an empty DataFrame.")
-        prov = provenance.model_copy(deep=True) if provenance is not None else Provenance()
-        return Result(data=frame, provenance=prov)
+        return Result(data=frame)
+
+    def with_properties(self, **properties: Any) -> Result:
+        """Merge source-specific extras into ``provenance.properties``."""
+        merged = {**self.provenance.properties, **properties}
+        new_prov = self.provenance.model_copy(update={"properties": merged})
+        return self.model_copy(update={"provenance": new_prov})
 
     def to_table(self, output: OutputConfig) -> Result:
         """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
         if not isinstance(self.data, (pd.DataFrame, pd.Series)):
             raise TypeError(f"Result.to_table requires tabular data, got {type(self.data).__name__}")
-        return output.build_table_result(
-            self.data,
-            provenance=self.provenance,
-            params=self.provenance.params or None,
-            merge_unmapped_as_data=True,
-        )
+        result = output.build_table_result(self.data, merge_unmapped_as_data=True)
+        return result.model_copy(update={"provenance": self.provenance})
 
     # ------------------------------------------------------------------
     # Convenience accessors
@@ -227,7 +260,7 @@ class Result(BaseModel):
         """Serialize to Arrow with embedded provenance and optional schema metadata."""
         table = pa.Table.from_pandas(self.df, preserve_index=False)
         payload: dict[str, Any] = {
-            "provenance": self.provenance.model_dump(mode="json"),
+            "provenance": self.provenance.safe_dump(),
         }
         if self.output_schema is not None:
             payload["columns"] = [c.model_dump(mode="json") for c in self.output_schema.columns]
@@ -241,7 +274,7 @@ class Result(BaseModel):
         df = table.to_pandas()
         raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
         if not raw:
-            return Result(data=df, provenance=Provenance())
+            return Result(data=df)
         payload = json.loads(raw.decode("utf-8"))
         provenance = Provenance.model_validate(payload.get("provenance", {}))
         cols_raw = payload.get("columns") or []
@@ -335,8 +368,6 @@ class OutputConfig(BaseModel):
         self,
         df: pd.DataFrame | pd.Series,
         *,
-        provenance: Provenance | None = None,
-        params: dict[str, Any] | None = None,
         merge_unmapped_as_data: bool = True,
     ) -> Result:
         """Apply column schema to *df*; unmapped columns become DATA when requested."""
@@ -346,12 +377,7 @@ class OutputConfig(BaseModel):
         if frame.empty and len(frame.columns) == 0:
             raise ValueError("Returned an empty DataFrame with no columns.")
 
-        p = provenance.model_copy(deep=True) if provenance is not None else Provenance()
-        merge_params = params if params is not None else {}
-        if merge_params and not p.params:
-            p.params = dict(merge_params)
-
-        full_df, columns_info, consumed = self._apply_columns(frame, merge_params)
+        full_df, columns_info, consumed = self._apply_columns(frame, {})
 
         declared = {c.name for c in self.columns if c.name != "*"}
         unmatched = sorted(declared - consumed)
@@ -383,4 +409,4 @@ class OutputConfig(BaseModel):
         new_df = pd.concat([s for _, s in processed_series], axis=1)
         resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
         resolved_config = OutputConfig(columns=resolved_schema)
-        return Result(data=new_df, provenance=p, output_schema=resolved_config)
+        return Result(data=new_df, output_schema=resolved_config)

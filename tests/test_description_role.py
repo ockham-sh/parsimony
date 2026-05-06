@@ -23,7 +23,7 @@ def _result_with_description(df: pd.DataFrame) -> Result:
             Column(name="unit", role=ColumnRole.METADATA),
         ]
     )
-    return Result(data=df, provenance=Provenance(source="test"), output_schema=config)
+    return Result(data=df, provenance=Provenance(source="test", source_description="test"), output_schema=config)
 
 
 def test_entries_from_result_populates_description() -> None:
@@ -81,7 +81,7 @@ def test_description_column_missing_is_ok() -> None:
             Column(name="title", role=ColumnRole.TITLE),
         ]
     )
-    table = Result(data=df, provenance=Provenance(source="t"), output_schema=config)
+    table = Result(data=df, provenance=Provenance(source="t", source_description="t"), output_schema=config)
     (entry,) = entries_from_result(table)
     assert entry.description is None
 
@@ -96,7 +96,7 @@ def test_multiple_description_columns_rejected() -> None:
             Column(name="d2", role=ColumnRole.DESCRIPTION),
         ]
     )
-    table = Result(data=df, provenance=Provenance(source="t"), output_schema=config)
+    table = Result(data=df, provenance=Provenance(source="t", source_description="t"), output_schema=config)
     with pytest.raises(ValueError, match="at most one DESCRIPTION column"):
         entries_from_result(table)
 

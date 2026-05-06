@@ -117,7 +117,7 @@ def test_keyword_text_with_minimal_entry_still_includes_namespace_and_code() -> 
     assert "tags:" not in text
 
 
-def test_entries_from_result_unions_provenance_tags_source_and_extra_tags() -> None:
+def test_entries_from_result_unions_provenance_source_and_extra_tags() -> None:
     df = pd.DataFrame(
         {
             "code": ["UNRATE", "UNRATE"],
@@ -126,7 +126,7 @@ def test_entries_from_result_unions_provenance_tags_source_and_extra_tags() -> N
     )
     result = Result(
         data=df,
-        provenance=Provenance(source="fred", tags=["macro", "monthly", "macro"]),
+        provenance=Provenance(source="fred", source_description="FRED"),
         output_schema=OutputConfig(
             columns=[
                 Column(name="code", role=ColumnRole.KEY, namespace="fred"),
@@ -134,6 +134,6 @@ def test_entries_from_result_unions_provenance_tags_source_and_extra_tags() -> N
             ]
         ),
     )
-    entries = entries_from_result(result, extra_tags=["monthly", "labor"])
+    entries = entries_from_result(result, extra_tags=["macro", "monthly", "labor"])
     assert len(entries) == 1
     assert entries[0].tags == ["fred", "macro", "monthly", "labor"]

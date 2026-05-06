@@ -447,7 +447,6 @@ def entries_from_result(
     tag_list: list[str] = []
     if table.provenance.source:
         tag_list.append(table.provenance.source)
-    tag_list.extend(table.provenance.tags)
     if extra_tags:
         tag_list.extend(extra_tags)
     deduped_tags: list[str] = []

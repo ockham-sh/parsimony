@@ -625,3 +625,68 @@ class TestProvenanceAuthorship:
         assert result.provenance.source == "with_props"
         assert result.provenance.source_description == "Attaches source-specific metadata."
 
+
+from typing import Any as _Any
+
+from pydantic import SecretStr as _SecretStr
+
+
+class _BadApiKey(BaseModel):
+    api_key: str
+
+
+class _BadAccessToken(BaseModel):
+    access_token: str
+
+
+class _BadSecretStr(BaseModel):
+    credentials: _SecretStr
+
+
+class _BadAnyAnnotation(BaseModel):
+    payload: _Any
+
+
+class _GoodParams(BaseModel):
+    series_id: str
+    ticker: str | None = None
+    limit: int = 10
+
+
+class TestParamModelSecretGuard:
+    def test_rejects_field_named_api_key(self) -> None:
+        with pytest.raises(TypeError, match="secret-name pattern"):
+
+            @connector()
+            async def evil(params: _BadApiKey) -> Result:
+                """forbidden."""
+
+    def test_rejects_field_named_token(self) -> None:
+        with pytest.raises(TypeError, match="secret-name pattern"):
+
+            @connector()
+            async def evil(params: _BadAccessToken) -> Result:
+                """forbidden."""
+
+    def test_rejects_secret_str_annotation(self) -> None:
+        with pytest.raises(TypeError):
+
+            @connector()
+            async def evil(params: _BadSecretStr) -> Result:
+                """forbidden."""
+
+    def test_rejects_any_annotation(self) -> None:
+        with pytest.raises(TypeError, match="Any"):
+
+            @connector()
+            async def evil(params: _BadAnyAnnotation) -> Result:
+                """forbidden."""
+
+    def test_accepts_legitimate_field_names(self) -> None:
+        @connector()
+        async def fine(params: _GoodParams) -> Result:
+            """legitimate connector."""
+            return Result(data=_make_fetch_df())
+
+        assert fine.name == "fine"
+

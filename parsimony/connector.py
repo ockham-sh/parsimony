@@ -29,12 +29,52 @@ from types import MappingProxyType
 from typing import Any, Union, get_type_hints
 
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretBytes, SecretStr
 
 from parsimony.errors import ParseError, UnauthorizedError
-from parsimony.result import ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import (
+    SECRET_NAME_PATTERN,
+    ColumnRole,
+    OutputConfig,
+    Provenance,
+    Result,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_param_model_no_secrets(model: type[BaseModel], fn_name: str) -> None:
+    """Reject param models that could carry a secret or hide their shape.
+
+    Secrets must travel via keyword-only dependencies + ``Connectors.bind_env()``,
+    not via params — params are serialized into provenance and onto the wire.
+    Raises :class:`TypeError` at decoration time.
+    """
+    forbidden_types = {SecretStr, SecretBytes, bytes, bytearray}
+    for field_name, field_info in model.model_fields.items():
+        if SECRET_NAME_PATTERN.search(field_name):
+            raise TypeError(
+                f"{fn_name}: param-model field {field_name!r} on {model.__name__} "
+                f"matches the secret-name pattern. Use a keyword-only dependency "
+                f"and Connectors.bind_env() instead."
+            )
+        ann = field_info.annotation
+        candidates = [ann]
+        if getattr(ann, "__origin__", None) is Union:
+            candidates.extend(getattr(ann, "__args__", ()))
+        for cand in candidates:
+            if cand in forbidden_types or (
+                isinstance(cand, type) and any(issubclass(cand, t) for t in forbidden_types)
+            ):
+                raise TypeError(
+                    f"{fn_name}: param-model field {field_name!r} is typed as "
+                    f"{cand}; secrets/binary types are forbidden in connector params."
+                )
+            if cand is Any:
+                raise TypeError(
+                    f"{fn_name}: param-model field {field_name!r} is typed as Any; "
+                    f"connector param models must use concrete JSON-native types."
+                )
 
 
 ResultCallback = Callable[[Result], Any]
@@ -470,6 +510,7 @@ def connector(
             raise TypeError(f"{fn.__name__}: connector function must be async")
         _params_name, inferred_type, dep_names, optional_dep_names = _parse_first_param_and_deps(fn)
         param_type = params if params is not None else inferred_type
+        _validate_param_model_no_secrets(param_type, fn.__name__)
         doc = (fn.__doc__ or "").strip()
         desc = description if description is not None else doc
         if not desc:

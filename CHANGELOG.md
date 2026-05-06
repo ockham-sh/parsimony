@@ -4,6 +4,48 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.5.0]
+
+### Breaking changes
+
+- **`Provenance` is now framework-only.** `source` and `source_description`
+  are required; `extra="forbid"`. Removed `title`, `description`, `tags`
+  (curation lives at the artifact layer downstream). Connectors that built
+  a `Provenance` directly will have it overwritten by the framework — use
+  `Result.with_properties(**extras)` to contribute source-specific extras.
+- **`Result.from_dataframe(df, provenance=...)` no longer accepts
+  `provenance=`.** The framework owns authorship.
+- **`OutputConfig.build_table_result(df, provenance=..., params=...)` no
+  longer accepts `provenance=` / `params=`.** Pure schema application; the
+  framework's `Connector._wrap_result` is the only path that authors
+  provenance.
+- **`@connector` rejects param models with secret-shaped fields** at
+  decoration time. Field names matching `(api[_-]?key|token|secret|
+  password|credential|bearer|auth)`, or annotations of `SecretStr` /
+  `SecretBytes` / `bytes` / `bytearray` / bare `Any` raise `TypeError`.
+  Use keyword-only deps + `Connectors.bind_env()` for credentials.
+
+### Added
+
+- `Provenance.safe_dump()` and `safe_dump_provenance()` — single canonical
+  redactor for every wire/disk exit. Key-redacts secret-named entries in
+  `params` / `properties` with the `«redacted»` sentinel; oversize fields
+  are replaced with a structured `{"truncated": True, "byte_length": N,
+  "field": ...}` marker (never a partial prefix that could leak the head
+  of an unredacted secret).
+- `Provenance.data_object_path: str | None` — pointer to a content-
+  addressed snapshot of the bytes returned by this fetch, populated by an
+  external persister callback.
+- `Result.with_properties(**kwargs)` — connector-only channel for
+  contributing source-specific extras to provenance. Multiple calls merge
+  cumulatively.
+- `SECRET_NAME_PATTERN` and `REDACTED` constants exported from
+  `parsimony.result` for downstream redactors.
+- `Connector._wrap_result` is the single authoring site for every
+  `Provenance` field: `source` (from `fn.__name__`),
+  `source_description` (from `fn.__doc__`), `fetched_at`, `params`, and
+  `properties` (from any `Result.with_properties` calls).
+
 ## [0.4.2]
 
 ### Changed

@@ -155,9 +155,7 @@ def test_provenance_field_set_is_locked() -> None:
 
 def test_provenance_rejects_unknown_fields() -> None:
     with pytest.raises(ValidationError):
-        Provenance.model_validate(
-            {"source": "fred", "source_description": "FRED", "title": "should not be here"}
-        )
+        Provenance.model_validate({"source": "fred", "source_description": "FRED", "title": "should not be here"})
 
 
 def test_provenance_requires_source_and_description() -> None:

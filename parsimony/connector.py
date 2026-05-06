@@ -24,7 +24,7 @@ import logging
 import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, Union, get_type_hints
 
@@ -283,13 +283,11 @@ class Connector:
         Every provenance field is constructed here; ``properties`` comes
         from any :meth:`Result.with_properties` calls the connector made.
         """
-        connector_properties: dict[str, Any] = (
-            dict(raw.provenance.properties) if isinstance(raw, Result) else {}
-        )
+        connector_properties: dict[str, Any] = dict(raw.provenance.properties) if isinstance(raw, Result) else {}
         provenance = Provenance.model_construct(
             source=self.name,
             source_description=self.description,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
             params=params_model.model_dump(mode="python"),
             properties=connector_properties,
         )

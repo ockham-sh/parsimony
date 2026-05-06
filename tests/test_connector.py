@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any as _Any
 
 import pandas as pd
 import pytest
 from pydantic import BaseModel, Field, ValidationError
+from pydantic import SecretStr as _SecretStr
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
 from parsimony.result import Column, ColumnRole, OutputConfig, Result
@@ -581,11 +583,11 @@ class TestProvenanceAuthorship:
         assert result.provenance.properties == {}
 
     def test_framework_overwrites_anything_a_connector_put_on_provenance(self) -> None:
-        from datetime import datetime, timezone
+        from datetime import UTC, datetime
 
         from parsimony.result import Provenance, Result
 
-        pinned = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        pinned = datetime(2020, 1, 1, tzinfo=UTC)
 
         @connector()
         async def manual_result(params: FetchParams) -> Result:
@@ -624,11 +626,6 @@ class TestProvenanceAuthorship:
         }
         assert result.provenance.source == "with_props"
         assert result.provenance.source_description == "Attaches source-specific metadata."
-
-
-from typing import Any as _Any
-
-from pydantic import SecretStr as _SecretStr
 
 
 class _BadApiKey(BaseModel):
@@ -689,4 +686,3 @@ class TestParamModelSecretGuard:
             return Result(data=_make_fetch_df())
 
         assert fine.name == "fine"
-

@@ -24,9 +24,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-SECRET_NAME_PATTERN = re.compile(
-    r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)"
-)
+SECRET_NAME_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)")
 
 # Oversized values are replaced with a structured marker rather than a
 # prefix — a prefix can leak the head of an unredacted secret.
@@ -154,10 +152,7 @@ def safe_dump_provenance(provenance: Provenance) -> dict[str, Any]:
     raw = provenance.model_dump(mode="json")
     for key in ("params", "properties"):
         if key in raw and raw[key]:
-            raw[key] = {
-                k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v)
-                for k, v in raw[key].items()
-            }
+            raw[key] = {k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v) for k, v in raw[key].items()}
     for key in ("params", "properties"):
         if key in raw and raw[key]:
             blob = json.dumps(raw[key], default=str)
@@ -182,9 +177,7 @@ class Result(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     data: Any
-    provenance: Provenance = Field(
-        default_factory=lambda: Provenance(source="", source_description="")
-    )
+    provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
     output_schema: OutputConfig | None = Field(default=None)
 
     # ------------------------------------------------------------------

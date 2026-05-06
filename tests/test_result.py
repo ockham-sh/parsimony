@@ -15,6 +15,12 @@ from parsimony.result import (
 )
 
 
+def _prov(**kwargs: object) -> Provenance:
+    base = {"source": "test", "source_description": "test source"}
+    base.update(kwargs)
+    return Provenance(**base)  # type: ignore[arg-type]
+
+
 def test_build_table_result_rename_and_dtypes() -> None:
     raw = pd.DataFrame(
         {
@@ -30,8 +36,7 @@ def test_build_table_result_rename_and_dtypes() -> None:
             Column(name="meta", role=ColumnRole.METADATA),
         ]
     )
-    prov = Provenance(source="test", params={"series_id": "S"})
-    r = cfg.build_table_result(raw, provenance=prov, params={"series_id": "S"})
+    r = cfg.build_table_result(raw)
     assert isinstance(r, Result)
     assert r.output_schema is not None
     assert list(r.data.columns) == ["d", "value", "meta"]
@@ -48,7 +53,7 @@ def test_build_table_result_wildcard() -> None:
             Column(name="*", dtype="numeric", role=ColumnRole.DATA),
         ]
     )
-    r = cfg.build_table_result(raw, provenance=Provenance(), params={})
+    r = cfg.build_table_result(raw)
     assert set(r.data.columns) == {"a", "b"}
 
 
@@ -64,14 +69,14 @@ def test_entity_keys() -> None:
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="v", role=ColumnRole.DATA),
     ]
-    r = Result(data=df, output_schema=OutputConfig(columns=cols), provenance=Provenance())
+    r = Result(data=df, output_schema=OutputConfig(columns=cols))
     assert list(r.entity_keys.columns) == ["sym"]
 
 
 def test_build_table_result_rejects_empty_frame() -> None:
     cfg = OutputConfig(columns=[Column(name="x", role=ColumnRole.DATA)])
     with pytest.raises(ValueError, match="empty"):
-        cfg.build_table_result(pd.DataFrame(), provenance=Provenance())
+        cfg.build_table_result(pd.DataFrame())
 
 
 def test_output_config_requires_data_key_or_title() -> None:
@@ -124,36 +129,59 @@ def test_column_namespace_only_on_key() -> None:
 
 def test_result_from_dataframe_infers_data_columns() -> None:
     df = pd.DataFrame({"a": [1], "b": ["x"]})
-    prov = Provenance(source="test", params={"k": "v"})
-    r = Result.from_dataframe(df, prov)
+    r = Result.from_dataframe(df)
     assert isinstance(r, Result)
     assert list(r.data.columns) == ["a", "b"]
     assert r.output_schema is None
     assert r.columns == []
-    assert r.provenance.source == "test"
 
 
 def test_result_from_dataframe_rejects_empty() -> None:
     with pytest.raises(ValueError, match="empty"):
-        Result.from_dataframe(pd.DataFrame(), Provenance())
+        Result.from_dataframe(pd.DataFrame())
 
 
-def test_provenance_roundtrip_description_and_tags() -> None:
-    prov = Provenance(
-        source="fred",
-        title="US unemployment rate",
-        description="Monthly unemployment from BLS.",
-        tags=["macro", "monthly"],
-    )
-    payload = prov.model_dump(mode="json")
-    roundtrip = Provenance.model_validate(payload)
-    assert roundtrip.description == "Monthly unemployment from BLS."
-    assert roundtrip.tags == ["macro", "monthly"]
+def test_provenance_field_set_is_locked() -> None:
+    expected = {
+        "source",
+        "source_description",
+        "params",
+        "fetched_at",
+        "properties",
+        "data_object_path",
+    }
+    assert set(Provenance.model_fields) == expected
+
+
+def test_provenance_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        Provenance.model_validate(
+            {"source": "fred", "source_description": "FRED", "title": "should not be here"}
+        )
+
+
+def test_provenance_requires_source_and_description() -> None:
+    with pytest.raises(ValidationError):
+        Provenance.model_validate({})  # type: ignore[arg-type]
+    with pytest.raises(ValidationError):
+        Provenance.model_validate({"source": "fred"})  # type: ignore[arg-type]
+
+
+def test_result_with_properties_lifts_into_provenance() -> None:
+    df = pd.DataFrame({"a": [1]})
+    r = Result.from_dataframe(df).with_properties(metadata=[{"name": "id", "value": "X"}])
+    assert r.provenance.properties == {"metadata": [{"name": "id", "value": "X"}]}
+
+
+def test_result_with_properties_is_cumulative() -> None:
+    df = pd.DataFrame({"a": [1]})
+    r = Result.from_dataframe(df).with_properties(a=1).with_properties(b=2)
+    assert r.provenance.properties == {"a": 1, "b": 2}
 
 
 def test_result_to_table_adds_unmapped_as_data() -> None:
     df = pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]})
-    r = Result(data=df, provenance=Provenance(source="x"))
+    r = Result(data=df, provenance=_prov())
     schema = OutputConfig(
         columns=[
             Column(name="k", role=ColumnRole.KEY),
@@ -169,7 +197,7 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
 
 def test_table_result_to_table_reapplies_schema() -> None:
     df = pd.DataFrame({"a": [1], "b": [2]})
-    t1 = Result.from_dataframe(df, Provenance())
+    t1 = Result.from_dataframe(df)
     t2 = t1.to_table(
         OutputConfig(
             columns=[
@@ -196,7 +224,7 @@ def test_build_table_result_no_warning_when_all_match(caplog) -> None:
         ]
     )
     with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw, provenance=Provenance())
+        cfg.build_table_result(raw)
     assert not caplog.records
 
 
@@ -210,7 +238,7 @@ def test_build_table_result_warns_on_unmatched_column(caplog) -> None:
         ]
     )
     with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw, provenance=Provenance())
+        cfg.build_table_result(raw)
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert warnings
     msg = warnings[0].message
@@ -230,7 +258,7 @@ def test_build_table_result_warns_on_multiple_unmatched_columns(caplog) -> None:
         ]
     )
     with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw, provenance=Provenance())
+        cfg.build_table_result(raw)
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert warnings
     msg = warnings[0].message
@@ -247,7 +275,7 @@ def test_build_table_result_wildcard_not_reported_as_unmatched(caplog) -> None:
         ]
     )
     with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw, provenance=Provenance())
+        cfg.build_table_result(raw)
     assert not caplog.records
 
 
@@ -299,7 +327,7 @@ def test_build_table_result_warns_then_raises_on_total_mismatch(caplog) -> None:
         caplog.at_level("WARNING", logger="parsimony.result"),
         pytest.raises(ValueError, match="matched no input columns"),
     ):
-        cfg.build_table_result(raw, provenance=Provenance())
+        cfg.build_table_result(raw)
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert warnings
     msg = warnings[0].message

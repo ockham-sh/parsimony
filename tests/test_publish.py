@@ -66,7 +66,7 @@ def _make_result(ns: str, n: int = 3) -> Result:
             Column(name="title", role=ColumnRole.TITLE),
         ]
     )
-    return Result(data=df, output_schema=cfg, provenance=Provenance(source="test"))
+    return Result(data=df, output_schema=cfg, provenance=Provenance(source="test", source_description="test"))
 
 
 def _async_fn(ns: str, *, delay: float = 0.0):

@@ -24,6 +24,7 @@ import logging
 import os
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from types import MappingProxyType
 from typing import Any, Union, get_type_hints
 
@@ -237,22 +238,33 @@ class Connector:
         return await self.fn(params_model)
 
     def _wrap_result(self, raw: Any, params_model: BaseModel) -> Result:
-        """Wrap a bare return value in a :class:`Result`, applying output_config if set."""
-        if isinstance(raw, Result):
-            return raw
-        provenance = Provenance(
+        """Wrap a connector return value in a :class:`Result` with framework-built provenance.
+
+        Every provenance field is constructed here; ``properties`` comes
+        from any :meth:`Result.with_properties` calls the connector made.
+        """
+        connector_properties: dict[str, Any] = (
+            dict(raw.provenance.properties) if isinstance(raw, Result) else {}
+        )
+        provenance = Provenance.model_construct(
             source=self.name,
             source_description=self.description,
+            fetched_at=datetime.now(timezone.utc),
             params=params_model.model_dump(mode="python"),
+            properties=connector_properties,
         )
-        if self.output_config is not None and isinstance(raw, (pd.DataFrame, pd.Series)):
-            return self.output_config.build_table_result(
-                raw,
+
+        if isinstance(raw, Result):
+            return Result(
+                data=raw.data,
                 provenance=provenance,
-                params=params_model.model_dump(mode="python"),
+                output_schema=raw.output_schema,
             )
+        if self.output_config is not None and isinstance(raw, (pd.DataFrame, pd.Series)):
+            result = self.output_config.build_table_result(raw)
+            return result.model_copy(update={"provenance": provenance})
         if isinstance(raw, (pd.DataFrame, pd.Series)):
-            return Result.from_dataframe(raw, provenance=provenance)
+            return Result(data=pd.DataFrame(raw), provenance=provenance)
         return Result(data=raw, provenance=provenance)
 
     def _validate_params(

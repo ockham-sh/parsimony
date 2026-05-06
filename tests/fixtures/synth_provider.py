@@ -60,7 +60,7 @@ async def synth_fetch(params: SynthFetchParams) -> Result:
     )
     return SYNTH_FETCH_OUTPUT.build_table_result(
         df,
-        provenance=Provenance(source="synth", params={"key": params.key}),
+        provenance=Provenance(source="synth", source_description="synth", params={"key": params.key}),
         params={"key": params.key},
     )
 

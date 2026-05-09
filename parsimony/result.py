@@ -138,9 +138,6 @@ class Provenance(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
     fetched_at: datetime | None = None
     properties: dict[str, Any] = Field(default_factory=dict)
-    #: Optional pointer to a content-addressed snapshot of the bytes
-    #: returned by this fetch, set by an external persister callback.
-    data_object_path: str | None = None
 
     def safe_dump(self) -> dict[str, Any]:
         """Wire-safe JSON projection: redact secret-named keys, mark oversize values."""

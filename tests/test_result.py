@@ -148,7 +148,6 @@ def test_provenance_field_set_is_locked() -> None:
         "params",
         "fetched_at",
         "properties",
-        "data_object_path",
     }
     assert set(Provenance.model_fields) == expected
 

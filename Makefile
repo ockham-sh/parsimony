@@ -12,12 +12,13 @@ test:  ## Run tests with coverage
 test-cov:  ## Run tests with coverage report
 	$(PYTHON) -m pytest tests/ --cov=parsimony --cov-report=term-missing --cov-fail-under=80
 
-lint:  ## Run ruff linter
-	$(PYTHON) -m ruff check parsimony/ tests/
+lint:  ## Run ruff lint + format check (matches CI: parsimony/ tests/ examples/)
+	$(PYTHON) -m ruff check parsimony/ tests/ examples/
+	$(PYTHON) -m ruff format --check parsimony/ tests/ examples/
 
 format:  ## Auto-format code
-	$(PYTHON) -m ruff format parsimony/ tests/
-	$(PYTHON) -m ruff check --fix parsimony/ tests/
+	$(PYTHON) -m ruff format parsimony/ tests/ examples/
+	$(PYTHON) -m ruff check --fix parsimony/ tests/ examples/
 
 typecheck:  ## Run mypy type checker
 	$(PYTHON) -m mypy parsimony/

@@ -44,20 +44,7 @@ class ColumnRole(StrEnum):
     DATA = "data"
     KEY = "key"
     TITLE = "title"
-    #: Free-form per-entry text folded into :attr:`SeriesEntry.description`.
-    #: Unlike METADATA (which only reaches BM25 via ``keyword_text``), a
-    #: DESCRIPTION column also feeds :meth:`SeriesEntry.semantic_text` —
-    #: so the embedder sees it at index time. Use for rich definitional
-    #: text (upstream field definitions, provider-authored descriptions)
-    #: where semantic recall on the phrase itself matters.
-    DESCRIPTION = "description"
     METADATA = "metadata"
-    #: Per-row list-of-strings. Atomic compositional units consumed by
-    #: :class:`~parsimony.FragmentEmbeddingCache` when wired on the
-    #: catalog. Enumerators declare the FRAGMENTS column; when no cache
-    #: is provided, the column is ignored and the catalog embeds via
-    #: :meth:`SeriesEntry.semantic_text` as today.
-    FRAGMENTS = "fragments"
 
 
 class Column(BaseModel):
@@ -73,11 +60,10 @@ class Column(BaseModel):
     param_key: str | None = None
     description: str | None = None
     exclude_from_llm_view: bool = False
-    #: Catalog namespace for the entity code when ``role`` is :attr:`ColumnRole.KEY`.
-    #:
-    #: When omitted on a KEY column, :meth:`~parsimony.catalog.Catalog.add_from_result`
-    #: uses the catalog's own ``name`` as the default. Static plain strings only —
-    #: plugins that need dynamic namespaces build the :class:`OutputConfig` per call.
+    #: Catalog namespace for KEY entity codes or METADATA value universes.
+    #: Catalog-producing results must set this on their KEY column. On
+    #: METADATA columns this is a lightweight annotation only; Parsimony does
+    #: not enforce references.
     namespace: str | None = None
 
     @model_validator(mode="after")
@@ -86,11 +72,9 @@ class Column(BaseModel):
             raise ValueError("exclude_from_llm_view is not allowed for data columns")
         if self.exclude_from_llm_view and self.role == ColumnRole.TITLE:
             raise ValueError("exclude_from_llm_view is not allowed for title columns")
-        if self.exclude_from_llm_view and self.role == ColumnRole.DESCRIPTION:
-            raise ValueError("exclude_from_llm_view is not allowed for description columns")
         if self.namespace is not None:
-            if self.role != ColumnRole.KEY:
-                raise ValueError("namespace is only allowed on KEY columns")
+            if self.role not in (ColumnRole.KEY, ColumnRole.METADATA):
+                raise ValueError("namespace is only allowed on KEY or METADATA columns")
             if not str(self.namespace).strip():
                 raise ValueError("namespace must be non-empty when set")
         return self

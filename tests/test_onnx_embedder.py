@@ -95,18 +95,19 @@ async def test_onnx_and_sentence_transformer_agree_on_ordering(tmp_path: Path) -
 
 async def test_onnx_catalog_end_to_end(tmp_path: Path) -> None:
     """Build a catalog with OnnxEmbedder, save/load, search — top-1 must be correct."""
-    from parsimony.catalog import Catalog, SeriesEntry
+    from parsimony.catalog import Catalog, CatalogEntry
 
     cache_dir = tmp_path / "onnx-cache"
     emb = OnnxEmbedder(cache_dir=cache_dir, quantize=True)
     cat = Catalog("test", embedder=emb)
-    await cat.add(
+    cat.add_entries(
         [
-            SeriesEntry(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
-            SeriesEntry(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
-            SeriesEntry(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
+            CatalogEntry(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
+            CatalogEntry(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
+            CatalogEntry(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
         ]
     )
+    await cat.build()
     bundle_dir = tmp_path / "bundle"
     await cat.save(bundle_dir)
 

@@ -46,9 +46,6 @@ IVF_NLIST_MAX = 65_536
 IVF_NPROBE_FRACTION = 0.10
 IVF_TRAIN_SAMPLE_CAP = 256_000
 
-RRF_K = 60
-
-
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -156,53 +153,11 @@ def write_faiss(index: faiss.Index | None, path: str, *, dim: int) -> None:
     faiss.write_index(index, path)
 
 
-def faiss_query(
-    index: faiss.Index,
-    query_vector: list[float],
-    *,
-    k: int,
-    normalize: bool,
-) -> list[tuple[int, int]]:
-    """Return ``[(row_idx, rank), ...]`` for the top-k FAISS hits."""
-    import faiss
-
-    q = np.asarray([query_vector], dtype=np.float32)
-    if normalize:
-        faiss.normalize_L2(q)
-    _scores, ids = index.search(q, min(k, index.ntotal))
-    return [(int(idx), rank) for rank, idx in enumerate(ids[0]) if idx != -1]
-
-
-def bm25_query(bm25: object, query: str, *, k: int) -> list[tuple[int, int]]:
-    """Return ``[(row_idx, rank), ...]`` for the top-k BM25 hits."""
-    scores = bm25.get_scores(tokenize(query))  # type: ignore[attr-defined]
-    order = np.argsort(scores)[::-1]
-    ranked: list[tuple[int, int]] = []
-    for rank, idx in enumerate(order[:k]):
-        if scores[idx] <= 0:
-            break
-        ranked.append((int(idx), rank))
-    return ranked
-
-
-def rrf_fuse(*rankings: list[tuple[int, int]]) -> list[tuple[int, float]]:
-    """Reciprocal Rank Fusion (Cormack et al. 2009) with k=:data:`RRF_K`."""
-    scored: dict[int, float] = {}
-    for ranking in rankings:
-        for idx, rank in ranking:
-            scored[idx] = scored.get(idx, 0.0) + 1.0 / (RRF_K + rank + 1)
-    return sorted(scored.items(), key=lambda kv: kv[1], reverse=True)
-
-
 __all__ = [
     "HNSW_THRESHOLD",
     "IVF_THRESHOLD",
-    "RRF_K",
-    "bm25_query",
     "build_faiss",
-    "faiss_query",
     "read_faiss",
-    "rrf_fuse",
     "tokenize",
     "write_faiss",
 ]

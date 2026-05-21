@@ -2,18 +2,15 @@
 
 The kernel's cache lives at the user cache root :func:`root` —
 ``platformdirs.user_cache_dir("parsimony")`` by default, overridable
-via ``PARSIMONY_CACHE_DIR``. Four named subdirectories carry distinct
+via ``PARSIMONY_CACHE_DIR``. Three named subdirectories carry distinct
 classes of artefact:
 
-* :func:`catalogs_dir`    — HuggingFace catalog snapshots downloaded
-  for search. Read-side: terminal, mcp post-refactor.
-* :func:`models_dir`      — embedder model artefacts (ONNX, …).
-  Read+write: query time and publish time.
-* :func:`embeddings_dir`  — :class:`~parsimony.embedder.FragmentEmbeddingCache`
-  parquet shards. Write-side: publish.
-* :func:`connectors_dir`  — connector-owned scratch (opt-in per
-  connector; replaces the SDMX-vocabulary ``dataflows/`` and
-  ``portals/`` of earlier drafts).
+* :func:`catalogs_dir`    — Hugging Face catalog snapshots downloaded
+  for search. Read-side: query-time consumers.
+* :func:`models_dir`      — embedder model artefacts (ONNX, tokenizer
+  files). Read+write: query time and publish time.
+* :func:`connectors_dir`  — connector-owned scratch, opt-in per
+  connector via a sanitised provider key.
 
 For ad-hoc small JSON payloads keyed by string, use :class:`TTLDiskCache`.
 For large binary or vector payloads, build a purpose-specific cache —
@@ -27,10 +24,10 @@ __all__ = [
     "catalogs_dir",
     "clear",
     "connectors_dir",
-    "embeddings_dir",
     "info",
     "models_dir",
     "root",
+    "staging_dir",
 ]
 
 import contextlib
@@ -58,7 +55,7 @@ _VALID_SUBKEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_\-.]*$")
 
 # Named subdirectories under the cache root. Keep in lockstep with the
 # helper functions below — :func:`info` and :func:`clear` iterate this.
-_SUBDIRS: tuple[str, ...] = ("catalogs", "models", "embeddings", "connectors")
+_SUBDIRS: tuple[str, ...] = ("catalogs", "models", "connectors", "staging")
 
 
 # ---------------------------------------------------------------------------
@@ -149,21 +146,19 @@ def root() -> Path:
     return r
 
 
-def catalogs_dir(provider: str | None = None) -> Path:
-    """Return ``$ROOT/catalogs/[<provider>/]`` — HuggingFace catalog snapshots.
-
-    With *provider* set, returns the per-provider staging directory used
-    by publish drivers in ``parsimony-connectors/packages/<provider>/scripts/``.
-    Each ``<provider>/`` mirrors ``hf://ockham/<provider>`` 1:1: namespace
-    directories sit directly under it (``<provider>/<namespace>/...``)
-    so ``hf upload ockham/<provider> <provider>/`` is a no-transform push.
-
-    With *provider* omitted, returns the parent — useful for callers that
-    iterate every provider (cache info, integration tests).
-    """
+def catalogs_dir() -> Path:
+    """Return ``$ROOT/catalogs`` — HuggingFace catalog snapshots download cache root."""
     p = root() / "catalogs"
-    if provider is not None:
-        p = p / _sanitize_subkey(provider)
+    _safe_mkdir(p)
+    return p
+
+
+def staging_dir(provider: str) -> Path:
+    """Return ``$ROOT/staging/<provider>`` — per-provider staging directory.
+
+    Used by publish drivers to stage and build catalogs locally.
+    """
+    p = root() / "staging" / _sanitize_subkey(provider)
     _safe_mkdir(p)
     return p
 
@@ -176,19 +171,6 @@ def models_dir(slug: str | None = None) -> Path:
     nests ``<slug>/<variant>`` underneath).
     """
     p = root() / "models"
-    if slug is not None:
-        p = p / _sanitize_subkey(slug)
-    _safe_mkdir(p)
-    return p
-
-
-def embeddings_dir(slug: str | None = None) -> Path:
-    """Return ``$ROOT/embeddings/[<slug>/]`` — fragment vector shards.
-
-    *slug* identifies an embedder (model + dim + normalize) so that
-    embedders with different identities never share a cache file.
-    """
-    p = root() / "embeddings"
     if slug is not None:
         p = p / _sanitize_subkey(slug)
     _safe_mkdir(p)

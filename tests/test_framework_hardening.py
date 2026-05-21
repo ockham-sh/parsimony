@@ -9,16 +9,10 @@ from __future__ import annotations
 import httpx
 import pandas as pd
 import pytest
-from pydantic import BaseModel
 
 from parsimony.connector import connector
 from parsimony.errors import ParseError, RateLimitError
 from parsimony.result import Column, ColumnRole, OutputConfig, Result
-
-
-class _NoParams(BaseModel):
-    pass
-
 
 # ---------------------------------------------------------------------------
 # Helpers: minimal in-process connectors for coercion testing
@@ -34,7 +28,7 @@ def _make_connector(df: pd.DataFrame, dtype: str, col_name: str = "value") -> ob
     )
 
     @connector(output=output, description="test connector")
-    async def _inner(params: _NoParams) -> pd.DataFrame:
+    async def _inner() -> pd.DataFrame:
         return df
 
     return _inner
@@ -52,7 +46,7 @@ async def test_timestamp_iso_strings_raise_parse_error() -> None:
     conn = _make_connector(df, dtype="timestamp", col_name="ts")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn(_NoParams())
+        await conn()
 
     assert "timestamp" in str(exc_info.value).lower()
     assert "ts" in str(exc_info.value)
@@ -72,7 +66,7 @@ async def test_numeric_non_numeric_strings_raise_parse_error() -> None:
     conn = _make_connector(df, dtype="numeric", col_name="price")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn(_NoParams())
+        await conn()
 
     assert "numeric" in str(exc_info.value).lower()
     assert "price" in str(exc_info.value)
@@ -92,7 +86,7 @@ async def test_unsupported_dtype_raises_parse_error() -> None:
     conn = _make_connector(df, dtype="not_a_real_dtype", col_name="col")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn(_NoParams())
+        await conn()
 
     assert "not_a_real_dtype" in str(exc_info.value)
 
@@ -107,15 +101,15 @@ async def test_connector_valueerror_not_wrapped_as_parse_error() -> None:
     """A ValueError from the connector function itself must propagate as-is, not as ParseError."""
 
     @connector(description="raises ValueError")
-    async def _bad(params: _NoParams) -> pd.DataFrame:
+    async def _bad() -> pd.DataFrame:
         raise ValueError("bad input from connector logic")
 
     with pytest.raises(ValueError, match="bad input from connector logic"):
-        await _bad(_NoParams())
+        await _bad()
 
     # Confirm it's NOT a ParseError (ParseError is a ConnectorError, not a ValueError)
     try:
-        await _bad(_NoParams())
+        await _bad()
     except ParseError:
         pytest.fail("connector ValueError must not be wrapped as ParseError")
     except ValueError:
@@ -194,7 +188,7 @@ async def test_timestamp_epoch_integers_produce_datetime_column() -> None:
     df = pd.DataFrame({"ts": [0, 86400, 1_700_000_000]})
     conn = _make_connector(df, dtype="timestamp", col_name="ts")
 
-    result = await conn(_NoParams())
+    result = await conn()
 
     assert isinstance(result, Result)
     assert pd.api.types.is_datetime64_any_dtype(result.df["ts"])
@@ -207,7 +201,7 @@ async def test_numeric_strings_produce_float_column() -> None:
     df = pd.DataFrame({"price": ["1.5", "3.14", "0.0"]})
     conn = _make_connector(df, dtype="numeric", col_name="price")
 
-    result = await conn(_NoParams())
+    result = await conn()
 
     assert isinstance(result, Result)
     assert pd.api.types.is_float_dtype(result.df["price"])

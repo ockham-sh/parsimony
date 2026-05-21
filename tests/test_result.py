@@ -122,8 +122,9 @@ def test_key_without_title_output_config_valid_for_loader() -> None:
     assert len([c for c in cfg.columns if c.role == ColumnRole.DATA]) == 1
 
 
-def test_column_namespace_only_on_key() -> None:
-    with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
+def test_column_namespace_only_on_key_or_metadata() -> None:
+    assert Column(name="m", role=ColumnRole.METADATA, namespace="currency").namespace == "currency"
+    with pytest.raises(ValidationError, match="namespace is only allowed on KEY or METADATA"):
         Column(name="x", role=ColumnRole.DATA, namespace="fred")
 
 

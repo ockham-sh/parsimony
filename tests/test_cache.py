@@ -194,13 +194,6 @@ def test_models_dir_per_slug(_pin_parsimony_cache_dir: Path) -> None:
     assert p.is_dir()
 
 
-def test_embeddings_dir_per_slug(_pin_parsimony_cache_dir: Path) -> None:
-    slug = "stub-12345678"
-    p = cache.embeddings_dir(slug)
-    assert p == _pin_parsimony_cache_dir / "embeddings" / slug
-    assert p.is_dir()
-
-
 def test_connectors_dir_per_provider(_pin_parsimony_cache_dir: Path) -> None:
     p = cache.connectors_dir("sdmx")
     assert p == _pin_parsimony_cache_dir / "connectors" / "sdmx"
@@ -208,8 +201,6 @@ def test_connectors_dir_per_provider(_pin_parsimony_cache_dir: Path) -> None:
 
 
 def test_helpers_reject_path_traversal(_pin_parsimony_cache_dir: Path) -> None:
-    with pytest.raises(ValueError):
-        cache.embeddings_dir("../escape")
     with pytest.raises(ValueError):
         cache.connectors_dir("..")
     with pytest.raises(ValueError):
@@ -224,7 +215,7 @@ def test_helpers_reject_path_traversal(_pin_parsimony_cache_dir: Path) -> None:
 def test_info_reports_zero_for_empty_root(_pin_parsimony_cache_dir: Path) -> None:
     report = cache.info()
     assert report["root"] == str(_pin_parsimony_cache_dir)
-    assert set(report["subdirs"]) == {"catalogs", "models", "embeddings", "connectors"}
+    assert set(report["subdirs"]) == {"catalogs", "models", "connectors", "staging"}
     for entry in report["subdirs"].values():
         assert entry["exists"] is False
         assert entry["size_bytes"] == 0
@@ -233,28 +224,27 @@ def test_info_reports_zero_for_empty_root(_pin_parsimony_cache_dir: Path) -> Non
 
 def test_info_does_not_create_missing_dirs(_pin_parsimony_cache_dir: Path) -> None:
     cache.info()
-    # info() must be read-only — it doesn't create the four subdirs.
+    # info() must be read-only — it doesn't create the named subdirs.
     assert not (_pin_parsimony_cache_dir / "catalogs").exists()
     assert not (_pin_parsimony_cache_dir / "models").exists()
-    assert not (_pin_parsimony_cache_dir / "embeddings").exists()
     assert not (_pin_parsimony_cache_dir / "connectors").exists()
+    assert not (_pin_parsimony_cache_dir / "staging").exists()
 
 
 def test_info_after_seeding(_pin_parsimony_cache_dir: Path) -> None:
-    p = cache.embeddings_dir("seeded-12345678")
-    (p / "fragments.parquet").write_bytes(b"x" * 1024)
+    p = cache.connectors_dir("seeded")
+    (p / "listing.json").write_bytes(b"x" * 1024)
     (p / "meta.json").write_text("{}")
 
     report = cache.info()
-    embeddings = report["subdirs"]["embeddings"]
-    assert embeddings["exists"] is True
-    assert embeddings["files"] == 2
-    assert embeddings["size_bytes"] == 1024 + 2  # parquet + "{}"
+    connectors = report["subdirs"]["connectors"]
+    assert connectors["exists"] is True
+    assert connectors["files"] == 2
+    assert connectors["size_bytes"] == 1024 + 2  # listing + "{}"
 
     # Other subdirs are still empty.
     assert report["subdirs"]["catalogs"]["files"] == 0
     assert report["subdirs"]["models"]["files"] == 0
-    assert report["subdirs"]["connectors"]["files"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -263,24 +253,23 @@ def test_info_after_seeding(_pin_parsimony_cache_dir: Path) -> None:
 
 
 def test_clear_specific_subdir_only_removes_that_one(_pin_parsimony_cache_dir: Path) -> None:
-    cache.embeddings_dir("victim").joinpath("vec.parquet").write_bytes(b"x")
+    cache.models_dir("victim").joinpath("model.onnx").write_bytes(b"x")
     cache.connectors_dir("survivor").joinpath("listing.json").write_text("[]")
 
-    cache.clear(subdir="embeddings")
+    cache.clear(subdir="models")
 
-    assert not (_pin_parsimony_cache_dir / "embeddings").exists()
+    assert not (_pin_parsimony_cache_dir / "models").exists()
     assert (_pin_parsimony_cache_dir / "connectors" / "survivor" / "listing.json").exists()
 
 
 def test_clear_no_arg_wipes_all_named_subdirs(_pin_parsimony_cache_dir: Path) -> None:
-    cache.embeddings_dir("a").joinpath("a.bin").write_bytes(b"x")
     cache.connectors_dir("b").joinpath("b.json").write_text("[]")
     cache.models_dir("c").joinpath("c.onnx").write_bytes(b"x")
     cache.catalogs_dir().joinpath("d.txt").write_text("x")
 
     cache.clear()
 
-    for name in ("catalogs", "models", "embeddings", "connectors"):
+    for name in ("catalogs", "models", "connectors"):
         assert not (_pin_parsimony_cache_dir / name).exists(), name
 
 
@@ -292,7 +281,7 @@ def test_clear_unknown_subdir_raises(_pin_parsimony_cache_dir: Path) -> None:
 def test_clear_is_idempotent_when_subdir_missing(_pin_parsimony_cache_dir: Path) -> None:
     # No subdirs exist yet — clear must be a no-op (no FileNotFoundError).
     cache.clear()
-    cache.clear(subdir="embeddings")
+    cache.clear(subdir="models")
 
 
 # ---------------------------------------------------------------------------

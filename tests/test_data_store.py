@@ -4,16 +4,10 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from pydantic import BaseModel
 
 from parsimony.connector import Connectors, loader
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
-
-
-class _Params(BaseModel):
-    q: str = "x"
-
 
 LOAD_SCHEMA = OutputConfig(
     columns=[
@@ -24,7 +18,7 @@ LOAD_SCHEMA = OutputConfig(
 
 
 @loader(output=LOAD_SCHEMA)
-async def demo_loader(_p: _Params) -> pd.DataFrame:
+async def demo_loader(q: str = "x") -> pd.DataFrame:
     """Load test observations."""
     return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
 

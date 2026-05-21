@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.5.0"
+version = "0.7.0"
 description = "Connector framework for financial data — typed fetch, hybrid-search catalogs, distribute via Hugging Face Hub or S3."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
@@ -135,7 +135,6 @@ omit = [
     # FAISS helpers are pure wrappers around a native library; exercised by
     # the Catalog save/load integration tests, not unit tests.
     "parsimony/indexes.py",
-    # Catalog + publish touch FAISS + HF Hub — covered by integration tests.
+    # Catalog touches FAISS + HF Hub — covered by integration tests.
     "parsimony/catalog.py",
-    "parsimony/publish.py",
 ]

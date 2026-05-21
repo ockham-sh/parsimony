@@ -1,15 +1,11 @@
 """Conformance checks for ``parsimony`` plugins.
 
-Three checks — the minimal integrity set every official plugin must pass:
+Two checks — the minimal integrity set every official plugin must pass:
 
 1. :func:`_check_connectors_exported` — module exports ``CONNECTORS``
    (a :class:`Connectors` with at least one entry).
 2. :func:`_check_descriptions_non_empty` — every connector has a description
    (no silently empty tool schemas).
-3. :func:`_check_env_map_matches_deps` — every key in each connector's
-   decorator-declared ``env_map`` corresponds to a real connector dep
-   (catches typos / renames).
-
 Two entry points:
 
 * :func:`assert_plugin_valid` — procedural, raises :class:`ConformanceError`.
@@ -94,33 +90,9 @@ def _check_descriptions_non_empty(module: ModuleType) -> None:
             )
 
 
-def _check_env_map_matches_deps(module: ModuleType) -> None:
-    """Assert every key in each connector's ``env_map`` names a real dep."""
-    connectors: Connectors = module.CONNECTORS
-    for c in connectors:
-        if not c.env_map:
-            continue
-        allowed = set(c.dep_names) | set(c.optional_dep_names)
-        for key, value in c.env_map.items():
-            if not isinstance(key, str) or not isinstance(value, str):
-                raise ConformanceError(
-                    "check_env_map_matches_deps",
-                    f"{c.name!r} env_map entries must be str -> str; got {key!r} -> {value!r}",
-                )
-            if key not in allowed:
-                raise ConformanceError(
-                    "check_env_map_matches_deps",
-                    (
-                        f"{c.name!r}: env_map key {key!r} does not match any connector "
-                        f"dependency (known deps: {sorted(allowed)})"
-                    ),
-                )
-
-
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
-    "check_env_map_matches_deps": _check_env_map_matches_deps,
 }
 
 
@@ -208,9 +180,6 @@ class ProviderTestSuite:
 
     def test_descriptions_non_empty(self) -> None:
         _check_descriptions_non_empty(self._resolve_module())
-
-    def test_env_map_matches_deps(self) -> None:
-        _check_env_map_matches_deps(self._resolve_module())
 
     def test_entry_point_resolves(self) -> None:
         """Verify the plugin is installed under ``parsimony.providers``.

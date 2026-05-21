@@ -1,7 +1,7 @@
 """Custom connector: build your own data source and compose it with built-in connectors.
 
 Demonstrates:
-1. Defining a Pydantic params model.
+1. Defining a plain async Python function.
 2. Using the @connector decorator with an OutputConfig schema.
 3. Composing the custom connector into a Connectors bundle alongside FRED.
 
@@ -24,7 +24,6 @@ import os
 
 import pandas as pd
 from parsimony_fred import fred_fetch
-from pydantic import BaseModel, Field
 
 from parsimony import Column, ColumnRole, Connectors, OutputConfig, connector
 
@@ -37,17 +36,13 @@ CUSTOM_OUTPUT = OutputConfig(
 )
 
 
-class MyParams(BaseModel):
-    category: str = Field(..., description="Category to look up")
-
-
 @connector(output=CUSTOM_OUTPUT, tags=["custom"])
-async def my_data_source(params: MyParams) -> pd.DataFrame:
+async def my_data_source(category: str) -> pd.DataFrame:
     """Return sample rows for a category (replace with a real HTTP call)."""
     return pd.DataFrame(
         {
             "code": ["A1", "A2", "A3"],
-            "label": [f"{params.category} - Alpha", f"{params.category} - Beta", f"{params.category} - Gamma"],
+            "label": [f"{category} - Alpha", f"{category} - Beta", f"{category} - Gamma"],
             "score": [0.95, 0.87, 0.73],
         }
     )

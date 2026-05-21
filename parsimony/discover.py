@@ -9,7 +9,7 @@ import-time side effects. Consumers cache at their level if they want.
   failures.
 
 Provider metadata (homepage, version) is read from distribution metadata
-via :mod:`importlib.metadata` — plugins no longer export module-level
+via :mod:`importlib.metadata`; plugins do not export module-level
 ``__version__`` or ``PROVIDER_METADATA`` dicts.
 """
 

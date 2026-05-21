@@ -63,9 +63,7 @@ def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
             raise ValueError(f"Result missing DATA column {dn!r}. Available: {list(df.columns)}")
 
     ns = normalize_code(key_col.namespace)
-    # Single hash-grouping pass instead of per-key boolean-mask scan.
-    # The previous loop was O(K×N) (full DataFrame scan per unique key);
-    # for large flows that scaled to hours. groupby is O(N).
+    # Single hash-grouping pass, O(N) in row count.
     sub_df = df[[key_name, *data_names]]
     out: list[tuple[str, str, pd.DataFrame]] = []
     for raw_code, group in sub_df.groupby(key_name, sort=False, dropna=True):

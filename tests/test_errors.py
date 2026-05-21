@@ -9,12 +9,8 @@ casual edit.
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
-from pydantic import BaseModel
 
-from parsimony.connector import Connectors, connector
 from parsimony.errors import (
     ConnectorError,
     EmptyDataError,
@@ -216,48 +212,3 @@ class TestConnectorError:
 # ---------------------------------------------------------------------------
 # Connector.__call__ env_var hand-off
 # ---------------------------------------------------------------------------
-
-
-class _Params(BaseModel):
-    x: str
-
-
-@connector(env={"api_key": "TEST_KEY"})
-async def _needy(params: _Params, *, api_key: str) -> str:
-    """Test connector requiring TEST_KEY."""
-    return f"{params.x}:{api_key}"
-
-
-@connector(env={"api_key": "PRIMARY_KEY", "secret": "SECONDARY_KEY"})
-async def _multi_needy(params: _Params, *, api_key: str, secret: str) -> str:
-    """Test connector requiring two env vars."""
-    return f"{params.x}:{api_key}:{secret}"
-
-
-def test_unbound_connector_raises_with_env_var_attribute(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("TEST_KEY", raising=False)
-    coll = Connectors([_needy]).bind_env()
-    with pytest.raises(UnauthorizedError) as excinfo:
-        asyncio.run(coll["_needy"](x="hello"))
-    exc = excinfo.value
-    assert exc.env_var == "TEST_KEY"
-    text = str(exc)
-    assert "TEST_KEY" in text
-    assert "DO NOT retry with different arguments" in text
-
-
-def test_unbound_connector_with_multiple_env_vars_lists_all(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("PRIMARY_KEY", raising=False)
-    monkeypatch.delenv("SECONDARY_KEY", raising=False)
-    coll = Connectors([_multi_needy]).bind_env()
-    with pytest.raises(UnauthorizedError) as excinfo:
-        asyncio.run(coll["_multi_needy"](x="hello"))
-    exc = excinfo.value
-    text = str(exc)
-    # First var by sorted order is PRIMARY_KEY.
-    assert exc.env_var == "PRIMARY_KEY"
-    assert "PRIMARY_KEY" in text
-    assert "SECONDARY_KEY" in text
-    assert "DO NOT retry" in text

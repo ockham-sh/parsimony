@@ -13,10 +13,9 @@ make format   # ruff format + auto-fix
 |------|-------|
 | Decorators, `Connectors` | `parsimony/connector.py` |
 | Result types, `OutputConfig` | `parsimony/result.py` |
-| `CatalogBackend` Protocol, `Catalog` | `parsimony/catalog.py` |
+| `Catalog` | `parsimony/catalog.py` |
 | Plugin discovery | `parsimony/discover.py` |
-| Publish orchestrator (`CATALOGS`) | `parsimony/publish.py` |
-| CLI (`list`, `publish`, `cache`) | `parsimony/cli.py` |
+| CLI (`list`, `cache`) | `parsimony/cli.py` |
 | Global cache (root, subdirs, `TTLDiskCache`) | `parsimony/cache.py` |
 | Conformance suite | `parsimony/testing.py` |
 | Error hierarchy | `parsimony/errors.py` |

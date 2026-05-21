@@ -12,13 +12,12 @@
 
 ## For new connectors
 
-- [ ] Module created in `parsimony/connectors/`
-- [ ] Pydantic params models with docstrings
+- [ ] Connector package exports `CONNECTORS`
+- [ ] Connector signatures and docstrings are clear
 - [ ] `@connector`, `@enumerator`, or `@loader` decorators applied
 - [ ] `OutputConfig` with explicit `Column` roles
 - [ ] Docstrings include workflow chaining hints
-- [ ] `CONNECTORS` and `ENV_VARS` exported
-- [ ] `ProviderSpec` added to `PROVIDERS` in `connectors/__init__.py`
+- [ ] Auth/env behavior lives in connector implementation or explicit `.bind(...)`
 - [ ] Tests added in `tests/`
 - [ ] `CHANGELOG.md` updated
 

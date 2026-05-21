@@ -66,7 +66,7 @@ parsimony/
 | 14 | Replace `Namespace("x")` annotation class with string sentinel `Annotated[str, "ns:x"]` | Same agent-cross-ref value, less machinery |
 | 15 | Delete `ResultCallback` + `with_callback`; ship as userland recipe | Minor feature, plugin authors wrap call sites |
 | 16 | 7 conformance checks → 3: `connectors_exported`, `descriptions_non_empty`, `env_vars_map_to_deps` | Drop micro-checks; keep integrity checks |
-| 17 | 4 CLI verbs → 2: `parsimony list` (plugins + catalogs) + `parsimony publish` | Drop `bundles list`, fold `conformance verify` into `list --strict` |
+| 17 | CLI verbs → `parsimony list` + `parsimony cache` | Drop catalog publishing from the framework CLI |
 | 18 | Flat module layout, no subpackages | Reader sees protocol + impl in one scroll |
 
 ## 4. Phase plan
@@ -93,14 +93,13 @@ Single PR. Delete old, write new, fix tests.
 - `docs/migration-catalog-publish.md`
 
 **Write (flat modules):**
-- `parsimony/catalog.py` — `CatalogBackend` Protocol + `parse_catalog_url` + `SeriesEntry` / `SeriesMatch` / `IndexResult` + concrete `Catalog` class with `save`/`load`/`from_url`/`push`/`add`/`search`/`get`/`delete`/`list`/`list_namespaces`/`add_from_result`. URL handlers (`file://` / `hf://`) inlined as module-private helpers.
+- `parsimony/catalog.py` — `CatalogBackend` Protocol + `parse_catalog_url` + `SeriesEntry` / `SeriesMatch` / `IndexResult` + concrete `Catalog` class with `build`/`save`/`load`/`from_url`/`push`/`add`/`search`/`get`/`delete`/`list`/`list_namespaces`. URL handlers (`file://` / `hf://`) inlined as module-private helpers.
 - `parsimony/embedder.py` — `EmbeddingProvider` Protocol + `SentenceTransformerEmbedder` + `LiteLLMEmbeddingProvider`.
 - `parsimony/indexes.py` — FAISS + BM25 + RRF helpers (move verbatim from `_standard/indexes.py`).
-- `parsimony/publish.py` — `publish(module, target=..., only=..., dry_run=...)` reading `CATALOGS` (list | async generator function) + optional `RESOLVE_CATALOG`.
 - `parsimony/discovery.py` — entry-point scan + `DiscoveredProvider` + `build_connectors_from_env` + `PluginError` / `PluginImportError` / `PluginContractError`.
 - `parsimony/stores.py` — `InMemoryDataStore` + `LoadResult` (no wrapper package).
 - `parsimony/http.py` — `HttpClient` (verbatim).
-- `parsimony/cli.py` — two verbs (`list`, `publish`).
+- `parsimony/cli.py` — two verbs (`list`, `cache`).
 - `parsimony/testing.py` — 3 checks, 4 test methods.
 
 **Modify:**
@@ -148,7 +147,7 @@ One PR per plugin repo. No need to stagger — the kernel break is already live.
 Concrete migration deltas are in §6.
 
 **Success gate:**
-- `parsimony publish --provider fred --target file:///tmp/fred` produces a working catalog that `Catalog.from_url("file:///tmp/fred/fred")` can open and search.
+- A direct `Catalog.build()` + `Catalog.push("file:///tmp/fred")` script produces a working catalog that `Catalog.from_url("file:///tmp/fred")` can open and search.
 - Same for sdmx with a 2-namespace dry run.
 
 ### Phase 3 — docs (~1 day)
@@ -330,8 +329,8 @@ _STATIC_CATALOGS: list[tuple[str, Callable[[], Awaitable]]] = [
     ("sdmx_datasets", enumerate_sdmx_datasets),
 ]
 
-async def CATALOGS() -> AsyncIterator[tuple[str, Callable[[], Awaitable]]]:
-    """Dynamic + static catalogs for SDMX. Called by `parsimony publish`."""
+async def CATALOGS() -> AsyncIterator[Catalog]:
+    """Dynamic + static lazy catalogs for SDMX."""
     for item in _STATIC_CATALOGS:
         yield item
     async for agency in _fetch_agencies():
@@ -419,7 +418,7 @@ Flagged for resolution before code lands:
 Two options:
 
 - **(A) Required (status quo).** Every KEY column declares its namespace. Plugin authors for dynamic cases build the OutputConfig per-call (SDMX example above).
-- **(B) Optional, catalog supplies default.** If omitted on KEY, `Catalog(name=ns).add_from_result(result)` uses `ns` as the namespace. Plugin authors write `Column(role=KEY)` without repeating the namespace.
+- **(B) Optional, catalog supplies default.** Rejected: `Catalog.name` is artifact identity, not a row namespace.
 
 Recommendation: **(B).** Cleaner for the dynamic case, backward-compatible for static case (explicit wins).
 
@@ -438,7 +437,7 @@ external adoption.
 Options:
 - Top-level `parsimony.url_parse` (discoverable, but creates a module for ~25 LOC).
 - Inside `parsimony.catalog` (co-located with `Catalog.from_url`).
-- Inside `parsimony.publish` (co-located with publish target parsing).
+- Inside a maintainer script (but `parsimony.catalog` remains the shared parser for `push` and `from_url`).
 
 Recommendation: **`parsimony.catalog`**, since it's used by both `Catalog.from_url` (read) and `publish()` (write).
 
@@ -513,8 +512,8 @@ No external users, so backward-compatibility risk is gone. Remaining risks:
 **Phase 2 — plugin rewrites (one PR per plugin, in parallel):**
 - [ ] `parsimony-fred`: drop `CatalogSpec`, add `CATALOGS = [("fred", fred_enumerate)]`, bump dep, release 0.3.0
 - [ ] `parsimony-sdmx`: drop `CatalogSpec` + templates, add `CATALOGS` async fn + `RESOLVE_CATALOG`, bump dep, release 0.3.0
-- [ ] Validate: `parsimony publish --provider fred --target file:///tmp/fred` produces a working catalog
-- [ ] Validate: `parsimony publish --provider sdmx --target file:///tmp/sdmx --only sdmx_datasets` same
+- [ ] Validate: direct `Catalog.build()` + `Catalog.push("file:///tmp/fred")` produces a working catalog
+- [ ] Validate: direct SDMX `RESOLVE_CATALOG("sdmx_datasets")` build + push does the same
 
 **Phase 3 — docs (bundle with Phase 1 PR or follow-up):**
 - [ ] Rewrite `docs/contract.md` (remove §10, CONTRACT_VERSION, keyword ABI)

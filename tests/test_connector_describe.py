@@ -68,7 +68,7 @@ class TestConnectorDescribe:
     def test_parameters_section(self) -> None:
         text = fred_search.describe()
         assert "Parameters:" in text
-        assert "query: string (required)" in text
+        assert "query: str (required)" in text
 
     def test_optional_parameter_shown(self) -> None:
         text = fred_fetch.bind(api_key="secret").describe()

@@ -19,7 +19,7 @@ Keyword arguments:
 - `name`: override the function name.
 - `description`: override the docstring.
 - `output`: optional `OutputConfig` for tabular result shaping.
-- `tags`: labels used by callers such as MCP or apps.
+- `tags`: labels used by callers such as agent runtimes or apps.
 - `properties`: exact-match metadata for filtering.
 
 The callable signature is the connector parameter surface.
@@ -36,13 +36,12 @@ Important attributes and methods:
 - `tags: tuple[str, ...]`
 - `properties: Mapping[str, Any]`
 - `bind(**kwargs) -> Connector`
-- `to_json_schema() -> dict[str, Any]`
 - `with_callback(callback) -> Connector`
 - `describe() -> str`
 - `to_llm() -> str`
 - `await connector(*args, **kwargs) -> Result`
 
-`bind` is schema-aware partial application. Bound values are fixed on the returned connector and removed from its exposed signature.
+`bind` is partial application. Bound values are fixed on the returned connector and removed from its exposed signature.
 
 ### `Connectors`
 
@@ -65,9 +64,9 @@ Immutable collection of `Connector` values.
 
 ## Results
 
-`Result` wraps arbitrary connector output with framework-built provenance. `OutputConfig` maps DataFrame columns into semantic roles.
+`Result` wraps arbitrary connector output with framework-built provenance. `TabularResult` is the tabular subtype; use `TabularResult.from_dataframe`, `TabularResult.from_arrow`, and `TabularResult.from_parquet` for tabular construction. `OutputConfig` maps DataFrame columns into semantic roles.
 
-`Provenance.params` records call-time connector arguments after binding. Bound values are omitted. Secret-shaped call-time parameter names are redacted.
+`Provenance.params` records call-time connector arguments after binding. Bound values are omitted. Parameters listed in `Connector.secrets` are also omitted.
 
 ## Catalogs
 
@@ -93,7 +92,7 @@ Built-in index types:
 - `VectorIndex(name, field="title", embedder=...)`
 - `HybridIndex(name, field, indexes, fusion=None)` wraps multiple leaf indexes (e.g. BM25 + Vector) for the same field and fuses their results using a `Ranker` policy (defaults to `ZScoreFusion()`).
 
-`entries_from_result(result)` converts enumerator output into catalog entries when the `KEY` column declares `namespace=...`.
+`OutputConfig.build_entries(df)` is the catalog counterpart of `OutputConfig.build_table_result(df)`: the schema applies itself to *df*, reading the `KEY`/`TITLE`/`METADATA` columns to produce `list[CatalogEntry]`. A metadata column named `"*"` is a wildcard that captures every column not already claimed. Enumerators return the resulting list directly.
 
 ## Ranking
 

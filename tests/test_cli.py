@@ -163,7 +163,7 @@ def test_list_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: p
     assert "No parsimony plugins" in captured.out or "0 plugins" in captured.out
 
 
-def test_list_reports_conformance_pass_without_strict_flag(
+def test_list_skips_conformance_without_strict_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli import main

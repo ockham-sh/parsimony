@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from parsimony.catalog import CatalogEntry, entries_from_result, normalize_code, normalize_entity_code
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.catalog import CatalogEntry, normalize_code, normalize_entity_code
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 def test_normalize_code_accepts_snake_case() -> None:
@@ -55,7 +55,7 @@ def test_catalog_entry_rejects_old_first_class_fields() -> None:
         CatalogEntry(namespace="fred", code="X", title="T", tags=["old"])  # type: ignore[call-arg]
 
 
-def test_entries_from_result_populates_metadata_columns() -> None:
+def test_build_entries_populates_metadata_columns() -> None:
     df = pd.DataFrame(
         {
             "code": ["UNRATE", "UNRATE"],
@@ -64,19 +64,15 @@ def test_entries_from_result_populates_metadata_columns() -> None:
             "description": ["Civilian unemployment rate", "Civilian unemployment rate"],
         }
     )
-    result = Result(
-        data=df,
-        provenance=Provenance(source="fred", source_description="FRED"),
-        output_schema=OutputConfig(
-            columns=[
-                Column(name="code", role=ColumnRole.KEY, namespace="fred"),
-                Column(name="title", role=ColumnRole.TITLE),
-                Column(name="frequency", role=ColumnRole.METADATA),
-                Column(name="description", role=ColumnRole.METADATA),
-            ]
-        ),
+    schema = OutputConfig(
+        columns=[
+            Column(name="code", role=ColumnRole.KEY, namespace="fred"),
+            Column(name="title", role=ColumnRole.TITLE),
+            Column(name="frequency", role=ColumnRole.METADATA),
+            Column(name="description", role=ColumnRole.METADATA),
+        ]
     )
-    entries = entries_from_result(result)
+    entries = schema.build_entries(df)
     assert len(entries) == 1
     assert entries[0].metadata == {
         "frequency": "M",
@@ -84,20 +80,16 @@ def test_entries_from_result_populates_metadata_columns() -> None:
     }
 
 
-def test_entries_from_result_requires_key_namespace() -> None:
+def test_build_entries_requires_key_namespace() -> None:
     df = pd.DataFrame({"code": ["A"], "title": ["Alpha"]})
-    result = Result(
-        data=df,
-        provenance=Provenance(source="test", source_description="test"),
-        output_schema=OutputConfig(
-            columns=[
-                Column(name="code", role=ColumnRole.KEY),
-                Column(name="title", role=ColumnRole.TITLE),
-            ]
-        ),
+    schema = OutputConfig(
+        columns=[
+            Column(name="code", role=ColumnRole.KEY),
+            Column(name="title", role=ColumnRole.TITLE),
+        ]
     )
     with pytest.raises(ValueError, match="KEY column must declare namespace"):
-        entries_from_result(result)
+        schema.build_entries(df)
 
 
 def test_metadata_column_namespace_is_allowed_as_annotation() -> None:

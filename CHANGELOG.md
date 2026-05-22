@@ -12,8 +12,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Removed `CatalogCache` and the in-process LRU**: Catalog reuse is now the caller's responsibility (a one-time `Catalog.load(url)` plus a module-level singleton or small dict). The kernel no longer carries hidden global cache state.
 - **Unified `Catalog.load` and `catalog.save`**: Removed `Catalog.from_url` and `Catalog.push`, replacing them with unified `Catalog.load(url_or_path)` and `catalog.save(url_or_path)`.
 - **Removed `CatalogBackend`**: Dropped the obsolete `CatalogBackend` protocol and references.
-- **Dropped v2 migration shim**: Removed the v2-to-v3 snapshot loader migration shim. `SCHEMA_VERSION` is pinned strictly to `3`.
+- **Dropped v2 migration shim**: Removed the v2-to-v3 snapshot loader migration shim. `SCHEMA_VERSION` is pinned strictly to its current value.
 - **Removed mutable/legacy methods**: Deleted `Catalog.{add_entries, add_indexes, set_default_field, delete, exists, list_namespaces, list_entries}` and the `indexes` property.
+- **Tabular factories moved to `TabularResult`**: `from_dataframe`, `from_arrow`, and `from_parquet` are no longer on `Result`; import and call them on `TabularResult` instead.
+- **Explicit connector secrets**: `@connector`, `@enumerator`, and `@loader` accept `secrets=(...)`. Declared names are omitted from `Provenance.params`. Name-based secret conformance (`check_unbound_secret_params`) is removed — connector packages must declare `secrets=` for auth-bearing parameters.
+- **Flat public connector parameters**: Connectors must expose flat function parameters only. Bundled `params: BaseModel` signatures and kernel field-splat binding are removed. Use Pydantic models internally for validation if helpful.
 
 ### Added
 
@@ -21,6 +24,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Snapshot Integrity Check**: Added required `content_sha256` hash under `BuildInfo` to verify snapshot contents (excluding `meta.json`) on load.
 - **Graceful Structured Search Fallback**: If the first field in a structured query does not have a configured index, the query falls back to a broad search against `default_field`.
 - **Local Cache Subdirectories Split**: Added `parsimony.cache.staging_dir(provider)` for staging local connector builds.
+- **`Connector.secrets`**: Tuple of parameter names excluded from provenance at decoration time; validated against the wrapped function signature.
+
+### Changed
+
+- **`Provenance.safe_dump()`**: Truncates oversize `params` / `properties` blobs only; it no longer name-redacts entries by parameter name.
+- **Conformance checks**: Four checks remain (`check_connectors_exported`, `check_descriptions_non_empty`, `check_enumerator_return_type`, `check_flat_public_params`).
+
+### Removed
+
+- **`SECRET_NAME_PATTERN` and `REDACTED`** exports from `parsimony.result`.
+- **`safe_dump_provenance()`** module helper (use `Provenance.safe_dump()`).
+- **`HttpClient.aclose()`** no-op.
 
 ## [0.5.0]
 
@@ -164,8 +179,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   required env var was unresolved. `env_map` defaults to the empty mapping.
 - **Conformance checks renamed**: `_check_env_vars_map_to_deps` →
   `_check_env_map_matches_deps` (walks each `Connector.env_map` instead of
-  reading `module.ENV_VARS`). `ProviderTestSuite.test_env_vars_map_to_deps`
-  renamed to `test_env_map_matches_deps`.
+  reading `module.ENV_VARS`).
 - **CLI `parsimony list` output.** Dropped per-plugin `env_vars_present` /
   `env_vars_missing` / `provider_metadata` keys. Env-var aggregation happens
   at the collection level via `CONNECTORS.env_vars()` — the JSON payload now

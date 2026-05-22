@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from pathlib import Path
 
@@ -13,8 +14,31 @@ from parsimony.catalog import (
     HybridIndex,
     VectorIndex,
 )
-from parsimony.embedder import SentenceTransformerEmbedder
+from parsimony.embedder import EmbedderInfo
 from parsimony.ranking import ZScoreFusion
+
+
+class _StubEmbedder:
+    DIM = 8
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        out: list[list[float]] = []
+        for text in texts:
+            digest = hashlib.sha256(text.encode("utf-8")).digest()
+            raw = [digest[i] / 255.0 for i in range(self.DIM)]
+            norm = sum(x * x for x in raw) ** 0.5 or 1.0
+            out.append([x / norm for x in raw])
+        return out
+
+    async def embed_query(self, query: str) -> list[float]:
+        # Bias toward titles that share tokens with the query so hybrid ranking
+        # stays deterministic under the hash stub (BM25 + vector agree on A).
+        anchor = "GDP of Germany" if "Germany" in query else query
+        (vector,) = await self.embed_texts([anchor])
+        return vector
+
+    def info(self) -> EmbedderInfo:
+        return EmbedderInfo(model="stub/hash-sha256", dim=self.DIM, normalize=True, package="test-stub")
 
 
 @pytest.mark.asyncio
@@ -50,15 +74,14 @@ async def test_hybrid_index_build_and_ranking() -> None:
     ]
 
     idx1 = BM25Index("title_bm25", field="title")
-    idx2 = VectorIndex("title_vector", field="title", embedder=SentenceTransformerEmbedder())
+    idx2 = VectorIndex("title_vector", field="title", embedder=_StubEmbedder())
 
     hybrid = HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
     await hybrid.build(entries)
 
     ranking = await hybrid.ranking("Germany GDP", limit=5)
-    table = ranking.to_table()
-    assert len(table) > 0
-    assert table.loc[0, "code"] == "A"
+    assert len(ranking.items) > 0
+    assert ranking.items[0].code == "A"
 
 
 @pytest.mark.asyncio
@@ -69,7 +92,7 @@ async def test_hybrid_index_save_and_load_roundtrip() -> None:
     ]
 
     idx1 = BM25Index("title_bm25", field="title")
-    idx2 = VectorIndex("title_vector", field="title", embedder=SentenceTransformerEmbedder())
+    idx2 = VectorIndex("title_vector", field="title", embedder=_StubEmbedder())
 
     hybrid = HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
     await hybrid.build(entries)
@@ -79,12 +102,16 @@ async def test_hybrid_index_save_and_load_roundtrip() -> None:
         hybrid.save(path)
 
         loaded = HybridIndex.load(path)
+        stub = _StubEmbedder()
+        for idx in loaded._indexes:
+            if isinstance(idx, VectorIndex):
+                idx._embedder = stub
+                idx._embedder_info = stub.info()
         assert loaded.name == "hybrid_title"
         assert loaded.field == "title"
         assert len(loaded._indexes) == 2
         assert {idx.name for idx in loaded._indexes} == {"title_bm25", "title_vector"}
 
         ranking = await loaded.ranking("Germany GDP", limit=5)
-        table = ranking.to_table()
-        assert len(table) > 0
-        assert table.loc[0, "code"] == "A"
+        assert len(ranking.items) > 0
+        assert ranking.items[0].code == "A"

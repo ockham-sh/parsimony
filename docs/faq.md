@@ -2,7 +2,7 @@
 
 ## Do connector parameters need to be Pydantic models?
 
-No. A connector is a normal async callable. Pydantic models can still be used as ordinary parameter annotations when that is useful.
+No. A connector is a normal async callable with flat top-level parameters. Pydantic models may be used inside the connector for validation, but must not be exposed as a bundled ``params: SomeModel`` argument.
 
 ## How do I hide an API key from agents and provenance?
 

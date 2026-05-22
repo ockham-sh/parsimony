@@ -8,23 +8,22 @@ from parsimony.catalog import (
     BM25Index,
     Catalog,
     CatalogEntry,
-    CatalogMatches,
-    StructuredQuery,
-    _parse_query,
+    UnknownIndexedFieldError,
 )
+from parsimony.catalog.query import StructuredQuery, parse_query
 
 
 def test_parse_query_broad() -> None:
-    assert _parse_query("inflation germany", {"REF_AREA", "ICP_ITEM"}) is None
-    assert _parse_query("REF_AREA", {"REF_AREA", "ICP_ITEM"}) is None
+    assert parse_query("inflation germany", {"REF_AREA", "ICP_ITEM"}) is None
+    assert parse_query("REF_AREA", {"REF_AREA", "ICP_ITEM"}) is None
 
 
 def test_parse_query_structured() -> None:
-    q1 = _parse_query("REF_AREA: Germany", {"REF_AREA", "ICP_ITEM"})
+    q1 = parse_query("REF_AREA: Germany", {"REF_AREA", "ICP_ITEM"})
     assert isinstance(q1, StructuredQuery)
     assert q1.clauses == [("REF_AREA", ["Germany"])]
 
-    q2 = _parse_query("REF_AREA: Germany, Italy && ICP_ITEM: energy", {"REF_AREA", "ICP_ITEM"})
+    q2 = parse_query("REF_AREA: Germany, Italy && ICP_ITEM: energy", {"REF_AREA", "ICP_ITEM"})
     assert isinstance(q2, StructuredQuery)
     assert q2.clauses == [
         ("REF_AREA", ["Germany", "Italy"]),
@@ -32,16 +31,17 @@ def test_parse_query_structured() -> None:
     ]
 
 
-def test_parse_query_unknown_field_fallback() -> None:
-    assert _parse_query("UNKNOWN_FIELD: Germany", {"REF_AREA"}) is None
+def test_parse_query_unknown_field_raises() -> None:
+    with pytest.raises(UnknownIndexedFieldError, match="UNKNOWN_FIELD"):
+        parse_query("UNKNOWN_FIELD: Germany", {"REF_AREA"})
 
 
 def test_parse_query_malformed() -> None:
     with pytest.raises(ValueError, match="Malformed clause"):
-        _parse_query("REF_AREA: Germany && malformed_part", {"REF_AREA", "ICP_ITEM"})
+        parse_query("REF_AREA: Germany && malformed_part", {"REF_AREA", "ICP_ITEM"})
 
     with pytest.raises(ValueError, match="No values"):
-        _parse_query("REF_AREA: ", {"REF_AREA", "ICP_ITEM"})
+        parse_query("REF_AREA: ", {"REF_AREA", "ICP_ITEM"})
 
 
 @pytest.mark.asyncio
@@ -72,18 +72,17 @@ async def test_structured_search_execution() -> None:
     cat.set_entries(entries)
     await cat.build()
 
-    # Unknown field falls back to broad search gracefully without raising ValueError
-    res_fallback = await cat.search("UNKNOWN_FIELD: Germany", limit=5)
-    assert isinstance(res_fallback, CatalogMatches)
+    with pytest.raises(UnknownIndexedFieldError, match="UNKNOWN_FIELD"):
+        await cat.search("UNKNOWN_FIELD: Germany", limit=5)
 
-    res = await cat.search("REF_AREA: Germany", limit=5)
+    res, _ = await cat.search("REF_AREA: Germany", limit=5)
     assert {m.code for m in res} == {"A", "C"}
 
-    res_or = await cat.search("REF_AREA: Germany, Italy", limit=5)
+    res_or, _ = await cat.search("REF_AREA: Germany, Italy", limit=5)
     assert {m.code for m in res_or} == {"A", "B", "C"}
 
-    res_and = await cat.search("REF_AREA: Germany && ICP_ITEM: energy", limit=5)
+    res_and, _ = await cat.search("REF_AREA: Germany && ICP_ITEM: energy", limit=5)
     assert {m.code for m in res_and} == {"A"}
 
-    res_comb = await cat.search("REF_AREA: Germany, France && ICP_ITEM: food", limit=5)
+    res_comb, _ = await cat.search("REF_AREA: Germany, France && ICP_ITEM: food", limit=5)
     assert {m.code for m in res_comb} == {"C", "D"}

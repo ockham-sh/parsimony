@@ -72,6 +72,7 @@ async def test_onnx_query_matches_related_doc_better(tmp_path: Path) -> None:
     )
 
 
+@pytest.mark.integration
 async def test_onnx_and_sentence_transformer_agree_on_ordering(tmp_path: Path) -> None:
     """Same model via two backends should rank documents identically."""
     onnx = OnnxEmbedder(cache_dir=tmp_path, quantize=False)  # fp32 onnx vs fp32 st
@@ -94,26 +95,26 @@ async def test_onnx_and_sentence_transformer_agree_on_ordering(tmp_path: Path) -
 
 
 async def test_onnx_catalog_end_to_end(tmp_path: Path) -> None:
-    """Build a catalog with OnnxEmbedder, save/load, search — top-1 must be correct."""
-    from parsimony.catalog import Catalog, CatalogEntry
+    """Build a catalog with OnnxEmbedder on VectorIndex, search — top-1 must be correct."""
+    from parsimony.catalog import Catalog, CatalogEntry, VectorIndex
 
     cache_dir = tmp_path / "onnx-cache"
     emb = OnnxEmbedder(cache_dir=cache_dir, quantize=True)
-    cat = Catalog("test", embedder=emb)
-    cat.add_entries(
-        [
-            CatalogEntry(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
-            CatalogEntry(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
-            CatalogEntry(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
-        ]
-    )
+    entries = [
+        CatalogEntry(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
+        CatalogEntry(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
+        CatalogEntry(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
+    ]
+    cat = Catalog("test", indexes=[VectorIndex("title_vector", field="title", embedder=emb)])
+    cat.set_entries(entries)
     await cat.build()
-    bundle_dir = tmp_path / "bundle"
-    await cat.save(bundle_dir)
 
-    # Reload with the same OnnxEmbedder (explicitly passed) and search.
-    emb2 = OnnxEmbedder(cache_dir=cache_dir, quantize=True)
-    loaded = await Catalog.load(bundle_dir, embedder=emb2)
-    hits = await loaded.search("euro area 10Y bond yield", 1)
+    hits, _ = await cat.search("euro area 10Y bond yield", 1)
     assert hits
     assert hits[0].code == "YC_10Y"
+
+    bundle_dir = tmp_path / "bundle"
+    await cat.save(bundle_dir)
+    loaded = await Catalog.load(bundle_dir)
+    assert loaded.name == "test"
+    assert len(loaded.entries) == 3

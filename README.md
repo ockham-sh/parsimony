@@ -65,7 +65,7 @@ Catalog snapshots are built directly from entries and catalog primitives:
 
 ```python
 result = await enumerate_provider()
-entries = entries_from_result(result)
+entries = (await enumerate_provider()).data  # list[CatalogEntry]
 
 catalog = Catalog("provider_catalog")
 catalog.set_entries(entries)

@@ -13,10 +13,10 @@ result = await fred["fred_fetch"](series_id="GDP")
 bundle = Connectors.merge(fred, SDMX)
 ```
 
-## Export a Tool Schema
+## Inspect exposed parameters
 
 ```python
-schema = fred["fred_search"].to_json_schema()
+fred["fred_search"].exposed_signature
 ```
 
-If a public parameter cannot be represented as JSON Schema, bind it first or keep the connector Python-only.
+Bind secrets before passing connectors to untrusted callers.

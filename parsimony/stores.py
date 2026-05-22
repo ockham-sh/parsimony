@@ -14,7 +14,7 @@ import pandas as pd
 from pydantic import BaseModel
 
 from parsimony.catalog import catalog_key, normalize_code, normalize_entity_code
-from parsimony.result import ColumnRole, Result
+from parsimony.result import ColumnRole, TabularResult
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class LoadResult(BaseModel):
     errors: int = 0
 
 
-def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
+def _data_from_result(table: TabularResult) -> list[tuple[str, str, pd.DataFrame]]:
     """Extract (namespace, code, data_frame) per distinct KEY value.
 
     Namespace comes from the KEY column's ``namespace=...``. The returned
@@ -107,7 +107,7 @@ class InMemoryDataStore:
 
     async def load_result(
         self,
-        table: Result,
+        table: TabularResult,
         *,
         force: bool = False,
     ) -> LoadResult:

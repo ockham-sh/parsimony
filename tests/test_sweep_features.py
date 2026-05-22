@@ -114,7 +114,7 @@ async def test_bm25_self_contained(tmp_path: Path) -> None:
 
     # Load the catalog and perform search
     loaded = await Catalog.load(save_path)
-    results = await loaded.search("Unique token", limit=5)
+    results, _ = await loaded.search("Unique token", limit=5)
     assert len(results) == 1
     assert results[0].code == "A"
 
@@ -126,6 +126,6 @@ async def test_bm25_overlap_fallback_on_tiny_corpus() -> None:
     cat.set_entries([CatalogEntry(namespace="ns", code="FXUSDCAD", title="USD/CAD")])
     await cat.build()
 
-    results = await cat.search("USD", limit=5)
+    results, _ = await cat.search("USD", limit=5)
     assert len(results) == 1
     assert results[0].code == "FXUSDCAD"

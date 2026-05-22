@@ -115,7 +115,7 @@ parsimony/
 ├── __init__.py         Public surface (lazy-loaded via PEP 562).
 ├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
 ├── result.py           Result + Provenance + OutputConfig + Column + ColumnRole.
-├── catalog.py          Catalog + CatalogEntry/Match/CatalogMatches + parse_catalog_url.
+├── catalog/            Catalog runtime, indexes, query parsing, snapshot I/O.
 ├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + OnnxEmbedder + LiteLLMEmbeddingProvider.
 ├── indexes.py          FAISS + BM25 + RRF pure functions (private).
 ├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
@@ -136,12 +136,14 @@ Individual connectors live in the `parsimony-connectors` monorepo.
 - **Structural typing over ABCs**: `EmbeddingProvider` is a
   `typing.Protocol` class. Custom embedders match the shape; no
   subclassing required.
-- **Flat module layout**: no subpackages. Each public-surface module is
-  a single file at the top level of `parsimony/`.
+- **Module layout**: connector/result/discover/errors at the top level;
+  `catalog/` is the catalog subpackage; heavy ranking/index helpers live
+  in sibling modules.
 - **Frozen dataclasses + immutable collections**: `Connector` is
   `@dataclass(frozen=True)`, `Connectors` is immutable.
-- **Pydantic models at boundaries**: every connector validates params
-  via a Pydantic `BaseModel`.
+- **Typed boundaries**: connector parameters use normal Python signatures
+  (`inspect.Signature.bind`); Pydantic models are used for `Result`,
+  `Provenance`, and catalog row types.
 - **Lazy loading** in `__init__.py` via `__getattr__` (PEP 562) — keeps
   `import parsimony` fast.
 - **Dependency injection** — keyword-only args after `*` in connector

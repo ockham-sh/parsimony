@@ -5,9 +5,15 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from parsimony.catalog import BM25Index, Catalog, CatalogEntry, HybridIndex, VectorIndex, entries_from_result
+from parsimony.catalog import (
+    BM25Index,
+    Catalog,
+    CatalogEntry,
+    HybridIndex,
+    VectorIndex,
+)
 from parsimony.embedder import EmbedderInfo
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 def _entries() -> list[CatalogEntry]:
@@ -18,21 +24,21 @@ def _entries() -> list[CatalogEntry]:
     ]
 
 
-def _result(*, namespace: str | None = "series") -> Result:
-    return Result(
-        data=pd.DataFrame(
-            {
-                "code": ["A", "B", "C"],
-                "title": ["alpha title", "beta title", "gamma title"],
-            }
-        ),
-        output_schema=OutputConfig(
-            columns=[
-                Column(name="code", role=ColumnRole.KEY, namespace=namespace),
-                Column(name="title", role=ColumnRole.TITLE),
-            ]
-        ),
-        provenance=Provenance(source="test", source_description="test"),
+def _enumeration_schema(*, namespace: str | None = "series") -> OutputConfig:
+    return OutputConfig(
+        columns=[
+            Column(name="code", role=ColumnRole.KEY, namespace=namespace),
+            Column(name="title", role=ColumnRole.TITLE),
+        ]
+    )
+
+
+def _enumeration_df() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "code": ["A", "B", "C"],
+            "title": ["alpha title", "beta title", "gamma title"],
+        }
     )
 
 
@@ -53,22 +59,22 @@ async def test_catalog_build_entries_static_indexes_and_ranker() -> None:
 
     await catalog.build()
 
-    hits = await catalog.search("alpha", limit=1)
+    hits, _ = await catalog.search("alpha", limit=1)
     assert hits[0].code == "A"
 
 
 async def test_catalog_build_result_uses_key_namespace() -> None:
     catalog = Catalog("artifact", indexes=[BM25Index("title_bm25", field="title")])
-    catalog.set_entries(entries_from_result(_result(namespace="series")))
+    catalog.set_entries(_enumeration_schema(namespace="series").build_entries(_enumeration_df()))
 
     await catalog.build()
 
     assert {entry.namespace for entry in catalog.entries} == {"series"}
 
 
-def test_entries_from_result_requires_key_namespace() -> None:
+def test_build_entries_requires_key_namespace() -> None:
     with pytest.raises(ValueError, match="KEY column must declare namespace"):
-        entries_from_result(_result(namespace=None))
+        _enumeration_schema(namespace=None).build_entries(_enumeration_df())
 
 
 async def test_catalog_mutation_methods_require_rebuild(tmp_path: Path) -> None:
@@ -123,7 +129,7 @@ async def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
     )
 
     await catalog.build()
-    hits = await catalog.search("alpha", limit=5)
+    hits, _ = await catalog.search("alpha", limit=5)
 
     assert [hit.code for hit in hits] == ["A"]
 
@@ -135,6 +141,6 @@ async def test_empty_sparse_index_builds_and_returns_no_ranking() -> None:
     catalog.set_entries([CatalogEntry(namespace="series", code="A", title="alpha")])
 
     await catalog.build()
-    hits = await catalog.search("alpha", limit=5)
+    hits, _ = await catalog.search("alpha", limit=5)
 
     assert list(hits) == []

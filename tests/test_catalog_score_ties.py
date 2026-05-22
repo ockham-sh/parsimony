@@ -1,9 +1,8 @@
-import pandas as pd
 import pytest
 
 from parsimony.catalog import BM25Index, CatalogEntry, VectorIndex
 from parsimony.embedder import EmbedderInfo
-from parsimony.ranking import Ranking, RankingSet, ranking_from_scores
+from parsimony.ranking import RankedItem, Ranking, RankingSet, ranking_from_scores
 
 
 class _LiteralEmbedder:
@@ -43,7 +42,7 @@ class _FixedRanker:
 
     def __call__(self, rankings: RankingSet, *, limit: int) -> Ranking:
         del rankings, limit
-        return Ranking(pd.DataFrame([{"namespace": "test", "code": self.code, "rank": 0, "score": 1.0}]))
+        return Ranking((RankedItem(namespace="test", code=self.code, rank=0, score=1.0),))
 
 
 @pytest.mark.asyncio
@@ -52,11 +51,11 @@ async def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
     await index.build(_entries())
 
     ranking = await index.ranking("query", limit=1)
-    table = ranking.to_table().sort_values("code").reset_index(drop=True)
+    items = sorted(ranking.items, key=lambda item: item.code)
 
-    assert list(table["code"]) == ["A", "B"]
-    assert list(table["rank"]) == [0, 0]
-    assert table.loc[0, "score"] == table.loc[1, "score"]
+    assert [item.code for item in items] == ["A", "B"]
+    assert [item.rank for item in items] == [0, 0]
+    assert items[0].score == items[1].score
 
 
 @pytest.mark.asyncio
@@ -98,11 +97,11 @@ async def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
     )
 
     ranking = await index.ranking("instantaneous forward rate one year", limit=1)
-    table = ranking.to_table().sort_values("code").reset_index(drop=True)
+    items = sorted(ranking.items, key=lambda item: item.code)
 
-    assert list(table["code"]) == ["A", "B"]
-    assert list(table["rank"]) == [0, 0]
-    assert table.loc[0, "score"] == table.loc[1, "score"]
+    assert [item.code for item in items] == ["A", "B"]
+    assert [item.rank for item in items] == [0, 0]
+    assert items[0].score == items[1].score
 
 
 def test_ranking_from_scores_uses_competition_rank_and_keeps_boundary_group() -> None:
@@ -119,8 +118,6 @@ def test_ranking_from_scores_uses_competition_rank_and_keeps_boundary_group() ->
         limit=4,
     )
 
-    table = ranking.to_table()
-
-    assert list(table["code"]) == ["A", "B", "C", "D", "E", "F"]
-    assert list(table["rank"]) == [0, 0, 2, 3, 3, 3]
-    assert list(table["score"]) == [10.0, 10.0, 9.0, 8.0, 8.0, 8.0]
+    assert [item.code for item in ranking.items] == ["A", "B", "C", "D", "E", "F"]
+    assert [item.rank for item in ranking.items] == [0, 0, 2, 3, 3, 3]
+    assert [item.score for item in ranking.items] == [10.0, 10.0, 9.0, 8.0, 8.0, 8.0]

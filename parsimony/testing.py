@@ -1,23 +1,29 @@
 """Conformance checks for ``parsimony`` plugins.
 
-Two checks — the minimal integrity set every official plugin must pass:
+Four checks — the minimal integrity set every official plugin must pass:
 
 1. :func:`_check_connectors_exported` — module exports ``CONNECTORS``
    (a :class:`Connectors` with at least one entry).
-2. :func:`_check_descriptions_non_empty` — every connector has a description
-   (no silently empty tool schemas).
+2. :func:`_check_descriptions_non_empty` — every connector has a non-empty
+   description within length bounds (20–800 chars).
+3. :func:`_check_enumerator_return_type` — enumerators annotate
+   ``list[CatalogEntry]`` return types.
+4. :func:`_check_flat_public_params` — public connector parameters are flat
+   (no bundled ``params: BaseModel`` surface).
+
 Two entry points:
 
 * :func:`assert_plugin_valid` — procedural, raises :class:`ConformanceError`.
-* :class:`ProviderTestSuite` — pytest-native base class with 4 ``test_*``
-  methods; :mod:`pytest` is imported lazily inside them.
+* :class:`ProviderTestSuite` — pytest-native base class; :mod:`pytest` is
+  imported lazily inside optional entry-point tests.
 """
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable, Iterable
 from types import ModuleType
-from typing import Any, ClassVar
+from typing import Any, ClassVar, get_type_hints
 
 from parsimony.connector import Connector, Connectors
 
@@ -83,42 +89,92 @@ def _check_connectors_exported(module: ModuleType) -> Connectors:
 def _check_descriptions_non_empty(module: ModuleType) -> None:
     connectors: Connectors = module.CONNECTORS
     for c in connectors:
-        if not c.description or not c.description.strip():
+        desc = (c.description or "").strip()
+        if not desc:
             raise ConformanceError(
                 "check_descriptions_non_empty",
                 f"connector {c.name!r} has an empty description",
+            )
+        if len(desc) < 20:
+            raise ConformanceError(
+                "check_descriptions_non_empty",
+                f"connector {c.name!r} description is too short ({len(desc)} chars; minimum 20)",
+            )
+        if len(desc) > 800:
+            raise ConformanceError(
+                "check_descriptions_non_empty",
+                f"connector {c.name!r} description is too long ({len(desc)} chars; maximum 800)",
+            )
+
+
+def _check_flat_public_params(module: ModuleType) -> None:
+    """Public connector parameters must be flat — no ``params: BaseModel`` surface."""
+    from pydantic import BaseModel
+
+    from parsimony.connector import _strip_annotated
+
+    for c in module.CONNECTORS:
+        if "params" not in c.exposed_signature.parameters:
+            continue
+        try:
+            hints = get_type_hints(c.fn, include_extras=True)
+        except Exception:  # noqa: BLE001
+            hints = {}
+        ann = hints.get("params", c.exposed_signature.parameters["params"].annotation)
+        if ann is inspect.Parameter.empty:
+            continue
+        ann = _strip_annotated(ann)
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            raise ConformanceError(
+                "check_flat_public_params",
+                (
+                    f"connector {c.name!r} exposes bundled params: {ann.__name__}. "
+                    "Public connector parameters must be flat function parameters; "
+                    "use Pydantic models only for internal validation."
+                ),
+                next_action="Flatten the connector signature to top-level parameters.",
+            )
+
+
+
+
+def _check_enumerator_return_type(module: ModuleType) -> None:
+    for c in module.CONNECTORS:
+        if "enumerator" not in c.tags:
+            continue
+        ann = c.fn.__annotations__.get("return")
+        if ann is None:
+            raise ConformanceError(
+                "check_enumerator_return_type",
+                f"connector {c.name!r}: enumerator must annotate return type",
+            )
+        return_str = str(ann)
+        if "CatalogEntry" not in return_str:
+            raise ConformanceError(
+                "check_enumerator_return_type",
+                f"connector {c.name!r}: enumerator return must be list[CatalogEntry]",
+            )
+        if "DataFrame" in return_str:
+            raise ConformanceError(
+                "check_enumerator_return_type",
+                f"connector {c.name!r}: enumerator must not return pd.DataFrame",
             )
 
 
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
+    "check_enumerator_return_type": _check_enumerator_return_type,
+    "check_flat_public_params": _check_flat_public_params,
 }
 
 
-def _validate_skip_list(skip: Iterable[str]) -> set[str]:
-    skip_set = set(skip)
-    unknown = skip_set - set(_CHECKS)
-    if unknown:
-        raise ValueError(f"unknown conformance check(s) in skip=: {sorted(unknown)}. Known checks: {sorted(_CHECKS)}")
-    return skip_set
-
-
-def assert_plugin_valid(
-    module: ModuleType,
-    *,
-    skip: Iterable[str] = (),
-) -> None:
+def assert_plugin_valid(module: ModuleType) -> None:
     """Assert that *module* conforms to the ``parsimony`` plugin contract.
 
     Raises :class:`ConformanceError` on the first failure.
     """
-    skip_set = _validate_skip_list(skip)
-    if "check_connectors_exported" in skip_set:
-        raise ValueError("check_connectors_exported is not skippable — it sets up every other check")
-    for name, fn in _CHECKS.items():
-        if name in skip_set:
-            continue
+    for fn in _CHECKS.values():
         fn(module)
 
 
@@ -156,9 +212,9 @@ class ProviderTestSuite:
     * :attr:`module` — the already-imported plugin module.
     * :attr:`module_path` — the dotted import path of the CONNECTORS-exporting module.
 
-    Pytest discovers the four inherited ``test_*`` methods — one per
-    conformance check plus :meth:`test_entry_point_resolves` when
-    :attr:`entry_point_name` is set.
+    Pytest discovers :meth:`test_plugin_conforms` (all three checks via
+    :func:`assert_plugin_valid`) plus optional :meth:`test_entry_point_resolves`
+    when :attr:`entry_point_name` is set.
     """
 
     module: ClassVar[ModuleType | None] = None
@@ -175,11 +231,9 @@ class ProviderTestSuite:
             return importlib.import_module(cls.module_path)
         raise TypeError(f"{cls.__name__} must set either `module = <module>` or `module_path = 'package.submodule'`")
 
-    def test_connectors_exported(self) -> None:
-        _check_connectors_exported(self._resolve_module())
-
-    def test_descriptions_non_empty(self) -> None:
-        _check_descriptions_non_empty(self._resolve_module())
+    def test_plugin_conforms(self) -> None:
+        """Run every registered conformance check against the plugin module."""
+        assert_plugin_valid(self._resolve_module())
 
     def test_entry_point_resolves(self) -> None:
         """Verify the plugin is installed under ``parsimony.providers``.

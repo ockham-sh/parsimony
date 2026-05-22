@@ -13,7 +13,7 @@ make format   # ruff format + auto-fix
 |------|-------|
 | Decorators, `Connectors` | `parsimony/connector.py` |
 | Result types, `OutputConfig` | `parsimony/result.py` |
-| `Catalog` | `parsimony/catalog.py` |
+| `Catalog` | `parsimony/catalog/catalog.py` (package `parsimony.catalog`) |
 | Plugin discovery | `parsimony/discover.py` |
 | CLI (`list`, `cache`) | `parsimony/cli.py` |
 | Global cache (root, subdirs, `TTLDiskCache`) | `parsimony/cache.py` |

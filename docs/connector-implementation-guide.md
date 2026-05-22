@@ -14,7 +14,7 @@ async def my_source_fetch(series_id: str, api_key: str = "") -> pd.DataFrame:
     ...
 ```
 
-Use normal Python parameters. Use Pydantic models only when they make the function clearer.
+Use normal Python parameters. Use Pydantic models only inside the connector body for validation — never as a single public ``params`` argument.
 
 ## Binding
 

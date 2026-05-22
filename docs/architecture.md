@@ -28,11 +28,7 @@ The framework builds provenance after a connector succeeds. It records:
 - call-time parameters after binding;
 - source-specific properties added through `Result.with_properties`.
 
-Bound values are omitted. Secret-shaped call-time keys are redacted.
-
-## Tool Projection
-
-JSON Schema is not required for Python execution. MCP and other tool hosts call `Connector.to_json_schema()` when they need a tool schema. Unsupported public parameter types fail at that boundary.
+Bound values are omitted from call-time provenance params.
 
 ## Auth
 

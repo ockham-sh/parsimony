@@ -6,10 +6,9 @@ import hashlib
 
 import pandas as pd
 
-from parsimony.catalog import BM25Index, Catalog, CatalogEntry, entries_from_result
-from parsimony.connector import _validate_loader_output
+from parsimony.catalog import BM25Index, Catalog, CatalogEntry
 from parsimony.embedder import EmbedderInfo
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 class _StubEmbedder:
@@ -32,8 +31,8 @@ class _StubEmbedder:
         return EmbedderInfo(model="stub/hash-sha256", dim=self.DIM, normalize=True, package="test-stub")
 
 
-def _result_with_description_metadata(df: pd.DataFrame) -> Result:
-    config = OutputConfig(
+def _enumeration_schema() -> OutputConfig:
+    return OutputConfig(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="test_ns"),
             Column(name="title", role=ColumnRole.TITLE),
@@ -41,10 +40,9 @@ def _result_with_description_metadata(df: pd.DataFrame) -> Result:
             Column(name="unit", role=ColumnRole.METADATA, namespace="unit"),
         ]
     )
-    return Result(data=df, provenance=Provenance(source="test", source_description="test"), output_schema=config)
 
 
-def test_entries_from_result_keeps_description_as_metadata() -> None:
+def test_build_entries_keeps_description_as_metadata() -> None:
     df = pd.DataFrame(
         {
             "code": ["A.1", "B.2"],
@@ -53,28 +51,13 @@ def test_entries_from_result_keeps_description_as_metadata() -> None:
             "unit": ["USD", "USD"],
         }
     )
-    entries = entries_from_result(_result_with_description_metadata(df))
+    entries = _enumeration_schema().build_entries(df)
 
     by_code = {entry.code: entry for entry in entries}
     assert by_code["A.1"].metadata["description"] == "All outstanding debt held by the public."
     assert by_code["B.2"].metadata["unit"] == "USD"
     assert "description" not in CatalogEntry.model_fields
 
-
-def test_loader_rejects_metadata_columns() -> None:
-    config = OutputConfig(
-        columns=[
-            Column(name="code", role=ColumnRole.KEY, namespace="n"),
-            Column(name="value", role=ColumnRole.DATA),
-            Column(name="definition", role=ColumnRole.METADATA),
-        ]
-    )
-    try:
-        _validate_loader_output(config)
-    except ValueError as exc:
-        assert "Loader output must not include METADATA" in str(exc)
-    else:  # pragma: no cover
-        raise AssertionError("loader metadata column should be rejected")
 
 
 async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
@@ -87,13 +70,12 @@ async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
             "unit": ["USD"] * 10 + ["MWh"],
         }
     )
-    table = _result_with_description_metadata(df)
-    entries = entries_from_result(table)
+    entries = _enumeration_schema().build_entries(df)
 
     title_only = Catalog(name="test_ns")
     title_only.set_entries(entries)
     await title_only.build()
-    title_hits = await title_only.search("renewable wind energy", limit=2)
+    title_hits, _ = await title_only.search("renewable wind energy", limit=2)
     assert not title_hits or title_hits[0].code != "A.1"
 
     description_indexed = Catalog(
@@ -103,6 +85,6 @@ async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
     )
     description_indexed.set_entries(entries)
     await description_indexed.build()
-    hits = await description_indexed.search("renewable wind energy", limit=2)
+    hits, _ = await description_indexed.search("renewable wind energy", limit=2)
     assert hits[0].code == "A.1"
     assert hits[0].score > 0

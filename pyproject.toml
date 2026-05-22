@@ -135,6 +135,4 @@ omit = [
     # FAISS helpers are pure wrappers around a native library; exercised by
     # the Catalog save/load integration tests, not unit tests.
     "parsimony/indexes.py",
-    # Catalog touches FAISS + HF Hub — covered by integration tests.
-    "parsimony/catalog.py",
 ]

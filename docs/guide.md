@@ -29,10 +29,10 @@ bundle = Connectors.merge(Connectors([configured]), other_connectors)
 result = await bundle["fetch_price"]("AAPL")
 ```
 
-## Tool Schemas
+## Exposed signature
 
 ```python
-schema = configured.to_json_schema()
+list(configured.exposed_signature.parameters)
 ```
 
-Schema projection is optional. Python-only connectors can use richer parameter types and fail only when exported as tools.
+After `bind`, only unbound parameters remain in the exposed signature.

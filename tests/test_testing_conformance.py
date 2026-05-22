@@ -3,9 +3,10 @@
 from types import ModuleType
 from typing import Any
 
+import pandas as pd
 import pytest
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, connector, enumerator
 
 
 def _mk_connector(
@@ -75,23 +76,56 @@ def test_connector_with_empty_description_fails() -> None:
         assert_plugin_valid(mod)
 
 
-def test_skip_unknown_check_raises() -> None:
-    from parsimony.testing import assert_plugin_valid
+def test_description_too_short_fails() -> None:
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
-    mod = _make_module("pkg_bad_skip", connectors=Connectors([_mk_connector("good")]))
-    with pytest.raises(ValueError, match="unknown"):
-        assert_plugin_valid(mod, skip=["not_a_real_check"])
+    toy = _mk_connector("fine", doc="Too short desc.")
+    mod = _make_module("pkg_short_desc", connectors=Connectors([toy]))
+    with pytest.raises(ConformanceError, match="too short"):
+        assert_plugin_valid(mod)
 
 
-def test_connectors_exported_not_skippable() -> None:
-    from parsimony.testing import assert_plugin_valid
+def test_description_too_long_fails() -> None:
+    from parsimony.testing import ConformanceError, assert_plugin_valid
 
-    mod = _make_module("pkg_skip_first", connectors=Connectors([_mk_connector("x")]))
-    with pytest.raises(ValueError, match="not skippable"):
-        assert_plugin_valid(mod, skip=["check_connectors_exported"])
+    toy = _mk_connector("fine", doc="x" * 801)
+    mod = _make_module("pkg_long_desc", connectors=Connectors([toy]))
+    with pytest.raises(ConformanceError, match="too long"):
+        assert_plugin_valid(mod)
+
+
+def test_enumerator_missing_return_annotation_fails() -> None:
+    from parsimony.testing import ConformanceError, assert_plugin_valid
+
+    @enumerator(name="bad_enum")
+    async def bad_enum():
+        """An enumerator without a return type annotation."""
+        return []
+
+    mod = _make_module("pkg_bad_enum_ann", connectors=Connectors([bad_enum]))
+    with pytest.raises(ConformanceError, match="check_enumerator_return_type"):
+        assert_plugin_valid(mod)
+
+
+def test_enumerator_dataframe_return_annotation_fails() -> None:
+    from parsimony.testing import ConformanceError, assert_plugin_valid
+
+    @enumerator(name="df_enum")
+    async def df_enum() -> pd.DataFrame:
+        """An enumerator that declares DataFrame return type."""
+        return pd.DataFrame()
+
+    mod = _make_module("pkg_df_enum", connectors=Connectors([df_enum]))
+    with pytest.raises(ConformanceError, match="check_enumerator_return_type"):
+        assert_plugin_valid(mod)
 
 
 def test_iter_check_names_contains_minimal_checks() -> None:
     from parsimony.testing import iter_check_names
 
-    assert set(iter_check_names()) == {"check_connectors_exported", "check_descriptions_non_empty"}
+    assert set(iter_check_names()) == {
+        "check_connectors_exported",
+        "check_descriptions_non_empty",
+        "check_enumerator_return_type",
+        "check_flat_public_params",
+    }

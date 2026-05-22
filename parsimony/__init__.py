@@ -7,8 +7,7 @@ via :pep:`562` so that ``import parsimony`` stays cheap.
 * :class:`Connectors` is an immutable collection of :class:`Connector` objects;
   callers use ``await connectors[name](**kwargs)``. The callable signature is
   the connector's parameter surface.
-* :class:`CatalogBackend` is the structural contract every catalog matches.
-  :class:`Catalog` is the canonical implementation (Parquet rows + HybridIndex
+* :class:`Catalog` is the canonical implementation (Parquet rows + HybridIndex
   over FAISS vectors and BM25 keywords with ZScoreFusion) and is loaded lazily.
 * Connector plugins are discovered through the ``parsimony.providers``
   entry-point group via :mod:`parsimony.discover`.
@@ -34,16 +33,8 @@ if TYPE_CHECKING:
         CatalogEntry,
         CatalogIndex,
         CatalogMatch,
-        CatalogMatches,
         HybridIndex,
         VectorIndex,
-        normalize_code,
-    )
-    from parsimony.ranking import (
-        RRF,
-        Ranker,
-        Ranking,
-        ZScoreFusion,
     )
 from parsimony.connector import (
     Connector,
@@ -62,14 +53,7 @@ from parsimony.errors import (
     RateLimitError,
     UnauthorizedError,
 )
-from parsimony.result import (
-    Column,
-    ColumnRole,
-    OutputConfig,
-    Provenance,
-    Result,
-)
-from parsimony.stores import InMemoryDataStore, LoadResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
 try:
     __version__ = version("parsimony-core")
@@ -78,38 +62,18 @@ except PackageNotFoundError:
 
 
 __all__ = [
-    # --- Connector primitives ---
     "Connector",
     "Connectors",
     "ResultCallback",
     "connector",
     "enumerator",
     "loader",
-    # --- Result system ---
+    "Result",
+    "TabularResult",
+    "OutputConfig",
     "Column",
     "ColumnRole",
-    "OutputConfig",
     "Provenance",
-    "Result",
-    # --- Ranking ---
-    "RRF",
-    "Ranker",
-    "Ranking",
-    "ZScoreFusion",
-    # --- Catalog (lazy) ---
-    "BM25Index",
-    "Catalog",
-    "CatalogEntry",
-    "CatalogIndex",
-    "CatalogMatch",
-    "CatalogMatches",
-    "HybridIndex",
-    "VectorIndex",
-    "normalize_code",
-    # --- Data persistence ---
-    "InMemoryDataStore",
-    "LoadResult",
-    # --- Errors ---
     "ConnectorError",
     "EmptyDataError",
     "ParseError",
@@ -117,6 +81,19 @@ __all__ = [
     "ProviderError",
     "RateLimitError",
     "UnauthorizedError",
+    "cache",
+    "discover",
+    "Catalog",
+    "CatalogEntry",
+    "CatalogMatch",
+    "BM25Index",
+    "VectorIndex",
+    "HybridIndex",
+    "CatalogIndex",
+    "RRF",
+    "Ranker",
+    "Ranking",
+    "ZScoreFusion",
 ]
 
 
@@ -129,10 +106,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "CatalogEntry": ("parsimony.catalog", "CatalogEntry"),
     "CatalogIndex": ("parsimony.catalog", "CatalogIndex"),
     "CatalogMatch": ("parsimony.catalog", "CatalogMatch"),
-    "CatalogMatches": ("parsimony.catalog", "CatalogMatches"),
     "HybridIndex": ("parsimony.catalog", "HybridIndex"),
     "VectorIndex": ("parsimony.catalog", "VectorIndex"),
-    "normalize_code": ("parsimony.catalog", "normalize_code"),
     "RRF": ("parsimony.ranking", "RRF"),
     "Ranker": ("parsimony.ranking", "Ranker"),
     "Ranking": ("parsimony.ranking", "Ranking"),

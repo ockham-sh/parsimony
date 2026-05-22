@@ -6,10 +6,18 @@ import asyncio
 
 import pandas as pd
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from parsimony.catalog import CatalogEntry
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
-from parsimony.result import REDACTED, Column, ColumnRole, OutputConfig, Result
+from parsimony.result import Column, ColumnRole, OutputConfig, Result, TabularResult
+
+
+class _MacroParams(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    country: str
+    indicator: str
 
 SEARCH_OUTPUT = OutputConfig(
     columns=[
@@ -132,22 +140,18 @@ class TestConnectorDecorator:
                 return _make_search_df(query)
 
 
-class TestSchemaProjection:
-    def test_to_json_schema_from_plain_signature(self) -> None:
-        schema = demo_search.to_json_schema()
-        assert schema["type"] == "object"
-        assert schema["required"] == ["query"]
-        assert schema["properties"]["query"]["type"] == "string"
+class TestExposedSignature:
+    def test_exposed_signature_lists_unbound_parameters(self) -> None:
+        assert list(demo_search.exposed_signature.parameters) == ["query"]
 
-    def test_default_values_are_optional_in_schema(self) -> None:
+    def test_bind_removes_bound_parameters_from_exposed_signature(self) -> None:
         @connector
-        async def with_default(query: str, limit: int = 10) -> str:
-            """Has a default."""
-            return f"{query}:{limit}"
+        async def keyed(query: str, api_key: str) -> str:
+            """Has a secret-shaped parameter."""
+            return query
 
-        schema = with_default.to_json_schema()
-        assert schema["required"] == ["query"]
-        assert schema["properties"]["limit"]["default"] == 10
+        bound = keyed.bind(api_key="secret")
+        assert list(bound.exposed_signature.parameters) == ["query"]
 
     def test_pydantic_model_is_ordinary_parameter(self) -> None:
         @connector
@@ -155,56 +159,32 @@ class TestSchemaProjection:
             """Accepts a model as one ordinary argument."""
             return payload.query
 
-        schema = model_param.to_json_schema()
-        assert "payload" in schema["properties"]
         result = asyncio.run(model_param(payload=QueryModel(query="GDP")))
         assert result.provenance.params == {"payload": QueryModel(query="GDP")}
 
-    def test_required_secret_named_public_parameter_cannot_be_exported(self) -> None:
-        @connector
-        async def keyed(query: str, api_key: str) -> str:
-            """Has a secret-shaped parameter."""
-            return query
-
-        with pytest.raises(TypeError, match="bind it before tool export"):
-            keyed.to_json_schema()
-
-        assert "api_key" not in keyed.bind(api_key="secret").to_json_schema()["properties"]
-
-    def test_optional_secret_named_public_parameter_is_operator_only_in_schema(self) -> None:
-        @connector
-        async def keyed(query: str, api_key: str = "") -> str:
-            """Has an optional secret-shaped parameter."""
-            return query
-
-        schema = keyed.to_json_schema()
-        assert schema["properties"] == {"query": {"type": "string"}}
-        assert schema["required"] == ["query"]
-
-    def test_non_json_parameter_fails_only_at_schema_projection(self) -> None:
-        @connector
-        async def dataframe_param(frame: pd.DataFrame) -> int:
-            """Python-only connector."""
-            return len(frame)
-
-        result = asyncio.run(dataframe_param(frame=pd.DataFrame({"x": [1, 2]})))
-        assert result.data == 2
-        with pytest.raises(TypeError, match="cannot be converted to JSON schema"):
-            dataframe_param.to_json_schema()
-
 
 class TestEnumerator:
-    def test_enumerator_rejects_data_columns(self) -> None:
-        with pytest.raises(ValueError, match="DATA"):
-            enumerator(output=OutputConfig(columns=[Column(name="value", role=ColumnRole.DATA)]))
-
     def test_enumerator_adds_tag(self) -> None:
-        @enumerator(output=SEARCH_OUTPUT, tags=["demo"])
-        async def enumerate_demo() -> pd.DataFrame:
+        from parsimony.catalog import CatalogEntry
+
+        @enumerator(tags=["demo"])
+        async def enumerate_demo() -> list[CatalogEntry]:
             """Enumerate demo series."""
-            return _make_search_df("x")
+            return [
+                CatalogEntry(namespace="demo", code="A", title="Series A"),
+            ]
 
         assert enumerate_demo.tags == ("enumerator", "demo")
+
+    @pytest.mark.asyncio
+    async def test_enumerator_returning_dataframe_raises_typeerror(self) -> None:
+        @enumerator(name="bad_enumerator")
+        async def bad_enumerator() -> list[CatalogEntry]:
+            """Returns the wrong type at runtime."""
+            return pd.DataFrame({"code": ["A"]})  # type: ignore[return-value]
+
+        with pytest.raises(TypeError, match="bad_enumerator"):
+            await bad_enumerator()
 
 
 class TestLoader:
@@ -212,6 +192,50 @@ class TestLoader:
         output = OutputConfig(columns=[Column(name="id", role=ColumnRole.KEY, namespace="demo")])
         with pytest.raises(ValueError, match="DATA"):
             loader(output=output)
+
+    @pytest.mark.parametrize(
+        ("columns", "match"),
+        [
+            (
+                [
+                    Column(name="id", role=ColumnRole.KEY, namespace="demo"),
+                    Column(name="title", role=ColumnRole.TITLE),
+                    Column(name="value", role=ColumnRole.DATA),
+                ],
+                "TITLE",
+            ),
+            (
+                [
+                    Column(name="id", role=ColumnRole.KEY, namespace="demo"),
+                    Column(name="meta", role=ColumnRole.METADATA),
+                    Column(name="value", role=ColumnRole.DATA),
+                ],
+                "METADATA",
+            ),
+            (
+                [Column(name="value", role=ColumnRole.DATA)],
+                "exactly one KEY",
+            ),
+            (
+                [
+                    Column(name="id1", role=ColumnRole.KEY, namespace="demo"),
+                    Column(name="id2", role=ColumnRole.KEY, namespace="demo"),
+                    Column(name="value", role=ColumnRole.DATA),
+                ],
+                "at most one KEY",
+            ),
+            (
+                [
+                    Column(name="id", role=ColumnRole.KEY),
+                    Column(name="value", role=ColumnRole.DATA),
+                ],
+                "namespace",
+            ),
+        ],
+    )
+    def test_loader_rejects_invalid_output_schema(self, columns: list[Column], match: str) -> None:
+        with pytest.raises(ValueError, match=match):
+            loader(output=OutputConfig(columns=columns))
 
     def test_loader_adds_tag(self) -> None:
         @loader(output=FETCH_OUTPUT, tags=["demo"])
@@ -248,14 +272,32 @@ class TestConnectorExecution:
         with pytest.raises(TypeError, match="Invalid parameters"):
             asyncio.run(demo_search(series_id="GDP"))
 
-    def test_secret_like_call_param_is_redacted_in_raw_provenance(self) -> None:
-        @connector
+    def test_bound_secret_not_in_provenance_params(self) -> None:
+        @connector(secrets=("api_key",))
         async def keyed(query: str, api_key: str) -> str:
-            """Has a secret-shaped parameter."""
+            """Has a declared secret parameter."""
+            return query
+
+        bound = keyed.bind(api_key="secret")
+        result = asyncio.run(bound(query="GDP"))
+        assert result.provenance.params == {"query": "GDP"}
+
+    def test_declared_secret_stripped_from_provenance_at_call_time(self) -> None:
+        @connector(secrets=("api_key",))
+        async def keyed(query: str, api_key: str) -> str:
+            """Has a declared secret parameter."""
             return query
 
         result = asyncio.run(keyed(query="GDP", api_key="secret"))
-        assert result.provenance.params == {"query": "GDP", "api_key": REDACTED}
+        assert result.provenance.params == {"query": "GDP"}
+
+    def test_secrets_unknown_parameter_raises_at_decoration(self) -> None:
+        with pytest.raises(ValueError, match="unknown parameters"):
+
+            @connector(secrets=("typo",))
+            async def bad(query: str, api_key: str) -> str:
+                """Bad secret declaration."""
+                return query
 
 
 class TestConnectorsCollection:
@@ -305,11 +347,33 @@ class TestResultWrap:
         assert result.provenance.source_description == "Real connector docstring."
         assert result.provenance.params == {"series_id": "GDPC1"}
 
+    def test_flat_params_recorded_in_provenance(self) -> None:
+        @connector()
+        async def macro(country: str, indicator: str) -> pd.DataFrame:
+            """Fetch macro indicator for a country."""
+            _MacroParams(country=country, indicator=indicator)
+            return pd.DataFrame({"country": [country], "indicator": [indicator]})
+
+        result = asyncio.run(macro(country="USA", indicator="inflation_consumer_prices_annual"))
+        assert result.provenance.params == {
+            "country": "USA",
+            "indicator": "inflation_consumer_prices_annual",
+        }
+
+    def test_output_plus_result_dataframe_raises_typeerror(self) -> None:
+        @connector(output=FETCH_OUTPUT)
+        async def bad_fetch(series_id: str) -> Result:
+            """Tabular fetch that incorrectly wraps a DataFrame in Result."""
+            return Result(data=_make_fetch_df())
+
+        with pytest.raises(TypeError, match="declares output="):
+            asyncio.run(bad_fetch(series_id="GDPC1"))
+
     def test_connector_properties_are_preserved(self) -> None:
         @connector
         async def with_props(series_id: str) -> Result:
             """Attaches source-specific metadata."""
-            return Result.from_dataframe(_make_fetch_df()).with_properties(series_url="https://example.com/x")
+            return TabularResult.from_dataframe(_make_fetch_df()).with_properties(series_url="https://example.com/x")
 
         result = asyncio.run(with_props(series_id="GDPC1"))
         assert result.provenance.properties == {"series_url": "https://example.com/x"}

@@ -27,17 +27,10 @@ from types import MappingProxyType
 from typing import Any, get_args, get_origin, get_type_hints, overload
 
 import pandas as pd
-from pydantic import TypeAdapter
 
+from parsimony.catalog.models import CatalogEntry
 from parsimony.errors import ParseError
-from parsimony.result import (
-    REDACTED,
-    SECRET_NAME_PATTERN,
-    ColumnRole,
-    OutputConfig,
-    Provenance,
-    Result,
-)
+from parsimony.result import ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
 logger = logging.getLogger(__name__)
 
@@ -77,27 +70,32 @@ def _mapping_proxy(d: dict[str, Any] | None) -> Mapping[str, Any]:
     return MappingProxyType(dict(d or {}))
 
 
-def _resolve_type(spec: Mapping[str, Any]) -> str:
-    if "type" in spec:
-        return str(spec["type"])
-    any_of = spec.get("anyOf", [])
-    if isinstance(any_of, list):
-        types = [s.get("type") for s in any_of if isinstance(s, dict) and s.get("type") and s["type"] != "null"]
-        if types:
-            return str(types[0])
-    return "any"
+def _param_type_label(param: inspect.Parameter, hints: Mapping[str, Any]) -> str:
+    ann = hints.get(param.name, param.annotation)
+    if ann is inspect.Parameter.empty:
+        return "any"
+    ann = _strip_annotated(ann)
+    if hasattr(ann, "__name__"):
+        return str(ann.__name__)
+    return str(ann).replace("typing.", "")
 
 
-def _summarize_schema(schema: Mapping[str, Any]) -> str:
-    props = schema.get("properties", {})
-    required = set(schema.get("required", []))
-    if not isinstance(props, Mapping):
-        return ""
-    parts: list[str] = []
-    for name, spec in props.items():
-        typ = _resolve_type(spec) if isinstance(spec, Mapping) else "any"
-        suffix = "" if name in required else "?"
-        parts.append(f"{name}{suffix}: {typ}")
+def _exposed_param_rows(c: Connector) -> list[tuple[str, str, bool]]:
+    try:
+        hints = get_type_hints(c.fn, include_extras=True)
+    except Exception:  # noqa: BLE001 - local annotations may be unavailable
+        hints = {}
+    rows: list[tuple[str, str, bool]] = []
+    for name, param in c.exposed_signature.parameters.items():
+        if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            continue
+        required = param.default is inspect.Parameter.empty
+        rows.append((name, _param_type_label(param, hints), required))
+    return rows
+
+
+def _summarize_params(c: Connector) -> str:
+    parts = [f"{name}{'' if required else '?'}: {typ}" for name, typ, required in _exposed_param_rows(c)]
     return ", ".join(parts)
 
 
@@ -135,26 +133,19 @@ def _strip_annotated(ann: Any) -> Any:
     return ann
 
 
-def _annotation_schema(name: str, ann: Any) -> dict[str, Any]:
-    if ann is inspect.Signature.empty:
-        raise TypeError(f"parameter {name!r} must be annotated to build a JSON schema")
-    try:
-        schema = TypeAdapter(_strip_annotated(ann)).json_schema()
-    except Exception as exc:  # noqa: BLE001 - convert arbitrary adapter errors to a stable boundary error
-        raise TypeError(f"parameter {name!r} with annotation {ann!r} cannot be converted to JSON schema") from exc
-    if not isinstance(schema, dict):
-        raise TypeError(f"parameter {name!r} produced a non-object JSON schema")
-    schema.pop("title", None)
-    return schema
-
-
-def _sanitize_provenance_params(values: Mapping[str, Any]) -> dict[str, Any]:
-    return {k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v) for k, v in values.items()}
-
-
 def _public_signature(signature: inspect.Signature, bound: Mapping[str, Any]) -> inspect.Signature:
     params = [p for name, p in signature.parameters.items() if name not in bound]
     return signature.replace(parameters=params)
+
+
+def _validate_secrets(signature: inspect.Signature, secrets: tuple[str, ...]) -> None:
+    """Raise if any name in *secrets* is not a parameter of *signature*."""
+    if not secrets:
+        return
+    param_names = set(signature.parameters)
+    unknown = sorted(set(secrets) - param_names)
+    if unknown:
+        raise ValueError(f"secrets references unknown parameters: {unknown}")
 
 
 # ---------------------------------------------------------------------------
@@ -181,49 +172,13 @@ class Connector:
     properties: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     bound_arguments: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), repr=False)
+    secrets: tuple[str, ...] = ()
     _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
 
     @property
     def exposed_signature(self) -> inspect.Signature:
         """Signature currently visible to callers after binding."""
         return _public_signature(self.signature, self.bound_arguments)
-
-    def to_json_schema(self) -> dict[str, Any]:
-        """Return a JSON Schema for the currently exposed parameters.
-
-        This is a projection for MCP/tooling boundaries. Python connectors may
-        contain parameters that cannot be represented as JSON Schema; those fail
-        here, not at connector definition time.
-        """
-        properties: dict[str, Any] = {}
-        required: list[str] = []
-        try:
-            hints = get_type_hints(self.fn, include_extras=True)
-        except Exception:  # noqa: BLE001 - schema projection reports unsupported annotations per parameter
-            hints = getattr(self.fn, "__annotations__", {})
-        for name, param in self.exposed_signature.parameters.items():
-            if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
-                raise TypeError(
-                    f"connector {self.name!r}: variadic parameter {name!r} cannot be exposed as JSON schema"
-                )
-            if SECRET_NAME_PATTERN.search(name):
-                if param.default is inspect.Parameter.empty:
-                    raise TypeError(
-                        f"connector {self.name!r}: parameter {name!r} looks like a secret; bind it before tool export"
-                    )
-                continue
-            ann = hints.get(name, param.annotation)
-            schema = _annotation_schema(name, ann)
-            if param.default is not inspect.Parameter.empty:
-                schema = dict(schema)
-                schema["default"] = param.default
-            properties[name] = schema
-            if param.default is inspect.Parameter.empty:
-                required.append(name)
-        out: dict[str, Any] = {"type": "object", "properties": properties}
-        if required:
-            out["required"] = required
-        return out
 
     def with_callback(self, callback: ResultCallback) -> Connector:
         """Return a new :class:`Connector` with *callback* appended to its post-fetch hooks."""
@@ -251,25 +206,35 @@ class Connector:
     def _wrap_result(self, raw: Any, call_params: Mapping[str, Any]) -> Result:
         """Wrap a connector return value in a :class:`Result` with framework-built provenance."""
         connector_properties: dict[str, Any] = dict(raw.provenance.properties) if isinstance(raw, Result) else {}
+        safe_call_params = {k: v for k, v in call_params.items() if k not in self.secrets}
         provenance = Provenance.model_construct(
             source=self.name,
             source_description=self.description,
             fetched_at=datetime.now(UTC),
-            params=_sanitize_provenance_params(call_params),
+            params=dict(safe_call_params),
             properties=connector_properties,
         )
 
-        if isinstance(raw, Result):
-            return Result(
-                data=raw.data,
-                provenance=provenance,
-                output_schema=raw.output_schema,
+        if isinstance(raw, TabularResult):
+            return raw.model_copy(update={"provenance": provenance})
+        if isinstance(raw, list) and all(isinstance(item, CatalogEntry) for item in raw):
+            return Result(data=raw, provenance=provenance)
+        if "enumerator" in self.tags and isinstance(raw, (pd.DataFrame, pd.Series)):
+            raise TypeError(
+                f"connector {self.name!r}: enumerator must return list[CatalogEntry], not a DataFrame"
             )
+        if isinstance(raw, Result):
+            if self.output_config is not None and isinstance(raw.data, (pd.DataFrame, pd.Series)):
+                raise TypeError(
+                    f"connector {self.name!r} declares output= but returned Result(data={type(raw.data).__name__}). "
+                    "Return the DataFrame directly, or return output.build_table_result(df).with_properties(...)."
+                )
+            return Result(data=raw.data, provenance=provenance)
         if self.output_config is not None and isinstance(raw, (pd.DataFrame, pd.Series)):
             result = self.output_config.build_table_result(raw)
             return result.model_copy(update={"provenance": provenance})
         if isinstance(raw, (pd.DataFrame, pd.Series)):
-            return Result(data=pd.DataFrame(raw), provenance=provenance)
+            return TabularResult(data=pd.DataFrame(raw), provenance=provenance)
         return Result(data=raw, provenance=provenance)
 
     def _bind_call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -280,7 +245,7 @@ class Connector:
             raise TypeError(f"Invalid parameters for connector {self.name!r}: {exc}") from exc
         call_bound.apply_defaults()
         call_params = dict(call_bound.arguments)
-        all_params = {**self.bound_arguments, **call_params}
+        all_params = {**self.bound_arguments, **dict(call_bound.arguments)}
         try:
             self.signature.bind(**all_params)
         except TypeError as exc:
@@ -314,13 +279,6 @@ class Connector:
 # ---------------------------------------------------------------------------
 
 
-def _schema_or_empty(c: Connector) -> dict[str, Any]:
-    try:
-        return c.to_json_schema()
-    except TypeError:
-        return {"type": "object", "properties": {}}
-
-
 def describe_connector(c: Connector) -> str:
     """Multi-line human- and LLM-readable description of *c*."""
     lines: list[str] = []
@@ -331,24 +289,15 @@ def describe_connector(c: Connector) -> str:
     lines.append(c.description)
     lines.append("")
 
-    schema = _schema_or_empty(c)
-    props: dict[str, Any] = schema.get("properties", {})
-    required: set[str] = set(schema.get("required", []))
-    if props:
+    param_rows = _exposed_param_rows(c)
+    if param_rows:
         lines.append("Parameters:")
-        for fname, spec in props.items():
-            typ = _resolve_type(spec)
-            req_label = "required" if fname in required else "optional"
+        for fname, typ, required in param_rows:
+            req_label = "required" if required else "optional"
             line = f"  {fname}: {typ} ({req_label})"
-            extras: list[str] = []
             ns = c.namespace_hints.get(fname)
             if ns:
-                extras.append(f"namespace={ns!r}")
-            fdesc = spec.get("description") if isinstance(spec, Mapping) else None
-            if fdesc:
-                extras.append(str(fdesc))
-            if extras:
-                line += "  —  " + ", ".join(extras)
+                line += f"  —  namespace={ns!r}"
             lines.append(line)
         lines.append("")
 
@@ -383,23 +332,17 @@ def llm_card(c: Connector) -> str:
             desc += f" Returns: {', '.join(data_cols)}."
     lines.append(desc)
 
-    schema = _schema_or_empty(c)
-    props: dict[str, Any] = schema.get("properties", {})
-    required: set[str] = set(schema.get("required", []))
-    for fname, spec in props.items():
-        typ = _resolve_type(spec)
-        opt = "?" if fname not in required else ""
+    for fname, typ, required in _exposed_param_rows(c):
+        opt = "?" if not required else ""
         ns = c.namespace_hints.get(fname)
         ns_hint = f" [ns:{ns}]" if ns else ""
-        fdesc = spec.get("description", "") if isinstance(spec, Mapping) else ""
-        desc_part = f" — {fdesc}" if fdesc else ""
-        lines.append(f"- {fname}{opt}: {typ}{ns_hint}{desc_part}")
+        lines.append(f"- {fname}{opt}: {typ}{ns_hint}")
 
     return "\n".join(lines)
 
 
 def _connector_repr(c: Connector) -> str:
-    params = _summarize_schema(_schema_or_empty(c))
+    params = _summarize_params(c)
     desc = c.description
     if len(desc) > 80:
         desc = desc[:77] + "..."
@@ -424,6 +367,7 @@ def connector(
     output: OutputConfig | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]: ...
 
 
@@ -435,6 +379,7 @@ def connector(
     output: OutputConfig | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector] | Connector:
     """Decorate an async data connector.
 
@@ -455,6 +400,8 @@ def connector(
             )
         nm = name if name is not None else inner.__name__
         tag_tup = tuple(tags) if tags else ()
+        secret_tup = tuple(secrets)
+        _validate_secrets(sig, secret_tup)
         ns_hints = _mapping_proxy(_namespace_hints_from_signature(inner, sig))
         return Connector(
             name=nm,
@@ -465,29 +412,12 @@ def connector(
             tags=tag_tup,
             properties=_mapping_proxy(properties),
             namespace_hints=ns_hints,
+            secrets=secret_tup,
         )
 
     if fn is not None:
         return decorator(fn)
     return decorator
-
-
-def _validate_enumerator_output(output: OutputConfig) -> None:
-    """Raise if *output* is not valid for catalog enumeration via :func:`enumerator`."""
-    cols = output.columns
-    data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
-    if data_names:
-        raise ValueError(
-            f"Enumerator output must not include DATA columns; remove or reassign roles for: {data_names!r}"
-        )
-    key_cols = [c for c in cols if c.role == ColumnRole.KEY]
-    if len(key_cols) != 1:
-        raise ValueError(
-            f"Enumerator output must define exactly one KEY column for catalog indexing; found {len(key_cols)}"
-        )
-    title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
-    if len(title_cols) != 1:
-        raise ValueError(f"Enumerator output must define exactly one TITLE column; found {len(title_cols)}")
 
 
 def _validate_loader_output(output: OutputConfig) -> None:
@@ -519,6 +449,7 @@ def loader(
     description: str | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate an async **loader** — stricter ``output`` contract than :func:`connector`."""
 
@@ -530,20 +461,25 @@ def loader(
         output=output,
         tags=merged_tags,
         properties=properties,
+        secrets=secrets,
     )
 
 
 def enumerator(
     *,
-    output: OutputConfig,
+    output: OutputConfig | None = None,
     name: str | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
+    secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **enumerator** — stricter ``output`` than :func:`connector`."""
+    """Decorate an async **enumerator** returning ``list[CatalogEntry]``.
 
-    _validate_enumerator_output(output)
+    The wrapped function must return ``list[CatalogEntry]`` (or another
+    ``Iterable[CatalogEntry]``). Legacy ``output=`` on the decorator is ignored.
+    """
+
     merged_tags = ["enumerator", *(tags or [])]
     return connector(
         name=name,
@@ -551,6 +487,7 @@ def enumerator(
         output=output,
         tags=merged_tags,
         properties=dict(properties or {}),
+        secrets=secrets,
     )
 
 

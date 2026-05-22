@@ -18,9 +18,8 @@ import importlib
 import json
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, TextIO
+from typing import Any, TextIO, TypedDict
 
 from parsimony import cache
 from parsimony.discover import iter_providers
@@ -106,8 +105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _PluginRow:
+class _PluginRow(TypedDict):
     name: str
     module: str
     distribution: str | None
@@ -116,28 +114,17 @@ class _PluginRow:
     conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "module": self.module,
-            "distribution": self.distribution,
-            "version": self.version,
-            "connector_count": self.connector_count,
-            "conformance": self.conformance,
-            "conformance_detail": self.conformance_detail,
-        }
-
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
     rows = _collect_rows(strict=strict)
     if json_output:
         payload: dict[str, Any] = {
-            "plugins": [r.to_dict() for r in rows],
+            "plugins": [dict(r) for r in rows],
         }
         print(json.dumps(payload, indent=2))
     else:
         _render_table(rows, sys.stdout)
-    if strict and any(r.conformance == "fail" for r in rows):
+    if strict and any(r["conformance"] == "fail" for r in rows):
         return 1
     return 0
 
@@ -173,15 +160,15 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
                 detail = f"{type(exc).__name__}: {exc}"
 
         rows.append(
-            _PluginRow(
-                name=provider.name,
-                module=provider.module_path,
-                distribution=provider.dist_name,
-                version=provider.version,
-                connector_count=connector_count,
-                conformance=conformance,
-                conformance_detail=detail,
-            )
+            {
+                "name": provider.name,
+                "module": provider.module_path,
+                "distribution": provider.dist_name,
+                "version": provider.version,
+                "connector_count": connector_count,
+                "conformance": conformance,
+                "conformance_detail": detail,
+            }
         )
     return rows
 
@@ -200,10 +187,10 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
     for r in rows:
         body.append(
             [
-                r.name,
-                r.version or "?",
-                str(r.connector_count) if r.connector_count else "?",
-                r.conformance,
+                r["name"],
+                r["version"] or "?",
+                str(r["connector_count"]) if r["connector_count"] else "?",
+                r["conformance"],
             ]
         )
 
@@ -217,8 +204,8 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
     print(file=stream)
     print(f"{len(rows)} plugin(s) discovered.", file=stream)
     for r in rows:
-        if r.conformance == "fail":
-            print(f"  ! {r.name}: {r.conformance_detail}", file=stream)
+        if r["conformance"] == "fail":
+            print(f"  ! {r['name']}: {r['conformance_detail']}", file=stream)
 
 
 # ---------------------------------------------------------------------------

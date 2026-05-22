@@ -18,8 +18,8 @@ from parsimony.catalog import (
     Catalog,
     CatalogEntry,
     VectorIndex,
-    parse_catalog_url,
 )
+from parsimony.catalog.urls import parse_catalog_url
 from parsimony.embedder import EmbedderInfo
 
 # ---------------------------------------------------------------------------
@@ -170,7 +170,7 @@ async def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) ->
 
     loaded = await Catalog.load(f"file://{tmp_path}/snapshot")
     assert loaded.default_field == "description"
-    hits = await loaded.search("alpha", limit=1)
+    hits, _ = await loaded.search("alpha", limit=1)
 
     assert hits[0].code == "B"
 
@@ -197,14 +197,9 @@ async def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
         captured["sub"] = sub
         return object()  # Catalog isn't actually constructed here.
 
-    from parsimony import catalog as catalog_module
+    from parsimony.catalog import urls as catalog_urls
 
-    real_handlers = catalog_module._url_handlers()
-    monkeypatch.setattr(
-        catalog_module,
-        "_url_handlers",
-        lambda: {**real_handlers, "hf": (_spy_load_hf, real_handlers["hf"][1])},
-    )
+    monkeypatch.setattr(catalog_urls, "_load_hf", _spy_load_hf)
 
     await Catalog.load("hf://org/repo/bundle")
 
@@ -220,14 +215,9 @@ async def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
         captured["sub"] = sub
         return object()
 
-    from parsimony import catalog as catalog_module
+    from parsimony.catalog import urls as catalog_urls
 
-    real_handlers = catalog_module._url_handlers()
-    monkeypatch.setattr(
-        catalog_module,
-        "_url_handlers",
-        lambda: {**real_handlers, "hf": (_spy_load_hf, real_handlers["hf"][1])},
-    )
+    monkeypatch.setattr(catalog_urls, "_load_hf", _spy_load_hf)
 
     await Catalog.load("hf://org/repo")
 
@@ -242,14 +232,9 @@ async def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
         captured["root"] = root
         captured["sub"] = sub
 
-    from parsimony import catalog as catalog_module
+    from parsimony.catalog import urls as catalog_urls
 
-    real_handlers = catalog_module._url_handlers()
-    monkeypatch.setattr(
-        catalog_module,
-        "_url_handlers",
-        lambda: {**real_handlers, "hf": (real_handlers["hf"][0], _spy_save_hf)},
-    )
+    monkeypatch.setattr(catalog_urls, "_save_hf", _spy_save_hf)
 
     catalog = Catalog(name="x")
     catalog.set_entries([_entry("x", "A", "alpha")])

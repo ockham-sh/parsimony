@@ -67,7 +67,7 @@ _DEFAULT_RATE_LIMIT_RETRY_AFTER: float = 60.0
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+")
 
 
-def _redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
+def redact_params_for_logging(params: dict[str, Any]) -> dict[str, Any]:
     """Return a shallow copy safe to emit in structured logs (secrets stripped)."""
     redacted: dict[str, Any] = {}
     for name, value in params.items():
@@ -288,9 +288,6 @@ class HttpClient:
             retry_policy=self._retry_policy,
         )
 
-    async def aclose(self) -> None:
-        """No-op retained for backward compatibility."""
-
     def _client_kwargs(self) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "timeout": self._timeout,
@@ -323,7 +320,7 @@ class HttpClient:
                 "http_method": method,
                 "http_url": url,
                 "http_path": path,
-                "http_params": _redact_params_for_logging(request_params),
+                "http_params": redact_params_for_logging(request_params),
             },
         )
 
@@ -460,6 +457,7 @@ __all__ = [
     "map_timeout_error",
     "parse_retry_after",
     "pooled_client",
+    "redact_params_for_logging",
     "redact_sensitive_text",
     "redact_url",
 ]

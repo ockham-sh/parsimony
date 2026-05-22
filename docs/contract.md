@@ -52,9 +52,10 @@ Rules:
 - The docstring or `description=` is required.
 - The callable signature defines the connector parameters.
 - Pydantic models, dataclasses, primitives, and arbitrary Python objects are all ordinary parameter annotations.
+- Public connector parameters must be **flat**: every user-facing parameter appears as a top-level function parameter. Do not expose a bundled ``params: SomeParams`` argument on connectors, enumerators, or loaders. Use Pydantic models internally for validation when helpful.
 - `Connector.bind(**kwargs)` returns a new connector with those parameters fixed.
-- Bound values are not exposed in the connector schema and are not recorded as call-time provenance parameters.
-- `Connector.to_json_schema()` derives a JSON Schema for currently exposed parameters and raises `TypeError` if a public parameter cannot be represented safely.
+- Bound values are not exposed in `exposed_signature` and are not recorded as call-time provenance parameters.
+- Tabular connectors with `output=` should return a `pd.DataFrame` (the framework applies the schema) or `output.build_table_result(df)`. Returning `Result(data=df)` while declaring `output=` is a `TypeError`.
 
 Auth example:
 
@@ -86,7 +87,7 @@ def load(*, api_key: str) -> Connectors:
 
 Rules for optional helpers:
 
-- They must not be required by the kernel, MCP, or conformance suite.
+- They must not be required by the kernel or conformance suite.
 - They must not perform network I/O, download catalogs, enumerate providers, or build
   indexes at import time.
 - They may bind call-time parameters, set provider-local runtime defaults, or return
@@ -103,7 +104,7 @@ from parsimony_fred import CONNECTORS as FRED
 runtime = FRED.bind(api_key=os.environ["FRED_API_KEY"])
 ```
 
-Dynamic hosts (CLI, MCP, agent runtimes) may use `parsimony.discover.load(...)`.
+Dynamic hosts (CLI, agent runtimes) may use `parsimony.discover.load(...)`.
 
 ## Public Kernel Surface
 
@@ -126,15 +127,20 @@ The catalog framework supports two query paths:
    - `FIELD: value`: Searches for `value` in the index of `FIELD`.
    - `FIELD: val1, val2`: Within-field OR composition (uses union of candidates and `max(scores)`).
    - `FIELD: val && FIELD2: val`: Across-fields AND composition (uses intersection of candidates and `sum(scores)`).
-2. **Broad Search (fallback):** Any plain-text query that does not trigger structured query detection. Executed against the `default_field` of the `Catalog` (which defaults to `"title"`, typically a BM25 index).
+2. **Broad Search:** Any plain-text query that does not trigger structured query detection. Executed against the `default_field` of the `Catalog` (which defaults to `"title"` when a title index exists).
 
-If the first field specified in a structured query does not have a configured index, the search gracefully falls back to a broad search against the default field.
+If a structured query names a field that is not indexed, search fails fast with `UnknownIndexedFieldError` listing the indexed fields. There is no fallback to broad search for typoed field names.
+
+When `Catalog(..., indexes=None)`, the framework builds BM25 indexes at `build()` time for `code`, `title`, and every metadata key present on the entries. Explicit `indexes=[...]` means the caller owns the full index policy — no extra indexes are added silently.
 
 ## Conformance
 
 `parsimony.testing.assert_plugin_valid(module)` checks:
 
 1. module exports non-empty `CONNECTORS: Connectors`;
-2. every connector has a non-empty description.
+2. every connector has a non-empty description (20–800 characters);
+3. enumerators annotate `list[CatalogEntry]` return types (not `pd.DataFrame`).
 
-The conformance suite deliberately avoids auth/env policy. Connector packages own that behavior.
+Connectors with auth-bearing parameters must declare them via `secrets=(...)` on `@connector` / `@enumerator` / `@loader`; declared names are stripped from `Provenance.params` at fetch time.
+
+The conformance suite does not enforce runtime auth/env fallback behavior — connector packages own that.

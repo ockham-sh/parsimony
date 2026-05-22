@@ -10,12 +10,12 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, connector
-from parsimony.result import Result
+from parsimony.result import Result, TabularResult
 from parsimony.testing import ConformanceError, ProviderTestSuite
 
 
 async def _demo_fn() -> Result:
-    return Result.from_dataframe(pd.DataFrame({"x": [1]}))
+    return TabularResult.from_dataframe(pd.DataFrame({"x": [1]}))
 
 
 def _make_connector(
@@ -45,9 +45,7 @@ def test_happy_path_suite_passes_all_checks() -> None:
     class Suite(ProviderTestSuite):
         module_path = "test_happy_module"
 
-    s = Suite()
-    s.test_connectors_exported()
-    s.test_descriptions_non_empty()
+    Suite().test_plugin_conforms()
 
 
 def test_missing_module_raises_typeerror() -> None:
@@ -55,7 +53,7 @@ def test_missing_module_raises_typeerror() -> None:
         pass
 
     with pytest.raises(TypeError, match="module"):
-        Suite().test_connectors_exported()
+        Suite().test_plugin_conforms()
 
 
 def test_module_attribute_overrides_module_path() -> None:
@@ -65,7 +63,7 @@ def test_module_attribute_overrides_module_path() -> None:
     class Suite(ProviderTestSuite):
         module = mod
 
-    Suite().test_connectors_exported()
+    Suite().test_plugin_conforms()
 
 
 def test_missing_connectors_export_raises_conformance_error() -> None:
@@ -76,7 +74,7 @@ def test_missing_connectors_export_raises_conformance_error() -> None:
         module = mod
 
     with pytest.raises(ConformanceError, match="CONNECTORS"):
-        Suite().test_connectors_exported()
+        Suite().test_plugin_conforms()
 
 
 def test_entry_point_skips_when_name_not_set() -> None:

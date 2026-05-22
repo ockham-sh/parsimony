@@ -12,7 +12,7 @@ from parsimony.result import (
     ColumnRole,
     OutputConfig,
     Provenance,
-    Result,
+    TabularResult,
 )
 
 
@@ -35,7 +35,7 @@ def _schema() -> OutputConfig:
 
 
 def test_to_arrow_embeds_provenance_metadata() -> None:
-    result = Result(
+    result = TabularResult(
         data=_df(),
         provenance=Provenance(source="fred", source_description="FRED"),
     )
@@ -50,9 +50,9 @@ def test_arrow_roundtrip_schemaless_result() -> None:
         params={"k": "v"},
         properties={"series_url": "https://example.com/UNRATE"},
     )
-    result = Result(data=_df(), provenance=prov)
+    result = TabularResult(data=_df(), provenance=prov)
     table = result.to_arrow()
-    roundtrip = Result.from_arrow(table)
+    roundtrip = TabularResult.from_arrow(table)
     assert roundtrip.output_schema is None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"k": "v"}
@@ -62,13 +62,13 @@ def test_arrow_roundtrip_schemaless_result() -> None:
 
 def test_arrow_roundtrip_with_schema() -> None:
     """When output_schema is set, from_arrow restores it."""
-    result = Result(
+    result = TabularResult(
         data=_df(),
         provenance=Provenance(source="fred", source_description="FRED"),
         output_schema=_schema(),
     )
     table = result.to_arrow()
-    roundtrip = Result.from_arrow(table)
+    roundtrip = TabularResult.from_arrow(table)
     assert roundtrip.output_schema is not None
     cols = roundtrip.output_schema.columns
     assert [c.name for c in cols] == ["code", "title"]
@@ -78,7 +78,7 @@ def test_arrow_roundtrip_with_schema() -> None:
 
 def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
     table = pa.Table.from_pandas(_df(), preserve_index=False)
-    result = Result.from_arrow(table)
+    result = TabularResult.from_arrow(table)
     assert result.output_schema is None
     pd.testing.assert_frame_equal(result.df, _df())
 
@@ -89,7 +89,7 @@ def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
 
 
 def test_parquet_roundtrip(tmp_path: Path) -> None:
-    result = Result(
+    result = TabularResult(
         data=_df(),
         provenance=Provenance(
             source="fred",
@@ -101,7 +101,7 @@ def test_parquet_roundtrip(tmp_path: Path) -> None:
     )
     path = tmp_path / "data.parquet"
     result.to_parquet(path)
-    roundtrip = Result.from_parquet(path)
+    roundtrip = TabularResult.from_parquet(path)
     assert roundtrip.output_schema is not None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"q": "unemployment"}

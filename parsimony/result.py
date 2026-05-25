@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from parsimony.catalog.models import CatalogEntry
+    from parsimony.entity import Entity
 
 import pandas as pd
 import pyarrow as pa
@@ -109,8 +109,9 @@ class Provenance(BaseModel):
     """Where and how tabular data was obtained.
 
     Framework-only type. Connector code never imports this; the framework
-    builds it in :meth:`Connector._wrap_result`. Connectors contribute
-    source-specific extras through :meth:`Result.with_properties`.
+    builds it in :meth:`Connector._wrap_result`. ``properties`` is for
+    framework/internal use (e.g. serialization round-trips), not
+    connector-authored provider metadata.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -141,8 +142,9 @@ class Result(BaseModel):
 
     Use :class:`TabularResult` when ``data`` is a :class:`~pandas.DataFrame`.
     The framework wraps connector return values automatically; connectors
-    should not construct this directly. To attach source-specific extras,
-    use :meth:`with_properties`.
+    should not construct this directly. Put provider facts in returned
+    tabular columns with :class:`ColumnRole` semantics; do not attach
+    provider metadata through ``provenance.properties``.
     """
 
     model_config = {"arbitrary_types_allowed": True}
@@ -151,7 +153,7 @@ class Result(BaseModel):
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
 
     def with_properties(self, **properties: Any) -> Result:
-        """Merge source-specific extras into ``provenance.properties``."""
+        """Merge extras into ``provenance.properties`` (serialization/tests only)."""
         merged = {**self.provenance.properties, **properties}
         new_prov = self.provenance.model_copy(update={"properties": merged})
         return self.model_copy(update={"provenance": new_prov})
@@ -370,8 +372,8 @@ class OutputConfig(BaseModel):
         resolved_config = OutputConfig(columns=resolved_schema)
         return TabularResult(data=new_df, output_schema=resolved_config)
 
-    def build_entries(self, df: pd.DataFrame) -> list[CatalogEntry]:
-        """Apply this schema to *df* to extract a list of :class:`CatalogEntry`.
+    def build_entities(self, df: pd.DataFrame) -> list[Entity]:
+        """Apply this schema to *df* to extract a list of :class:`Entity`.
 
         The schema must declare exactly one ``KEY`` column with a
         ``namespace``. Optional ``TITLE`` and ``METADATA`` columns populate
@@ -380,7 +382,7 @@ class OutputConfig(BaseModel):
         already claimed by ``KEY``, ``TITLE``, or another explicit
         ``METADATA`` entry.
         """
-        from parsimony.catalog.catalog import _entries_from_dataframe
+        from parsimony.entity import entities_from_dataframe
 
         key_cols = [c for c in self.columns if c.role == ColumnRole.KEY]
         if len(key_cols) != 1:
@@ -400,10 +402,12 @@ class OutputConfig(BaseModel):
         else:
             meta_names = explicit_meta
 
-        return _entries_from_dataframe(
+        namespace_column = "entity_namespace" if key_col.namespace == "__row__" else None
+        return entities_from_dataframe(
             df,
             namespace=key_col.namespace,
             key_column=key_col.name,
             title_column=title_name,
             metadata_columns=meta_names,
+            namespace_column=namespace_column,
         )

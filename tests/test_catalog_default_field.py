@@ -12,7 +12,7 @@ from parsimony.catalog import (
     BroadSearchConfigError,
     BroadSearchUnavailableError,
     Catalog,
-    CatalogEntry,
+    Entity,
 )
 
 
@@ -22,7 +22,7 @@ async def test_catalog_default_field_none_resolves_title() -> None:
     assert cat.default_field is None
     assert cat._resolve_default_field() == "title"
 
-    cat.set_entries([CatalogEntry(namespace="ns", code="A", title="Title", metadata={})])
+    cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={})])
     await cat.build()
     matches, diag = await cat.search("Title", limit=5)
     assert len(matches) >= 1
@@ -38,17 +38,14 @@ async def test_explicit_default_field() -> None:
 @pytest.mark.asyncio
 async def test_build_raises_when_explicit_default_has_no_index() -> None:
     cat3 = Catalog("test_cat", default_field="desc")
-    cat3.set_indexes([BM25Index("title_bm25", field="title")])
-    cat3.set_entries([CatalogEntry(namespace="ns", code="A", title="Title", metadata={"desc": "Description"})])
-
     with pytest.raises(BroadSearchConfigError, match="default_field"):
-        await cat3.build()
+        cat3.set_indexes({"title": BM25Index()})
 
 
 @pytest.mark.asyncio
 async def test_broad_search_unavailable_without_title_index() -> None:
-    cat = Catalog("test_cat", indexes=[BM25Index("code_bm25", field="code")])
-    cat.set_entries([CatalogEntry(namespace="ns", code="A", title="Title", metadata={"code": "x"})])
+    cat = Catalog("test_cat", indexes={"code": BM25Index()})
+    cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={"code": "x"})])
     await cat.build()
 
     with pytest.raises(BroadSearchUnavailableError, match="structured"):
@@ -57,8 +54,8 @@ async def test_broad_search_unavailable_without_title_index() -> None:
 
 @pytest.mark.asyncio
 async def test_save_load_roundtrip_default_field() -> None:
-    cat4 = Catalog("test_cat", indexes=[BM25Index("title_bm25", field="title")], default_field="title")
-    cat4.set_entries([CatalogEntry(namespace="ns", code="A", title="Title", metadata={"desc": "Description"})])
+    cat4 = Catalog("test_cat", indexes={"title": BM25Index()}, default_field="title")
+    cat4.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={"desc": "Description"})])
     await cat4.build()
 
     with tempfile.TemporaryDirectory() as tmpdir:

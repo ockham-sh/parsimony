@@ -96,17 +96,17 @@ async def test_onnx_and_sentence_transformer_agree_on_ordering(tmp_path: Path) -
 
 async def test_onnx_catalog_end_to_end(tmp_path: Path) -> None:
     """Build a catalog with OnnxEmbedder on VectorIndex, search — top-1 must be correct."""
-    from parsimony.catalog import Catalog, CatalogEntry, VectorIndex
+    from parsimony.catalog import Catalog, Entity, VectorIndex
 
     cache_dir = tmp_path / "onnx-cache"
     emb = OnnxEmbedder(cache_dir=cache_dir, quantize=True)
     entries = [
-        CatalogEntry(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
-        CatalogEntry(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
-        CatalogEntry(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
+        Entity(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
+        Entity(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
+        Entity(namespace="test", code="HICP", title="Harmonised index of consumer prices euro area"),
     ]
-    cat = Catalog("test", indexes=[VectorIndex("title_vector", field="title", embedder=emb)])
-    cat.set_entries(entries)
+    cat = Catalog("test", indexes={"title": VectorIndex(embedder=emb)})
+    cat.set_entities(entries)
     await cat.build()
 
     hits, _ = await cat.search("euro area 10Y bond yield", 1)
@@ -117,4 +117,4 @@ async def test_onnx_catalog_end_to_end(tmp_path: Path) -> None:
     await cat.save(bundle_dir)
     loaded = await Catalog.load(bundle_dir)
     assert loaded.name == "test"
-    assert len(loaded.entries) == 3
+    assert len(loaded.entities) == 3

@@ -30,16 +30,16 @@ if TYPE_CHECKING:
     from parsimony.catalog import (
         BM25Index,
         Catalog,
-        CatalogEntry,
         CatalogIndex,
         CatalogMatch,
+        Entity,
         HybridIndex,
         VectorIndex,
     )
+    from parsimony.stores import InMemoryDataStore, LoadResult
 from parsimony.connector import (
     Connector,
     Connectors,
-    ResultCallback,
     connector,
     enumerator,
     loader,
@@ -47,6 +47,7 @@ from parsimony.connector import (
 from parsimony.errors import (
     ConnectorError,
     EmptyDataError,
+    InvalidParameterError,
     ParseError,
     PaymentRequiredError,
     ProviderError,
@@ -64,7 +65,6 @@ except PackageNotFoundError:
 __all__ = [
     "Connector",
     "Connectors",
-    "ResultCallback",
     "connector",
     "enumerator",
     "loader",
@@ -76,6 +76,7 @@ __all__ = [
     "Provenance",
     "ConnectorError",
     "EmptyDataError",
+    "InvalidParameterError",
     "ParseError",
     "PaymentRequiredError",
     "ProviderError",
@@ -84,16 +85,19 @@ __all__ = [
     "cache",
     "discover",
     "Catalog",
-    "CatalogEntry",
+    "Entity",
     "CatalogMatch",
     "BM25Index",
     "VectorIndex",
     "HybridIndex",
     "CatalogIndex",
+    "InMemoryDataStore",
+    "LoadResult",
     "RRF",
     "Ranker",
     "Ranking",
     "ZScoreFusion",
+    "MinMaxScoreFusion",
 ]
 
 
@@ -103,15 +107,18 @@ __all__ = [
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "BM25Index": ("parsimony.catalog", "BM25Index"),
     "Catalog": ("parsimony.catalog", "Catalog"),
-    "CatalogEntry": ("parsimony.catalog", "CatalogEntry"),
+    "Entity": ("parsimony.catalog", "Entity"),
     "CatalogIndex": ("parsimony.catalog", "CatalogIndex"),
     "CatalogMatch": ("parsimony.catalog", "CatalogMatch"),
     "HybridIndex": ("parsimony.catalog", "HybridIndex"),
     "VectorIndex": ("parsimony.catalog", "VectorIndex"),
+    "InMemoryDataStore": ("parsimony.stores", "InMemoryDataStore"),
+    "LoadResult": ("parsimony.stores", "LoadResult"),
     "RRF": ("parsimony.ranking", "RRF"),
     "Ranker": ("parsimony.ranking", "Ranker"),
     "Ranking": ("parsimony.ranking", "Ranking"),
     "ZScoreFusion": ("parsimony.ranking", "ZScoreFusion"),
+    "MinMaxScoreFusion": ("parsimony.ranking", "MinMaxScoreFusion"),
 }
 
 

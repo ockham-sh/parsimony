@@ -5,24 +5,22 @@ from parsimony.catalog.indexes import BM25Index, CatalogIndex, HybridIndex, Vect
 from parsimony.catalog.models import (
     BroadSearchConfigError,
     BroadSearchUnavailableError,
-    CatalogEntry,
     CatalogMatch,
     SearchDiagnostic,
     UnknownIndexedFieldError,
-    catalog_key,
-    code_token,
     field_text,
-    normalize_code,
+    field_values,
     normalize_entity_code,
 )
 from parsimony.catalog.query import StructuredQuery, parse_query
+from parsimony.entity import Entity, code_token, entity_key, normalize_namespace
 
 __all__ = [
     "BM25Index",
     "BroadSearchConfigError",
     "BroadSearchUnavailableError",
     "Catalog",
-    "CatalogEntry",
+    "Entity",
     "CatalogIndex",
     "CatalogMatch",
     "HybridIndex",
@@ -30,10 +28,11 @@ __all__ = [
     "StructuredQuery",
     "UnknownIndexedFieldError",
     "VectorIndex",
-    "catalog_key",
     "code_token",
+    "entity_key",
     "field_text",
-    "normalize_code",
+    "field_values",
     "normalize_entity_code",
+    "normalize_namespace",
     "parse_query",
 ]

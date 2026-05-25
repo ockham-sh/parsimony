@@ -6,7 +6,7 @@ import hashlib
 
 import pandas as pd
 
-from parsimony.catalog import BM25Index, Catalog, CatalogEntry
+from parsimony.catalog import BM25Index, Catalog, Entity
 from parsimony.embedder import EmbedderInfo
 from parsimony.result import Column, ColumnRole, OutputConfig
 
@@ -42,7 +42,7 @@ def _enumeration_schema() -> OutputConfig:
     )
 
 
-def test_build_entries_keeps_description_as_metadata() -> None:
+def test_build_entities_keeps_description_as_metadata() -> None:
     df = pd.DataFrame(
         {
             "code": ["A.1", "B.2"],
@@ -51,13 +51,12 @@ def test_build_entries_keeps_description_as_metadata() -> None:
             "unit": ["USD", "USD"],
         }
     )
-    entries = _enumeration_schema().build_entries(df)
+    entries = _enumeration_schema().build_entities(df)
 
     by_code = {entry.code: entry for entry in entries}
     assert by_code["A.1"].metadata["description"] == "All outstanding debt held by the public."
     assert by_code["B.2"].metadata["unit"] == "USD"
-    assert "description" not in CatalogEntry.model_fields
-
+    assert "description" not in Entity.model_fields
 
 
 async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
@@ -70,20 +69,20 @@ async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
             "unit": ["USD"] * 10 + ["MWh"],
         }
     )
-    entries = _enumeration_schema().build_entries(df)
+    entries = _enumeration_schema().build_entities(df)
 
     title_only = Catalog(name="test_ns")
-    title_only.set_entries(entries)
+    title_only.set_entities(entries)
     await title_only.build()
     title_hits, _ = await title_only.search("renewable wind energy", limit=2)
     assert not title_hits or title_hits[0].code != "A.1"
 
     description_indexed = Catalog(
         name="test_ns",
-        indexes=[BM25Index("description_bm25", field="description")],
+        indexes={"description": BM25Index()},
         default_field="description",
     )
-    description_indexed.set_entries(entries)
+    description_indexed.set_entities(entries)
     await description_indexed.build()
     hits, _ = await description_indexed.search("renewable wind energy", limit=2)
     assert hits[0].code == "A.1"

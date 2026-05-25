@@ -25,10 +25,12 @@ The framework builds provenance after a connector succeeds. It records:
 - connector name;
 - connector description;
 - fetch timestamp;
-- call-time parameters after binding;
-- source-specific properties added through `Result.with_properties`.
+- call-time parameters after binding.
 
-Bound values are omitted from call-time provenance params.
+Provider facts (series titles, URLs, units, etc.) belong in returned
+DataFrame columns and :class:`~parsimony.result.ColumnRole` schema roles,
+not in ``provenance.properties``. Bound values are omitted from call-time
+provenance params.
 
 ## Auth
 

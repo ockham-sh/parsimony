@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from parsimony.catalog import CatalogEntry
+from parsimony.catalog import Entity
 
 DEFAULT_MODEL = "cross-encoder/ms-marco-MiniLM-L6-v2"
 DEFAULT_MODEL_SUITE = (
@@ -49,7 +49,7 @@ class QueryCase:
 
 @dataclass(frozen=True)
 class Candidate:
-    entry: CatalogEntry
+    entry: Entity
     baseline_rank: int
     baseline_score: float
 
@@ -92,7 +92,7 @@ class ModelSummary:
         return None
 
 
-def _doc_text(entry: CatalogEntry) -> str:
+def _doc_text(entry: Entity) -> str:
     parts = [
         f"catalog: {entry.namespace}",
         f"code: {entry.code}",
@@ -105,13 +105,13 @@ def _doc_text(entry: CatalogEntry) -> str:
     return " | ".join(parts)
 
 
-def _identity(entry: CatalogEntry) -> tuple[str, str]:
+def _identity(entry: Entity) -> tuple[str, str]:
     return (entry.namespace, entry.code)
 
 
-def _base_entries() -> list[CatalogEntry]:
+def _base_entries() -> list[Entity]:
     return [
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="GDPC1",
             title="Real Gross Domestic Product",
@@ -124,7 +124,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "national accounts",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="GDP",
             title="Gross Domestic Product",
@@ -137,7 +137,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "national accounts",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="UNRATE",
             title="Unemployment Rate",
@@ -150,7 +150,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "labor market",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="PAYEMS",
             title="All Employees, Total Nonfarm Payrolls",
@@ -163,7 +163,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "labor market",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="CPIAUCSL",
             title="Consumer Price Index for All Urban Consumers",
@@ -176,7 +176,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "prices",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="CPILFESL",
             title="Consumer Price Index Less Food and Energy",
@@ -189,7 +189,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "prices",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="DGS10",
             title="Market Yield on U.S. Treasury Securities at 10-Year Constant Maturity",
@@ -202,7 +202,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "rates",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="MORTGAGE30US",
             title="30-Year Fixed Rate Mortgage Average in the United States",
@@ -215,7 +215,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "housing",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="HOUST",
             title="Housing Starts: Total New Privately Owned Housing Units Started",
@@ -228,7 +228,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "housing",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fred",
             code="RSAFS",
             title="Advance Retail Sales: Retail Trade and Food Services",
@@ -241,7 +241,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "consumption",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sdmx",
             code="ECB_EXR_D_USD_EUR_SP00_A",
             title="ECB Euro foreign exchange reference rate: U.S. dollar",
@@ -254,7 +254,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "foreign exchange",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sdmx",
             code="OECD_QNA_USA_B1_GE_CQR",
             title="OECD quarterly real GDP for the United States",
@@ -267,7 +267,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "national accounts",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sdmx",
             code="ECB_ICP_M_U2_N_000000_4_ANR",
             title="Euro area HICP inflation annual rate",
@@ -280,7 +280,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "prices",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sdmx",
             code="ILO_UNE_DEU_M",
             title="Germany unemployment rate",
@@ -293,7 +293,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "labor market",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fmp",
             code="AAPL_INCOME_STATEMENT_ANNUAL",
             title="Apple annual income statement",
@@ -306,7 +306,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "company fundamentals",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fmp",
             code="MSFT_BALANCE_SHEET_QUARTERLY",
             title="Microsoft quarterly balance sheet",
@@ -319,7 +319,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "company fundamentals",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="fmp",
             code="SP500_CONSTITUENTS",
             title="S&P 500 constituents",
@@ -332,7 +332,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "equities",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sec",
             code="AAPL_10K_FILINGS",
             title="Apple Form 10-K annual reports",
@@ -345,7 +345,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "filings",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="sec",
             code="BANK_10Q_FILINGS",
             title="Large bank Form 10-Q quarterly reports",
@@ -358,7 +358,7 @@ def _base_entries() -> list[CatalogEntry]:
                 "category": "filings",
             },
         ),
-        CatalogEntry(
+        Entity(
             namespace="treasury",
             code="DAILY_TREASURY_YIELD_CURVE",
             title="Daily Treasury par yield curve rates",
@@ -374,7 +374,7 @@ def _base_entries() -> list[CatalogEntry]:
     ]
 
 
-def _expanded_entries(total: int) -> list[CatalogEntry]:
+def _expanded_entries(total: int) -> list[Entity]:
     entries = list(_base_entries())
     filler_topics = [
         ("imports", "Monthly goods imports by end-use category", "trade flows and imported goods"),
@@ -407,7 +407,7 @@ def _expanded_entries(total: int) -> list[CatalogEntry]:
         frequency = frequencies[i % len(frequencies)]
         geography = "United States" if i % 3 else "Euro area"
         entries.append(
-            CatalogEntry(
+            Entity(
                 namespace=namespace,
                 code=f"{slug.upper()}_{i:03d}",
                 title=f"{title} ({geography}, synthetic {i})",
@@ -489,7 +489,7 @@ def _queries() -> list[QueryCase]:
     ]
 
 
-def _lexical_score(query: str, entry: CatalogEntry) -> float:
+def _lexical_score(query: str, entry: Entity) -> float:
     query_terms = _tokens(query)
     doc_terms = _tokens(_doc_text(entry))
     overlap = len(query_terms & doc_terms)
@@ -503,7 +503,7 @@ def _tokens(text: str) -> set[str]:
     return {token for token in normalized.split() if len(token) > 2}
 
 
-def _candidates(query_case: QueryCase, entries: list[CatalogEntry], size: int) -> list[Candidate]:
+def _candidates(query_case: QueryCase, entries: list[Entity], size: int) -> list[Candidate]:
     scored = sorted(entries, key=lambda entry: (-_lexical_score(query_case.query, entry), entry.namespace, entry.code))
     chosen = _ensure_relevant_present(scored[:size], scored, query_case.relevant, size=size)
     return [
@@ -513,12 +513,12 @@ def _candidates(query_case: QueryCase, entries: list[CatalogEntry], size: int) -
 
 
 def _ensure_relevant_present(
-    chosen: list[CatalogEntry],
-    all_entries: list[CatalogEntry],
+    chosen: list[Entity],
+    all_entries: list[Entity],
     relevant: dict[tuple[str, str], int],
     *,
     size: int,
-) -> list[CatalogEntry]:
+) -> list[Entity]:
     present = {_identity(entry) for entry in chosen}
     relevant_entries = [
         entry for entry in all_entries if _identity(entry) in relevant and _identity(entry) not in present
@@ -580,7 +580,7 @@ def _p95(values: list[float]) -> float:
 
 def _run_size(
     model: Any,
-    entries: list[CatalogEntry],
+    entries: list[Entity],
     query_cases: list[QueryCase],
     size: int,
     repeats: int,
@@ -739,10 +739,7 @@ def main() -> None:
         # Warm up tokenizer/model kernels once so the measured loop is mostly rerank latency.
         _score_pairs(model, query_cases[0].query, _candidates(query_cases[0], entries, min(4, max_size)))
 
-        results = [
-            _run_size(model, entries, query_cases, size=size, repeats=args.repeats)
-            for size in args.sizes
-        ]
+        results = [_run_size(model, entries, query_cases, size=size, repeats=args.repeats) for size in args.sizes]
         summaries.append(ModelSummary(model=model_name, load_seconds=load_seconds, results=results))
         _print_results(results)
 

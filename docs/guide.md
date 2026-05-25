@@ -25,7 +25,7 @@ The configured connector exposes only `symbol`. Provenance records `symbol`, not
 ## Compose Connectors
 
 ```python
-bundle = Connectors.merge(Connectors([configured]), other_connectors)
+bundle = configured + other_connectors
 result = await bundle["fetch_price"]("AAPL")
 ```
 

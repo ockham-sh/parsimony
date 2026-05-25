@@ -136,18 +136,20 @@ class TestConnectorRepr:
         assert "Search for FRED" in r
 
 
+class TestSearch:
+    def test_search_by_name_substring(self) -> None:
+        assert _collection().search("fred").names() == ["fred_fetch", "fred_search"]
+
+    def test_search_by_tags_subset(self) -> None:
+        assert _collection().search("fred", tags=["search", "fred"]).names() == ["fred_search"]
+
+    def test_search_by_property(self) -> None:
+        assert _collection().search("fred", tier="premium").names() == ["fred_fetch"]
+
+    def test_search_blank_query_returns_all(self) -> None:
+        assert _collection().search("  ").names() == _collection().names()
+
+
 class TestFilter:
-    def test_filter_by_name_substring(self) -> None:
-        assert _collection().filter(name="fred").names() == ["fred_fetch", "fred_search"]
-
-    def test_filter_by_tags_subset(self) -> None:
-        assert _collection().filter(tags=["search", "fred"]).names() == ["fred_search"]
-
-    def test_filter_by_property(self) -> None:
-        assert _collection().filter(tier="premium").names() == ["fred_fetch"]
-
     def test_filter_with_predicate(self) -> None:
         assert _collection().filter(lambda c: c.name.startswith("ecb")).names() == ["ecb_search"]
-
-    def test_filter_blank_name_no_filter(self) -> None:
-        assert _collection().filter(name="  ").names() == _collection().names()

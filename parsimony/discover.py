@@ -21,7 +21,7 @@ import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 
-from parsimony.connector import Connectors
+from parsimony.connector import Connector, Connectors
 
 __all__ = ["Provider", "iter_providers", "load", "load_all"]
 
@@ -138,15 +138,18 @@ def load(*names: str) -> Connectors:
     if missing:
         available = sorted(by_name)
         raise LookupError(f"providers not installed: {missing}. Available: {available}")
-    return Connectors.merge(*(by_name[n].load() for n in names))
+    items: list[Connector] = []
+    for n in names:
+        items.extend(by_name[n].load())
+    return Connectors(items)
 
 
 def load_all() -> Connectors:
     """Forgiving: load every installed provider; log and skip failures."""
-    loaded: list[Connectors] = []
+    items: list[Connector] = []
     for p in iter_providers():
         try:
-            loaded.append(p.load())
+            items.extend(p.load())
         except Exception as exc:
             _logger.warning("failed to load %s: %s", p.name, exc)
-    return Connectors.merge(*loaded)
+    return Connectors(items)

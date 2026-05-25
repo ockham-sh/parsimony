@@ -115,13 +115,15 @@ parsimony/
 ├── __init__.py         Public surface (lazy-loaded via PEP 562).
 ├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
 ├── result.py           Result + Provenance + OutputConfig + Column + ColumnRole.
-├── catalog/            Catalog runtime, indexes, query parsing, snapshot I/O.
+├── catalog/            Catalog runtime, indexes, query parsing, search helpers, snapshot I/O.
+├── catalog/search.py   make_local_search_connector and related helpers.
 ├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + OnnxEmbedder + LiteLLMEmbeddingProvider.
-├── indexes.py          FAISS + BM25 + RRF pure functions (private).
+├── indexes.py          FAISS + BM25 pure functions (private).
+├── catalog/indexes.py  BM25Index, VectorIndex, HybridIndex, CatalogIndex.
 ├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
 ├── stores.py           InMemoryDataStore + LoadResult.
 ├── errors.py           ConnectorError hierarchy.
-├── transport.py        HttpClient + pooled_client + map_http_error + redact_url.
+├── transport/          HttpClient, pooled_client, map_http_error, redact_url + helpers.py.
 ├── testing.py          assert_plugin_valid + ProviderTestSuite.
 └── cli.py              Two verbs: `parsimony list`, `parsimony cache`.
 ```
@@ -146,9 +148,7 @@ Individual connectors live in the `parsimony-connectors` monorepo.
   `Provenance`, and catalog row types.
 - **Lazy loading** in `__init__.py` via `__getattr__` (PEP 562) — keeps
   `import parsimony` fast.
-- **Dependency injection** — keyword-only args after `*` in connector
-  functions, bound via `bind()` when an operator supplies values, using
-  the decorator's `env={...}` map).
+- **Dependency injection** — bind operator-supplied values via `Connector.bind()` or `Connectors.bind()`.
 
 ## Reporting bugs
 

@@ -10,7 +10,7 @@ result = await fred["fred_fetch"](series_id="GDP")
 ## Merge Sources
 
 ```python
-bundle = Connectors.merge(fred, SDMX)
+bundle = fred + sdmx
 ```
 
 ## Inspect exposed parameters

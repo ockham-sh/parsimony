@@ -41,8 +41,6 @@ def parse_query(q: str, known_fields: set[str]) -> StructuredQuery | None:
     if unknown:
         indexed = ", ".join(f"'{f}'" for f in sorted(known_fields))
         bad = ", ".join(f"'{f}'" for f in unknown)
-        raise UnknownIndexedFieldError(
-            f"Field {bad} is not indexed on this catalog. Indexed fields: [{indexed}]"
-        )
+        raise UnknownIndexedFieldError(f"Field {bad} is not indexed on this catalog. Indexed fields: [{indexed}]")
 
     return StructuredQuery(clauses)

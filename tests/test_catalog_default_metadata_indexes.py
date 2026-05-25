@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from parsimony.catalog import BM25Index, Catalog, CatalogEntry
+from parsimony.catalog import BM25Index, Catalog, Entity
 
 
 @pytest.mark.asyncio
 async def test_default_policy_indexes_metadata_at_build() -> None:
     cat = Catalog("demo")
-    cat.set_entries(
+    cat.set_entities(
         [
-            CatalogEntry(
+            Entity(
                 namespace="demo",
                 code="A",
                 title="Alpha",
                 metadata={"sector": "tech", "region": "us"},
             ),
-            CatalogEntry(
+            Entity(
                 namespace="demo",
                 code="B",
                 title="Beta",
@@ -35,10 +35,10 @@ async def test_default_policy_indexes_metadata_at_build() -> None:
 
 @pytest.mark.asyncio
 async def test_explicit_indexes_are_not_augmented() -> None:
-    cat = Catalog("demo", indexes=[BM25Index("title_bm25", field="title")])
-    cat.set_entries(
+    cat = Catalog("demo", indexes={"title": BM25Index()})
+    cat.set_entities(
         [
-            CatalogEntry(
+            Entity(
                 namespace="demo",
                 code="A",
                 title="Alpha",

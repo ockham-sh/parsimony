@@ -8,7 +8,7 @@ import pytest
 from parsimony.catalog import (
     BM25Index,
     Catalog,
-    CatalogEntry,
+    Entity,
     HybridIndex,
     VectorIndex,
 )
@@ -16,11 +16,11 @@ from parsimony.embedder import EmbedderInfo
 from parsimony.result import Column, ColumnRole, OutputConfig
 
 
-def _entries() -> list[CatalogEntry]:
+def _entries() -> list[Entity]:
     return [
-        CatalogEntry(namespace="series", code="A", title="alpha title"),
-        CatalogEntry(namespace="series", code="B", title="beta title"),
-        CatalogEntry(namespace="series", code="C", title="gamma title"),
+        Entity(namespace="series", code="A", title="alpha title"),
+        Entity(namespace="series", code="B", title="beta title"),
+        Entity(namespace="series", code="C", title="gamma title"),
     ]
 
 
@@ -53,9 +53,9 @@ class _StubEmbedder:
         return EmbedderInfo(model="stub", dim=2, normalize=True, package="test")
 
 
-async def test_catalog_build_entries_static_indexes_and_ranker() -> None:
-    catalog = Catalog("artifact", indexes=[BM25Index("title_bm25", field="title")])
-    catalog.set_entries(_entries())
+async def test_catalog_build_entities_static_indexes_and_ranker() -> None:
+    catalog = Catalog("artifact", indexes={"title": BM25Index()})
+    catalog.set_entities(_entries())
 
     await catalog.build()
 
@@ -64,67 +64,65 @@ async def test_catalog_build_entries_static_indexes_and_ranker() -> None:
 
 
 async def test_catalog_build_result_uses_key_namespace() -> None:
-    catalog = Catalog("artifact", indexes=[BM25Index("title_bm25", field="title")])
-    catalog.set_entries(_enumeration_schema(namespace="series").build_entries(_enumeration_df()))
+    catalog = Catalog("artifact", indexes={"title": BM25Index()})
+    catalog.set_entities(_enumeration_schema(namespace="series").build_entities(_enumeration_df()))
 
     await catalog.build()
 
-    assert {entry.namespace for entry in catalog.entries} == {"series"}
+    assert {entry.namespace for entry in catalog.entities} == {"series"}
 
 
-def test_build_entries_requires_key_namespace() -> None:
+def test_build_entities_requires_key_namespace() -> None:
     with pytest.raises(ValueError, match="KEY column must declare namespace"):
-        _enumeration_schema(namespace=None).build_entries(_enumeration_df())
+        _enumeration_schema(namespace=None).build_entities(_enumeration_df())
 
 
 async def test_catalog_mutation_methods_require_rebuild(tmp_path: Path) -> None:
-    catalog = Catalog("artifact", indexes=[BM25Index("title_bm25", field="title")])
-    catalog.set_entries(_entries())
+    catalog = Catalog("artifact", indexes={"title": BM25Index()})
+    catalog.set_entities(_entries())
     await catalog.build()
 
-    catalog.set_entries([CatalogEntry(namespace="series", code="D", title="delta title")])
-    with pytest.raises(ValueError, match="built before it can be searched"):
+    catalog.set_entities([Entity(namespace="series", code="D", title="delta title")])
+    with pytest.raises(ValueError, match="await catalog.build\\(\\)"):
         await catalog.search("delta", limit=1)
     await catalog.build()
 
-    catalog.set_indexes([BM25Index("code_bm25", field="code")])
-    catalog = Catalog("artifact", indexes=[BM25Index("code_bm25", field="code")], default_field="code")
-    catalog.set_entries(_entries())
-    with pytest.raises(ValueError, match="built before it can be saved"):
+    catalog.set_indexes({"code": BM25Index()})
+    catalog = Catalog("artifact", indexes={"code": BM25Index()}, default_field="code")
+    catalog.set_entities(_entries())
+    with pytest.raises(ValueError, match="await catalog.build\\(\\)"):
         await catalog.save(f"file://{tmp_path}/artifact")
     await catalog.build()
 
 
 async def test_catalog_must_be_built_before_search_or_push(tmp_path: Path) -> None:
-    catalog = Catalog("artifact", indexes=[BM25Index("title_bm25", field="title")])
-    catalog.set_entries(_entries())
+    catalog = Catalog("artifact", indexes={"title": BM25Index()})
+    catalog.set_entities(_entries())
 
-    with pytest.raises(ValueError, match="built before it can be searched"):
+    with pytest.raises(ValueError, match="await catalog.build\\(\\)"):
         await catalog.search("alpha", limit=1)
-    with pytest.raises(ValueError, match="built before it can be saved"):
+    with pytest.raises(ValueError, match="await catalog.build\\(\\)"):
         await catalog.save(f"file://{tmp_path}/artifact")
 
 
 async def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
     catalog = Catalog(
         "artifact",
-        indexes=[
-            HybridIndex(
-                "description_hybrid",
-                "description",
-                indexes=[
-                    BM25Index("description_bm25", field="description"),
-                    VectorIndex("description_vector", field="description", embedder=_StubEmbedder()),
+        indexes={
+            "description": HybridIndex(
+                components=[
+                    BM25Index(),
+                    VectorIndex(embedder=_StubEmbedder()),
                 ],
             )
-        ],
+        },
         default_field="description",
     )
-    catalog.set_entries(
+    catalog.set_entities(
         [
-            CatalogEntry(namespace="series", code="A", title="alpha", metadata={"description": "alpha signal"}),
-            CatalogEntry(namespace="series", code="B", title="beta", metadata={}),
-            CatalogEntry(namespace="series", code="C", title="gamma", metadata={"description": ""}),
+            Entity(namespace="series", code="A", title="alpha", metadata={"description": "alpha signal"}),
+            Entity(namespace="series", code="B", title="beta", metadata={}),
+            Entity(namespace="series", code="C", title="gamma", metadata={"description": ""}),
         ]
     )
 
@@ -135,10 +133,8 @@ async def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
 
 
 async def test_empty_sparse_index_builds_and_returns_no_ranking() -> None:
-    catalog = Catalog(
-        "artifact", indexes=[BM25Index("description_bm25", field="description")], default_field="description"
-    )
-    catalog.set_entries([CatalogEntry(namespace="series", code="A", title="alpha")])
+    catalog = Catalog("artifact", indexes={"description": BM25Index()}, default_field="description")
+    catalog.set_entities([Entity(namespace="series", code="A", title="alpha")])
 
     await catalog.build()
     hits, _ = await catalog.search("alpha", limit=5)

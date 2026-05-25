@@ -10,10 +10,11 @@ import pytest
 
 from parsimony.catalog import (
     BM25Index,
-    CatalogEntry,
+    Entity,
     HybridIndex,
     VectorIndex,
 )
+from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
 from parsimony.embedder import EmbedderInfo
 from parsimony.ranking import ZScoreFusion
 
@@ -31,8 +32,6 @@ class _StubEmbedder:
         return out
 
     async def embed_query(self, query: str) -> list[float]:
-        # Bias toward titles that share tokens with the query so hybrid ranking
-        # stays deterministic under the hash stub (BM25 + vector agree on A).
         anchor = "GDP of Germany" if "Germany" in query else query
         (vector,) = await self.embed_texts([anchor])
         return vector
@@ -42,44 +41,41 @@ class _StubEmbedder:
 
 
 @pytest.mark.asyncio
-async def test_hybrid_index_field_validation() -> None:
-    idx1 = BM25Index("title_bm25", field="title")
-    idx2 = VectorIndex("desc_vector", field="desc")
-
-    with pytest.raises(ValueError, match="field"):
-        HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
+async def test_hybrid_index_duplicate_component_kind() -> None:
+    with pytest.raises(ValueError, match="duplicate component kind"):
+        HybridIndex(components=[BM25Index(), BM25Index()])
 
 
 @pytest.mark.asyncio
-async def test_hybrid_index_unique_names() -> None:
-    idx1 = BM25Index("title_bm25", field="title")
-    idx2 = BM25Index("title_bm25", field="title")
-
-    with pytest.raises(ValueError, match="unique"):
-        HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
+async def test_hybrid_index_requires_components() -> None:
+    with pytest.raises(ValueError, match="at least one component"):
+        HybridIndex(components=[])
 
 
 @pytest.mark.asyncio
 async def test_hybrid_index_default_fusion() -> None:
-    idx1 = BM25Index("title_bm25", field="title")
-    hybrid = HybridIndex("hybrid_title", "title", indexes=[idx1])
+    hybrid = HybridIndex(components=[BM25Index()])
     assert isinstance(hybrid._fusion, ZScoreFusion)
 
 
 @pytest.mark.asyncio
 async def test_hybrid_index_build_and_ranking() -> None:
     entries = [
-        CatalogEntry(namespace="ns", code="A", title="GDP of Germany", metadata={}),
-        CatalogEntry(namespace="ns", code="B", title="CPI of France", metadata={}),
+        Entity(namespace="ns", code="A", title="GDP of Germany", metadata={}),
+        Entity(namespace="ns", code="B", title="CPI of France", metadata={}),
     ]
 
-    idx1 = BM25Index("title_bm25", field="title")
-    idx2 = VectorIndex("title_vector", field="title", embedder=_StubEmbedder())
+    hybrid = HybridIndex(
+        components=[
+            BM25Index(),
+            VectorIndex(embedder=_StubEmbedder()),
+        ]
+    )
+    ctx = IndexBuildContext(field="title", vector_cache={})
+    await hybrid.build(entries, ctx=ctx)
 
-    hybrid = HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
-    await hybrid.build(entries)
-
-    ranking = await hybrid.ranking("Germany GDP", limit=5)
+    query_vectors = await embed_query_vectors("Germany GDP", [hybrid])
+    ranking = await hybrid.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
     assert len(ranking.items) > 0
     assert ranking.items[0].code == "A"
 
@@ -87,31 +83,32 @@ async def test_hybrid_index_build_and_ranking() -> None:
 @pytest.mark.asyncio
 async def test_hybrid_index_save_and_load_roundtrip() -> None:
     entries = [
-        CatalogEntry(namespace="ns", code="A", title="GDP of Germany", metadata={}),
-        CatalogEntry(namespace="ns", code="B", title="CPI of France", metadata={}),
+        Entity(namespace="ns", code="A", title="GDP of Germany", metadata={}),
+        Entity(namespace="ns", code="B", title="CPI of France", metadata={}),
     ]
 
-    idx1 = BM25Index("title_bm25", field="title")
-    idx2 = VectorIndex("title_vector", field="title", embedder=_StubEmbedder())
-
-    hybrid = HybridIndex("hybrid_title", "title", indexes=[idx1, idx2])
-    await hybrid.build(entries)
+    hybrid = HybridIndex(
+        components=[
+            BM25Index(),
+            VectorIndex(embedder=_StubEmbedder()),
+        ]
+    )
+    ctx = IndexBuildContext(field="title", vector_cache={})
+    await hybrid.build(entries, ctx=ctx)
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        path = Path(tmpdir) / "hybrid_title"
+        path = Path(tmpdir) / "title"
         hybrid.save(path)
 
         loaded = HybridIndex.load(path)
         stub = _StubEmbedder()
-        for idx in loaded._indexes:
-            if isinstance(idx, VectorIndex):
-                idx._embedder = stub
-                idx._embedder_info = stub.info()
-        assert loaded.name == "hybrid_title"
-        assert loaded.field == "title"
-        assert len(loaded._indexes) == 2
-        assert {idx.name for idx in loaded._indexes} == {"title_bm25", "title_vector"}
+        for component in loaded._components.values():
+            if isinstance(component, VectorIndex):
+                component._embedder = stub
+                component._embedder_info = stub.info()
+        assert set(loaded._components) == {"bm25", "vector"}
 
-        ranking = await loaded.ranking("Germany GDP", limit=5)
+        query_vectors = await embed_query_vectors("Germany GDP", [loaded])
+        ranking = await loaded.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
         assert len(ranking.items) > 0
         assert ranking.items[0].code == "A"

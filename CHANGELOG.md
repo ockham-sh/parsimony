@@ -4,12 +4,12 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.7.0]
+## [0.6.0]
 
 ### Breaking changes
 
 - **Decoupled `embedder` parameter from `Catalog`**: `Catalog` constructor and `Catalog.load` no longer accept `embedder`. Instead, the `embedder` is managed at the `VectorIndex` level.
-- **Removed `CatalogCache` and the in-process LRU**: Catalog reuse is now the caller's responsibility (a one-time `Catalog.load(url)` plus a module-level singleton or small dict). The kernel no longer carries hidden global cache state.
+- **Removed `CatalogCache` and the in-process LRU from the kernel**: Catalog reuse is now the caller's responsibility (a one-time `Catalog.load(url)` plus a module-level singleton or small dict). Provider packages use `parsimony.catalog.search.CatalogLRU` when needed.
 - **Unified `Catalog.load` and `catalog.save`**: Removed `Catalog.from_url` and `Catalog.push`, replacing them with unified `Catalog.load(url_or_path)` and `catalog.save(url_or_path)`.
 - **Removed `CatalogBackend`**: Dropped the obsolete `CatalogBackend` protocol and references.
 - **Dropped v2 migration shim**: Removed the v2-to-v3 snapshot loader migration shim. `SCHEMA_VERSION` is pinned strictly to its current value.
@@ -17,25 +17,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Tabular factories moved to `TabularResult`**: `from_dataframe`, `from_arrow`, and `from_parquet` are no longer on `Result`; import and call them on `TabularResult` instead.
 - **Explicit connector secrets**: `@connector`, `@enumerator`, and `@loader` accept `secrets=(...)`. Declared names are omitted from `Provenance.params`. Name-based secret conformance (`check_unbound_secret_params`) is removed — connector packages must declare `secrets=` for auth-bearing parameters.
 - **Flat public connector parameters**: Connectors must expose flat function parameters only. Bundled `params: BaseModel` signatures and kernel field-splat binding are removed. Use Pydantic models internally for validation if helpful.
+- **`Connectors.merge` and `Connectors.replace` removed**: Combine collections with `a + b` or `Connectors([*a, *b])`. Substring search uses `connectors.search(query)` instead of `connectors.filter(name=...)`.
+- **`@enumerator` requires `output=`**: Enumerators return raw `pd.DataFrame`; entity projection happens in catalog build via `entities_from_connector` / `entities_from_raw`.
 
 ### Added
 
 - **BM25 Token Persistence**: `BM25Index.save` now writes a compressed `tokens.parquet` file. `BM25Index.load` synchronously reads tokens and rebuilds the BM25 model, enabling completely offline/self-contained keyword search.
 - **Snapshot Integrity Check**: Added required `content_sha256` hash under `BuildInfo` to verify snapshot contents (excluding `meta.json`) on load.
-- **Graceful Structured Search Fallback**: If the first field in a structured query does not have a configured index, the query falls back to a broad search against `default_field`.
+- **Local catalog search helpers**: `parsimony.catalog.search.make_local_search_connector` and related types for provider catalog search connectors.
 - **Local Cache Subdirectories Split**: Added `parsimony.cache.staging_dir(provider)` for staging local connector builds.
 - **`Connector.secrets`**: Tuple of parameter names excluded from provenance at decoration time; validated against the wrapped function signature.
+- **`InvalidParameterError`**: Typed error for call-time parameter validation failures.
 
 ### Changed
 
 - **`Provenance.safe_dump()`**: Truncates oversize `params` / `properties` blobs only; it no longer name-redacts entries by parameter name.
-- **Conformance checks**: Four checks remain (`check_connectors_exported`, `check_descriptions_non_empty`, `check_enumerator_return_type`, `check_flat_public_params`).
+- **Conformance checks**: Five checks remain (`check_connectors_exported`, `check_descriptions_non_empty`, `check_enumerator_decorator`, `check_enumerator_return_type`, `check_flat_public_params`).
+- **Catalog dirty-state errors**: `search()` and `save()` on an unbuilt catalog now raise with an actionable message pointing to `await catalog.build()`.
 
 ### Removed
 
 - **`SECRET_NAME_PATTERN` and `REDACTED`** exports from `parsimony.result`.
 - **`safe_dump_provenance()`** module helper (use `Provenance.safe_dump()`).
 - **`HttpClient.aclose()`** no-op.
+- **`ResultCallback`** from top-level `parsimony` exports (still available from `parsimony.connector`).
 
 ## [0.5.0]
 
@@ -59,11 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   env fallback they support, and operators use `Connector.bind(...)` /
   `Connectors.bind(...)` to create variants with fixed values hidden from
   the exposed call surface and call-time provenance.
-- **Tool schema export is a projection.** `Connector.to_json_schema()`
-  derives JSON Schema from the current exposed signature and fails at that
-  boundary for unsupported public parameters. Required secret-shaped
-  parameters must be bound before tool export; optional secret-shaped
-  parameters are omitted from the schema.
+- **Tool schema export is a projection.** Required secret-shaped parameters must be bound before tool export; optional secret-shaped parameters are omitted from the schema.
 
 ### Added
 

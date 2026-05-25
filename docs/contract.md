@@ -1,6 +1,6 @@
 # The Parsimony Plugin Contract
 
-**Status:** Contract v3 (kernel >= 0.7).
+**Status:** Contract v3 (kernel >= 0.6).
 
 This document is the load-bearing surface for connector plugins. Everything not listed here is private.
 
@@ -55,7 +55,15 @@ Rules:
 - Public connector parameters must be **flat**: every user-facing parameter appears as a top-level function parameter. Do not expose a bundled ``params: SomeParams`` argument on connectors, enumerators, or loaders. Use Pydantic models internally for validation when helpful.
 - `Connector.bind(**kwargs)` returns a new connector with those parameters fixed.
 - Bound values are not exposed in `exposed_signature` and are not recorded as call-time provenance parameters.
-- Tabular connectors with `output=` should return a `pd.DataFrame` (the framework applies the schema) or `output.build_table_result(df)`. Returning `Result(data=df)` while declaring `output=` is a `TypeError`.
+- Tabular connectors with `output=` must return a `pd.DataFrame` (or `pd.Series`); the framework applies the schema via `build_table_result`. Returning `Result`, `TabularResult`, or `output.build_table_result(df)` from the connector body is a `TypeError`.
+- Provider facts belong in the returned payload. For tabular connectors, put series descriptors and row-varying attributes in DataFrame columns. Do not attach provider metadata through ``provenance.properties`` or ``(data, {...})`` tuple returns.
+
+### Metadata vs data
+
+- ``ColumnRole.DATA``: observations and any field that can vary by row, date, vintage, instrument roll, maturity, or constituent within the result.
+- ``ColumnRole.METADATA``: entity-level descriptors used when projecting catalog ``Entity`` rows. A metadata column must be constant for each entity key in the result (it may differ across keys in a multi-entity frame).
+- Example: a benchmark bond series whose constituent ISIN changes over time should store ``isin`` as ``DATA``, not ``METADATA``. If the entity key is the bond itself and ISIN is stable for that key, ``isin`` may be ``METADATA``.
+- Entity projection rejects metadata columns that take more than one distinct non-null value within a single entity key.
 
 Auth example:
 
@@ -92,9 +100,8 @@ Rules for optional helpers:
   indexes at import time.
 - They may bind call-time parameters, set provider-local runtime defaults, or return
   a preconfigured `Connectors` view.
-- Catalog warming or BM25 fallback builds belong in explicit search-time paths, not
-  in module import or `load(...)`, unless the helper documents that behavior clearly
-  and the caller opts in (for example `fallback_bm25=True`).
+- Catalog warming belongs in search-time load-or-build paths (configured URL → lazy
+  disk cache → provider build callable), not in module import or `load(...)`.
 
 Direct imports remain the preferred style in application code:
 
@@ -115,7 +122,6 @@ Plugins should import from `parsimony`:
 - `connector`
 - `enumerator`
 - `loader`
-- `ResultCallback`
 - `Result`, `Provenance`, `OutputConfig`, `Column`, `ColumnRole`
 - catalog, store, transport, and error symbols documented in the API reference
 
@@ -139,7 +145,8 @@ When `Catalog(..., indexes=None)`, the framework builds BM25 indexes at `build()
 
 1. module exports non-empty `CONNECTORS: Connectors`;
 2. every connector has a non-empty description (20–800 characters);
-3. enumerators annotate `list[CatalogEntry]` return types (not `pd.DataFrame`).
+3. enumerators declare mandatory `output=` and annotate `pd.DataFrame` return types;
+4. public connector parameters are flat (no bundled `params: BaseModel` signatures).
 
 Connectors with auth-bearing parameters must declare them via `secrets=(...)` on `@connector` / `@enumerator` / `@loader`; declared names are stripped from `Provenance.params` at fetch time.
 

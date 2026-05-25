@@ -5,17 +5,20 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import pyarrow.parquet as pq
 from pydantic import BaseModel, Field
 
-from parsimony.catalog.models import CatalogEntry
+from parsimony.entity import Entity
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 1
 META_FILENAME = "meta.json"
 ENTRIES_FILENAME = "entries.parquet"
 INDEXES_DIRNAME = "indexes"
+VALUES_FILENAME = "values.parquet"
+POSTINGS_FILENAME = "postings.parquet"
+VECTORS_FILENAME = "vectors.faiss"
 
 
 class BuildInfo(BaseModel):
@@ -36,11 +39,11 @@ class BuildInfo(BaseModel):
 class CatalogMeta(BaseModel):
     """Catalog snapshot manifest."""
 
-    schema_version: Literal[4] = 4
+    schema_version: Literal[1] = 1
     name: str
     namespaces: list[str]
     entry_count: int = Field(ge=0)
-    indexes: list[dict[str, Any]] = Field(default_factory=list)
+    index_fields: dict[str, str] = Field(default_factory=dict)
     default_field: str | None = None
     build: BuildInfo = Field(default_factory=BuildInfo)
 
@@ -69,11 +72,11 @@ def _compute_content_sha256(directory: Path) -> str:
     return hashlib.sha256(concatenated).hexdigest()
 
 
-def _read_parquet(target: Path) -> list[CatalogEntry]:
+def _read_parquet(target: Path) -> list[Entity]:
     table = pq.read_table(target)
     rows = table.to_pylist()
     return [
-        CatalogEntry(
+        Entity(
             namespace=row["namespace"],
             code=row["code"],
             title=row["title"],

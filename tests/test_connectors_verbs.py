@@ -28,23 +28,22 @@ def _keyed(name: str) -> Connector:
     return connector(_fn)
 
 
-def test_merge_two_collections() -> None:
+def test_add_two_collections() -> None:
     a = Connectors([_public("a1"), _public("a2")])
     b = Connectors([_public("b1")])
 
-    merged = Connectors.merge(a, b)
+    merged = a + b
     assert merged.names() == ["a1", "a2", "b1"]
-    assert (a + b).names() == ["a1", "a2", "b1"]
     assert a.names() == ["a1", "a2"]
     assert b.names() == ["b1"]
 
 
-def test_merge_raises_on_duplicate_name_across_collections() -> None:
+def test_add_raises_on_duplicate_name_across_collections() -> None:
     a = Connectors([_public("shared"), _public("a_extra")])
     b = Connectors([_public("shared")])
 
     with pytest.raises(ValueError, match="Duplicate connector names"):
-        Connectors.merge(a, b)
+        _ = a + b
 
 
 def test_bind_applies_matching_arguments_across_collection() -> None:
@@ -58,24 +57,6 @@ def test_bind_applies_matching_arguments_across_collection() -> None:
     result = asyncio.run(bound["keyed_fetch"](x="hello"))
     assert result.data == {"ok": True, "x": "hello", "key": "secret"}
     assert result.provenance.params == {"x": "hello"}
-
-
-def test_replace_swaps_entry() -> None:
-    original = _public("orig_fetch")
-    replacement = _public("orig_fetch")
-
-    coll = Connectors([original, _public("other")])
-    swapped = coll.replace("orig_fetch", replacement)
-
-    assert swapped.names() == ["orig_fetch", "other"]
-    assert swapped["orig_fetch"] is replacement
-    assert coll["orig_fetch"] is original
-
-
-def test_replace_unknown_name_raises() -> None:
-    coll = Connectors([_public("only")])
-    with pytest.raises(KeyError, match="No connector 'missing'"):
-        coll.replace("missing", _public("missing"))
 
 
 def test_filter_predicate() -> None:

@@ -35,7 +35,7 @@ Connector implementations decide how to handle provider-specific auth, including
 - `@enumerator`: connector for catalog enumeration output.
 - `@loader`: connector for observation-loading output.
 - `Connector.bind`: schema-aware partial application.
-- `Connectors`: immutable collection with merge, bind, filter, replace, callbacks, and keyed lookup.
+- `Connectors`: immutable collection with `+`, bind, filter, search, callbacks, and keyed lookup.
 
 ## Plugins
 
@@ -64,15 +64,18 @@ The authoritative plugin contract is [`docs/contract.md`](docs/contract.md).
 Catalog snapshots are built directly from entries and catalog primitives:
 
 ```python
-result = await enumerate_provider()
-entries = (await enumerate_provider()).data  # list[CatalogEntry]
+from parsimony.catalog.source import entities_from_connector
+
+entries = await entities_from_connector(enumerate_provider, ENUMERATE_OUTPUT)
 
 catalog = Catalog("provider_catalog")
-catalog.set_entries(entries)
+catalog.set_entities(entries)
 await catalog.build()
 await catalog.save("hf://org/repo/provider_catalog")
 loaded = await Catalog.load("hf://org/repo/provider_catalog")
 ```
+
+Tabular connectors return raw `pd.DataFrame` values. Use `ColumnRole.DATA` for observations and any field that can vary by row or time (for example a benchmark bond's rolling constituent ISIN). Use `ColumnRole.METADATA` only for entity descriptors that are constant per entity key when projecting catalog entries.
 
 ## MCP
 

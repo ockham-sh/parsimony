@@ -165,10 +165,29 @@ def test_provenance_requires_source_and_description() -> None:
         Provenance.model_validate({"source": "fred"})  # type: ignore[arg-type]
 
 
-def test_result_with_properties_lifts_into_provenance() -> None:
-    df = pd.DataFrame({"a": [1]})
-    r = TabularResult.from_dataframe(df).with_properties(metadata=[{"name": "id", "value": "X"}])
-    assert r.provenance.properties == {"metadata": [{"name": "id", "value": "X"}]}
+def test_build_table_result_metadata_columns_are_schema_roles() -> None:
+    raw = pd.DataFrame(
+        {
+            "series_id": ["UNRATE"],
+            "title": ["Unemployment Rate"],
+            "units": ["Percent"],
+            "date": ["2020-01-01"],
+            "value": [3.5],
+        }
+    )
+    cfg = OutputConfig(
+        columns=[
+            Column(name="series_id", role=ColumnRole.KEY),
+            Column(name="title", role=ColumnRole.TITLE),
+            Column(name="units", role=ColumnRole.METADATA),
+            Column(name="date", role=ColumnRole.DATA),
+            Column(name="value", role=ColumnRole.DATA),
+        ]
+    )
+    r = cfg.build_table_result(raw)
+    assert r.provenance.properties == {}
+    assert [c.name for c in r.metadata_columns] == ["units"]
+    assert r.data.loc[0, "units"] == "Percent"
 
 
 def test_result_with_properties_is_cumulative() -> None:

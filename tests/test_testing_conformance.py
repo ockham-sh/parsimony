@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, connector, enumerator
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 
 def _mk_connector(
@@ -94,30 +95,30 @@ def test_description_too_long_fails() -> None:
         assert_plugin_valid(mod)
 
 
+ENUMERATE_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="code", role=ColumnRole.KEY, namespace="demo"),
+        Column(name="title", role=ColumnRole.TITLE),
+    ]
+)
+
+
 def test_enumerator_missing_return_annotation_fails() -> None:
-    from parsimony.testing import ConformanceError, assert_plugin_valid
+    with pytest.raises(ValueError, match="must annotate return type"):
 
-    @enumerator(name="bad_enum")
-    async def bad_enum():
-        """An enumerator without a return type annotation."""
-        return []
-
-    mod = _make_module("pkg_bad_enum_ann", connectors=Connectors([bad_enum]))
-    with pytest.raises(ConformanceError, match="check_enumerator_return_type"):
-        assert_plugin_valid(mod)
+        @enumerator(output=ENUMERATE_OUTPUT, name="bad_enum")
+        async def bad_enum():
+            """An enumerator without a return type annotation."""
+            return pd.DataFrame()
 
 
-def test_enumerator_dataframe_return_annotation_fails() -> None:
-    from parsimony.testing import ConformanceError, assert_plugin_valid
+def test_enumerator_list_entity_return_annotation_fails() -> None:
+    with pytest.raises(ValueError, match="pd.DataFrame"):
 
-    @enumerator(name="df_enum")
-    async def df_enum() -> pd.DataFrame:
-        """An enumerator that declares DataFrame return type."""
-        return pd.DataFrame()
-
-    mod = _make_module("pkg_df_enum", connectors=Connectors([df_enum]))
-    with pytest.raises(ConformanceError, match="check_enumerator_return_type"):
-        assert_plugin_valid(mod)
+        @enumerator(output=ENUMERATE_OUTPUT, name="entity_enum")
+        async def entity_enum() -> list:
+            """An enumerator that declares list return type."""
+            return []
 
 
 def test_iter_check_names_contains_minimal_checks() -> None:
@@ -126,6 +127,7 @@ def test_iter_check_names_contains_minimal_checks() -> None:
     assert set(iter_check_names()) == {
         "check_connectors_exported",
         "check_descriptions_non_empty",
+        "check_enumerator_decorator",
         "check_enumerator_return_type",
         "check_flat_public_params",
     }

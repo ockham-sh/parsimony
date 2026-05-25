@@ -6,8 +6,8 @@ Four checks — the minimal integrity set every official plugin must pass:
    (a :class:`Connectors` with at least one entry).
 2. :func:`_check_descriptions_non_empty` — every connector has a non-empty
    description within length bounds (20–800 chars).
-3. :func:`_check_enumerator_return_type` — enumerators annotate
-   ``list[CatalogEntry]`` return types.
+3. :func:`_check_enumerator_return_type` — enumerators declare ``output=``
+   and annotate ``pd.DataFrame`` return types.
 4. :func:`_check_flat_public_params` — public connector parameters are flat
    (no bundled ``params: BaseModel`` surface).
 
@@ -136,34 +136,53 @@ def _check_flat_public_params(module: ModuleType) -> None:
             )
 
 
+def _check_enumerator_decorator(module: ModuleType) -> None:
+    for c in module.CONNECTORS:
+        if "enumerator" not in c.tags:
+            continue
+        if getattr(c.fn, "__parsimony_role__", None) != "enumerator":
+            raise ConformanceError(
+                "check_enumerator_decorator",
+                (
+                    f"connector {c.name!r}: use @enumerator(output=...) instead of "
+                    "@connector(..., tags=[..., 'enumerator'])"
+                ),
+                next_action="Replace @connector(..., tags=['enumerator']) with @enumerator(output=...).",
+            )
 
 
 def _check_enumerator_return_type(module: ModuleType) -> None:
     for c in module.CONNECTORS:
         if "enumerator" not in c.tags:
             continue
+        if c.output_config is None:
+            raise ConformanceError(
+                "check_enumerator_return_type",
+                f"connector {c.name!r}: enumerator must declare output=",
+            )
         ann = c.fn.__annotations__.get("return")
         if ann is None:
             raise ConformanceError(
                 "check_enumerator_return_type",
-                f"connector {c.name!r}: enumerator must annotate return type",
+                f"connector {c.name!r}: enumerator must annotate return type pd.DataFrame",
             )
         return_str = str(ann)
-        if "CatalogEntry" not in return_str:
+        if "DataFrame" not in return_str and "Series" not in return_str:
             raise ConformanceError(
                 "check_enumerator_return_type",
-                f"connector {c.name!r}: enumerator return must be list[CatalogEntry]",
+                f"connector {c.name!r}: enumerator return must be pd.DataFrame",
             )
-        if "DataFrame" in return_str:
+        if "Entity" in return_str or "list[" in return_str:
             raise ConformanceError(
                 "check_enumerator_return_type",
-                f"connector {c.name!r}: enumerator must not return pd.DataFrame",
+                f"connector {c.name!r}: enumerator must not return list[Entity]",
             )
 
 
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
+    "check_enumerator_decorator": _check_enumerator_decorator,
     "check_enumerator_return_type": _check_enumerator_return_type,
     "check_flat_public_params": _check_flat_public_params,
 }
@@ -212,7 +231,7 @@ class ProviderTestSuite:
     * :attr:`module` — the already-imported plugin module.
     * :attr:`module_path` — the dotted import path of the CONNECTORS-exporting module.
 
-    Pytest discovers :meth:`test_plugin_conforms` (all three checks via
+    Pytest discovers :meth:`test_plugin_conforms` (all four checks via
     :func:`assert_plugin_valid`) plus optional :meth:`test_entry_point_resolves`
     when :attr:`entry_point_name` is set.
     """

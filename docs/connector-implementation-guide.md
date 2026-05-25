@@ -31,6 +31,22 @@ Bound values are omitted from provenance.
 
 Raise `ConnectorError` subclasses for provider/runtime failures. Use `TypeError` and `ValueError` for programmer mistakes.
 
+## Provider metadata
+
+Return raw data only — a ``pd.DataFrame`` (or other primitive payload). The
+framework wraps it into :class:`~parsimony.result.Result` and builds
+provenance (source, params, timestamp).
+
+Put provider facts in DataFrame columns and declare their roles in
+``output=OutputConfig(...)``:
+
+- ``ColumnRole.KEY`` / ``TITLE`` / ``METADATA`` for entity-level descriptors
+  constant per entity key.
+- ``ColumnRole.DATA`` for observations and any row-varying attributes.
+
+Do not attach provider metadata through ``provenance.properties`` or
+``(data, {...})`` tuple returns.
+
 ## Checklist
 
 - [ ] Connector is async.

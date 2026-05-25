@@ -13,7 +13,7 @@ import logging
 import pandas as pd
 from pydantic import BaseModel
 
-from parsimony.catalog import catalog_key, normalize_code, normalize_entity_code
+from parsimony.entity import entity_key, normalize_entity_code, normalize_namespace
 from parsimony.result import ColumnRole, TabularResult
 
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def _data_from_result(table: TabularResult) -> list[tuple[str, str, pd.DataFrame
         if dn not in df.columns:
             raise ValueError(f"Result missing DATA column {dn!r}. Available: {list(df.columns)}")
 
-    ns = normalize_code(key_col.namespace)
+    ns = normalize_namespace(key_col.namespace)
     # Single hash-grouping pass, O(N) in row count.
     sub_df = df[[key_name, *data_names]]
     out: list[tuple[str, str, pd.DataFrame]] = []
@@ -80,12 +80,12 @@ class InMemoryDataStore:
 
     async def upsert(self, namespace: str, code: str, df: pd.DataFrame) -> None:
         """Insert or replace observation data for one entity."""
-        k = catalog_key(namespace, code)
+        k = entity_key(namespace, code)
         self._rows[k] = df.copy()
 
     async def get(self, namespace: str, code: str) -> pd.DataFrame | None:
         """Retrieve stored observations, or None if not loaded."""
-        k = catalog_key(namespace, code)
+        k = entity_key(namespace, code)
         stored = self._rows.get(k)
         if stored is None:
             return None
@@ -93,14 +93,14 @@ class InMemoryDataStore:
 
     async def delete(self, namespace: str, code: str) -> None:
         """Remove stored observations for one entity."""
-        k = catalog_key(namespace, code)
+        k = entity_key(namespace, code)
         self._rows.pop(k, None)
 
     async def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
         """Return the subset of (namespace, code) pairs that have stored data."""
         out: set[tuple[str, str]] = set()
         for ns, c in keys:
-            k = catalog_key(ns, c)
+            k = entity_key(ns, c)
             if k in self._rows:
                 out.add(k)
         return out
@@ -129,7 +129,7 @@ class InMemoryDataStore:
             existing = await self.exists(keys)
 
         for ns, code, sub_df in rows:
-            k = (normalize_code(ns), normalize_entity_code(code))
+            k = (normalize_namespace(ns), normalize_entity_code(code))
             if not force and k in existing:
                 result.skipped += 1
                 continue

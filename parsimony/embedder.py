@@ -3,7 +3,7 @@
 :class:`EmbeddingProvider` is the structural contract every embedder
 satisfies. It is *not* a plugin axis — users instantiate one of the bundled
 implementations (or write their own conforming class) and pass it to
-``Catalog("name", embedder=...)``. Three implementations ship out of the box:
+``VectorIndex(..., embedder=...)``. Three implementations ship out of the box:
 
 * :class:`SentenceTransformerEmbedder` — local model
   (``sentence-transformers/all-MiniLM-L6-v2`` by default, 384-dim, 6 layers).

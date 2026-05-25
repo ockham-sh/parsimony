@@ -318,7 +318,7 @@ class HttpClient:
             path,
             extra={
                 "http_method": method,
-                "http_url": url,
+                "http_url": redact_url(url),
                 "http_path": path,
                 "http_params": redact_params_for_logging(request_params),
             },

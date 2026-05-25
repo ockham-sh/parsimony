@@ -1,20 +1,22 @@
-"""Catalog search indexes and ranking helpers."""
+"""Catalog search indexes: value-deduplicated BM25, vector, and hybrid fusion."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Protocol, Self, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import TypeAdapter
 
-from parsimony.catalog.models import CatalogEntry, field_text, normalize_code
-from parsimony.catalog.storage import META_FILENAME
+from parsimony.catalog.storage import META_FILENAME, POSTINGS_FILENAME, VALUES_FILENAME, VECTORS_FILENAME
 from parsimony.embedder import EmbedderInfo, EmbeddingProvider
+from parsimony.entity import Entity, field_values
 from parsimony.indexes import build_faiss, read_faiss, tokenize, write_faiss
 from parsimony.ranking import (
     Ranker,
@@ -31,118 +33,250 @@ if TYPE_CHECKING:
     import faiss
     from rank_bm25 import BM25Okapi
 
+COMPONENTS_DIRNAME = "components"
+EXACT_MATCH_SCORE = 1_000_000.0
+
+
+def _component_kind(index: CatalogIndex) -> str:
+    if isinstance(index, BM25Index):
+        return "bm25"
+    if isinstance(index, VectorIndex):
+        return "vector"
+    raise TypeError(f"Unsupported hybrid component type: {type(index)!r}")
+
+
+def _embedder_key(info: EmbedderInfo) -> tuple[str, int, bool]:
+    return (info.model, info.dim, info.normalize)
+
+
+@dataclass
+class IndexBuildContext:
+    """Transient build-time state shared across indexes in one catalog build."""
+
+    field: str
+    vector_cache: dict[tuple[str, int, bool], dict[str, np.ndarray]]
+
+    async def embed_texts(self, embedder: EmbeddingProvider, texts: list[str]) -> list[np.ndarray]:
+        if not texts:
+            return []
+        info = embedder.info()
+        key = _embedder_key(info)
+        bucket = self.vector_cache.setdefault(key, {})
+        missing = [text for text in texts if text not in bucket]
+        if missing:
+            batch = 256
+            for start in range(0, len(missing), batch):
+                chunk = missing[start : start + batch]
+                vectors = await embedder.embed_texts(chunk)
+                for text, vector in zip(chunk, vectors, strict=True):
+                    bucket[text] = np.asarray(vector, dtype=np.float32)
+        return [bucket[text] for text in texts]
+
+
+@dataclass
+class _ValuePostings:
+    values: list[str]
+    value_to_id: dict[str, int]
+    offsets: np.ndarray
+    row_ids: np.ndarray
+
+    @classmethod
+    def build(cls, entries: list[Entity], field_name: str) -> _ValuePostings:
+        value_to_id: dict[str, int] = {}
+        values: list[str] = []
+        postings: list[tuple[int, int]] = []
+        for row_id, entry in enumerate(entries):
+            for text in field_values(entry, field_name):
+                vid = value_to_id.get(text)
+                if vid is None:
+                    vid = len(values)
+                    value_to_id[text] = vid
+                    values.append(text)
+                postings.append((vid, row_id))
+        if not postings:
+            return cls(
+                values=[],
+                value_to_id={},
+                offsets=np.zeros(1, dtype=np.int64),
+                row_ids=np.zeros(0, dtype=np.int32),
+            )
+        postings.sort(key=lambda item: (item[0], item[1]))
+        offsets = np.zeros(len(values) + 1, dtype=np.int64)
+        row_ids = np.fromiter((row for _, row in postings), dtype=np.int32, count=len(postings))
+        pos = 0
+        for vid in range(len(values)):
+            offsets[vid] = pos
+            while pos < len(postings) and postings[pos][0] == vid:
+                pos += 1
+        offsets[len(values)] = pos
+        return cls(values=values, value_to_id=value_to_id, offsets=offsets, row_ids=row_ids)
+
+    def expand(self, value_scores: dict[int, float]) -> dict[int, float]:
+        out: dict[int, float] = {}
+        for vid, score in value_scores.items():
+            if score <= 0.0:
+                continue
+            start = int(self.offsets[vid])
+            end = int(self.offsets[vid + 1])
+            for row_id in self.row_ids[start:end]:
+                rid = int(row_id)
+                prev = out.get(rid)
+                if prev is None or score > prev:
+                    out[rid] = score
+        return out
+
+    def save_postings(self, path: Path) -> None:
+        rows: list[dict[str, int]] = []
+        for vid in range(len(self.values)):
+            start = int(self.offsets[vid])
+            end = int(self.offsets[vid + 1])
+            for row_id in self.row_ids[start:end]:
+                rows.append({"value_id": vid, "row_id": int(row_id)})
+        schema = pa.schema([("value_id", pa.int32()), ("row_id", pa.int32())])
+        pq.write_table(pa.Table.from_pylist(rows, schema=schema), path, compression="zstd")
+
+    @classmethod
+    def load_postings(cls, path: Path, values: list[str]) -> _ValuePostings:
+        table = pq.read_table(path)
+        rows = table.to_pylist()
+        value_to_id = {text: idx for idx, text in enumerate(values)}
+        if not rows:
+            return cls(
+                values=values,
+                value_to_id=value_to_id,
+                offsets=np.zeros(len(values) + 1, dtype=np.int64),
+                row_ids=np.zeros(0, dtype=np.int32),
+            )
+        postings = [(int(row["value_id"]), int(row["row_id"])) for row in rows]
+        postings.sort(key=lambda item: (item[0], item[1]))
+        offsets = np.zeros(len(values) + 1, dtype=np.int64)
+        row_ids = np.fromiter((row for _, row in postings), dtype=np.int32, count=len(postings))
+        pos = 0
+        for vid in range(len(values)):
+            offsets[vid] = pos
+            while pos < len(postings) and postings[pos][0] == vid:
+                pos += 1
+        offsets[len(values)] = pos
+        return cls(values=values, value_to_id=value_to_id, offsets=offsets, row_ids=row_ids)
+
 
 @runtime_checkable
 class CatalogIndex(Protocol):
-    """Runtime contract for a component that produces one ranking."""
+    """Runtime contract for a field-scoped catalog index."""
 
-    name: str
-    field: str
+    kind: str
 
-    async def build(self, entries: list[CatalogEntry]) -> None:
-        """Build the index from entries."""
+    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        """Build the index from entries for ``ctx.field``."""
         ...
 
-    async def ranking(self, query: str, *, limit: int) -> Ranking:
-        """Return one ranked list of catalog identities."""
-        ...
-
-
-class HybridIndex:
-    """Hybrid index over one catalog field, fusing multiple indexes."""
-
-    kind: Literal["hybrid"] = "hybrid"
-
-    def __init__(
+    async def score_candidates(
         self,
-        name: str,
-        field: str,
+        query: str,
         *,
-        indexes: list[CatalogIndex],
-        fusion: Ranker | None = None,
-    ) -> None:
-        self.name = normalize_code(name)
-        self.field = field
-        if not indexes:
-            raise ValueError("HybridIndex requires at least one child index")
-        for idx in indexes:
-            if idx.field != field:
-                raise ValueError(f"HybridIndex child index field ({idx.field}) must match hybrid field ({field})")
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> dict[int, float]:
+        """Return candidate row scores keyed by entry row id."""
+        ...
 
-        child_names = [idx.name for idx in indexes]
-        if len(child_names) != len(set(child_names)):
-            raise ValueError("HybridIndex child index names must be unique")
+    def save(self, path: Path) -> None: ...
 
-        self._indexes = indexes
-        self._fusion = fusion if fusion is not None else ZScoreFusion()
+    @classmethod
+    def load(cls, path: Path) -> Self: ...
 
-    async def build(self, entries: list[CatalogEntry]) -> None:
-        await asyncio.gather(*(c.build(entries) for c in self._indexes))
 
-    async def ranking(self, query: str, *, limit: int) -> Ranking:
-        child_rankings = {}
-        for c in self._indexes:
-            child_rankings[c.name] = await c.ranking(query, limit=max(limit * 5, 50))
-        rs = concat(child_rankings)
-        return self._fusion(rs, limit=limit)
+class BM25Index:
+    """BM25 index over unique field values with row-id postings."""
+
+    kind: str = "bm25"
+
+    def __init__(self) -> None:
+        self._postings = _ValuePostings.build([], "")
+        self._tokens: list[list[str]] = []
+        self._bm25: BM25Okapi | None = None
+
+    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        self._postings = _ValuePostings.build(entries, ctx.field)
+        self._tokens = [tokenize(text) for text in self._postings.values]
+        if not self._tokens:
+            self._bm25 = None
+            return
+        from rank_bm25 import BM25Okapi
+
+        self._bm25 = BM25Okapi(self._tokens)
+
+    async def score_candidates(
+        self,
+        query: str,
+        *,
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> dict[int, float]:
+        del query_vectors
+        value_scores = self._score_values(query)
+        return self._postings.expand(value_scores)
+
+    async def ranking(self, query: str, *, limit: int, entries: list[Entity]) -> Ranking:
+        row_scores = await self.score_candidates(query)
+        return _ranking_from_row_scores(entries, row_scores, limit=limit)
+
+    def _score_values(self, query: str) -> dict[int, float]:
+        if not self._postings.values:
+            return {}
+        normalized = query.strip().casefold()
+        exact_vid = self._postings.value_to_id.get(query.strip())
+        if exact_vid is None:
+            for text, vid in self._postings.value_to_id.items():
+                if text.casefold() == normalized:
+                    exact_vid = vid
+                    break
+        if exact_vid is not None:
+            return {exact_vid: EXACT_MATCH_SCORE}
+        if self._bm25 is None:
+            return {}
+        rows = _bm25_value_scores(self._bm25, query, doc_tokens=self._tokens)
+        return {vid: score for vid, score in rows}
 
     def save(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
-        for c in self._indexes:
-            child_path = path / c.name
-            if isinstance(c, (VectorIndex, BM25Index, HybridIndex)):
-                c.save(child_path)
-            else:
-                raise TypeError(f"Catalog index {c.name!r} under hybrid index is not serializable")
-
-        (path / META_FILENAME).write_text(
-            json.dumps(
-                {
-                    "kind": self.kind,
-                    "name": self.name,
-                    "field": self.field,
-                    "fusion": ranker_to_spec(self._fusion).model_dump(mode="json"),
-                    "children": [c.name for c in self._indexes],
-                },
-                indent=2,
-            )
+        (path / META_FILENAME).write_text(json.dumps({"kind": self.kind}, indent=2))
+        value_rows = [
+            {"value_id": vid, "text": text, "tokens": tokens}
+            for vid, (text, tokens) in enumerate(zip(self._postings.values, self._tokens, strict=True))
+        ]
+        schema = pa.schema(
+            [
+                ("value_id", pa.int32()),
+                ("text", pa.string()),
+                ("tokens", pa.list_(pa.string())),
+            ]
         )
+        pq.write_table(pa.Table.from_pylist(value_rows, schema=schema), path / VALUES_FILENAME, compression="zstd")
+        self._postings.save_postings(path / POSTINGS_FILENAME)
 
     @classmethod
     def load(cls, path: Path) -> Self:
-        raw = json.loads((path / META_FILENAME).read_text())
-        fusion = ranker_from_spec(TypeAdapter(RankerSpec).validate_python(raw["fusion"]))
+        index = cls()
+        table = pq.read_table(path / VALUES_FILENAME)
+        rows = table.to_pylist()
+        values = [str(row["text"]) for row in rows]
+        index._tokens = [list(row["tokens"]) for row in rows]
+        index._postings = _ValuePostings.load_postings(path / POSTINGS_FILENAME, values)
+        if index._tokens:
+            from rank_bm25 import BM25Okapi
 
-        children_indexes: list[CatalogIndex] = []
-        for child_name in raw["children"]:
-            child_path = path / child_name
-            child_raw = json.loads((child_path / META_FILENAME).read_text())
-            child_kind = child_raw["kind"]
-            child_idx: CatalogIndex
-            if child_kind == "vector":
-                child_idx = VectorIndex.load(child_path)
-            elif child_kind == "bm25":
-                child_idx = BM25Index.load(child_path)
-            elif child_kind == "hybrid":
-                child_idx = HybridIndex.load(child_path)
-            else:
-                raise ValueError(f"Unsupported child index kind {child_kind!r} under hybrid index {raw['name']!r}")
-            children_indexes.append(child_idx)
-
-        return cls(raw["name"], raw["field"], indexes=children_indexes, fusion=fusion)
+            index._bm25 = BM25Okapi(index._tokens)
+        return index
 
 
 class VectorIndex:
-    """Vector index over one catalog field."""
+    """Vector index over unique field values with row-id postings."""
 
-    kind: Literal["vector"] = "vector"
+    kind: str = "vector"
 
-    def __init__(self, name: str, field: str = "title", *, embedder: EmbeddingProvider | None = None) -> None:
-        self.name = normalize_code(name)
-        self.field = field
+    def __init__(self, *, embedder: EmbeddingProvider | None = None) -> None:
         self._embedder = embedder
         self._embedder_info: EmbedderInfo | None = None
-        self._keys: list[tuple[str, str]] = []
+        self._postings = _ValuePostings.build([], "")
         self._faiss: faiss.Index | None = None
 
     @property
@@ -152,81 +286,102 @@ class VectorIndex:
             self._embedder_info = embedder.info()
         return self._embedder_info
 
-    async def build(self, entries: list[CatalogEntry]) -> None:
-        docs = [
-            ((entry.namespace, entry.code), text)
-            for entry in entries
-            if (text := field_text(entry, self.field).strip())
-        ]
-        self._keys = [key for key, _ in docs]
-        if not docs:
+    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        self._postings = _ValuePostings.build(entries, ctx.field)
+        if not self._postings.values:
             self._faiss = None
             return
         embedder = self._require_embedder()
         info = self.embedder_info
-        texts = [text for _, text in docs]
-        unique_texts = list(dict.fromkeys(texts))
-        vectors_by_text: dict[str, list[float]] = {}
-        batch = 256
-        for start in range(0, len(unique_texts), batch):
-            batch_texts = unique_texts[start : start + batch]
-            batch_vectors = await embedder.embed_texts(batch_texts)
-            vectors_by_text.update(zip(batch_texts, batch_vectors, strict=True))
-        vectors = [vectors_by_text[text] for text in texts]
-        matrix = np.asarray(vectors, dtype=np.float32)
+        vectors = await ctx.embed_texts(embedder, self._postings.values)
+        matrix = np.vstack(vectors).astype(np.float32, copy=False)
         self._faiss = build_faiss(matrix, dim=info.dim, normalize=info.normalize)
 
-    async def ranking(self, query: str, *, limit: int) -> Ranking:
+    async def score_candidates(
+        self,
+        query: str,
+        *,
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> dict[int, float]:
+        value_scores = self._score_values(query, query_vectors=query_vectors)
+        return self._postings.expand(value_scores)
+
+    async def ranking(
+        self,
+        query: str,
+        *,
+        limit: int,
+        entries: list[Entity],
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> Ranking:
+        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        return _ranking_from_row_scores(entries, row_scores, limit=limit)
+
+    def _score_values(
+        self,
+        query: str,
+        *,
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None,
+    ) -> dict[int, float]:
+        if not self._postings.values:
+            return {}
+        normalized = query.strip().casefold()
+        exact_vid = self._postings.value_to_id.get(query.strip())
+        if exact_vid is None:
+            for text, vid in self._postings.value_to_id.items():
+                if text.casefold() == normalized:
+                    exact_vid = vid
+                    break
+        if exact_vid is not None:
+            return {exact_vid: EXACT_MATCH_SCORE}
         if self._faiss is None or self._faiss.ntotal == 0:
-            return Ranking.empty()
+            return {}
         info = self.embedder_info
-        query_vector = await self._require_embedder().embed_query(query)
-        rows = _faiss_query_scores(self._faiss, query_vector, limit=limit, normalize=info.normalize)
-        return _ranking_from_index_scores(self._keys, rows, limit=limit)
+        key = _embedder_key(info)
+        if query_vectors is not None and key in query_vectors:
+            query_vector = query_vectors[key]
+        else:
+            raise ValueError("VectorIndex search requires a precomputed query vector for its embedder")
+        rows = _faiss_query_scores(
+            self._faiss,
+            query_vector,
+            limit=len(self._postings.values),
+            normalize=info.normalize,
+        )
+        return {vid: score for vid, score in rows}
 
     def save(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
         info = self.embedder_info
         (path / META_FILENAME).write_text(
-            json.dumps(
-                {
-                    "kind": self.kind,
-                    "name": self.name,
-                    "field": self.field,
-                    "keys": [{"namespace": ns, "code": code} for ns, code in self._keys],
-                    "embedder": info.model_dump(mode="json"),
-                },
-                indent=2,
-            )
+            json.dumps({"kind": self.kind, "embedder": info.model_dump(mode="json")}, indent=2)
         )
-        write_faiss(self._faiss, str(path / "index.faiss"), dim=info.dim)
+        value_rows = [{"value_id": vid, "text": text} for vid, text in enumerate(self._postings.values)]
+        schema = pa.schema([("value_id", pa.int32()), ("text", pa.string())])
+        pq.write_table(pa.Table.from_pylist(value_rows, schema=schema), path / VALUES_FILENAME, compression="zstd")
+        self._postings.save_postings(path / POSTINGS_FILENAME)
+        write_faiss(self._faiss, str(path / VECTORS_FILENAME), dim=info.dim)
 
     @classmethod
-    def load(
-        cls,
-        path: Path,
-        *,
-        embedder: EmbeddingProvider | None = None,
-    ) -> Self:
+    def load(cls, path: Path, *, embedder: EmbeddingProvider | None = None) -> Self:
         raw = json.loads((path / META_FILENAME).read_text())
         stored_info = EmbedderInfo.model_validate(raw["embedder"])
         if embedder is not None:
             chosen_info = embedder.info()
-            expected = (stored_info.model, stored_info.dim, stored_info.normalize)
-            actual = (chosen_info.model, chosen_info.dim, chosen_info.normalize)
+            expected = _embedder_key(stored_info)
+            actual = _embedder_key(chosen_info)
             if expected != actual:
                 raise ValueError(
                     f"Embedder identity mismatch for index at {path}:\n"
                     f"  expected (model, dim, normalize): {expected}\n"
                     f"  actual:                           {actual}"
                 )
-        index = cls(raw["name"], raw["field"], embedder=embedder)
+        index = cls(embedder=embedder)
         index._embedder_info = stored_info
-        raw_keys = raw.get("keys")
-        if raw_keys is None:
-            raise ValueError(f"VectorIndex at {path} is missing serialized keys")
-        index._keys = [(str(item["namespace"]), str(item["code"])) for item in raw_keys]
-        index._faiss = read_faiss(str(path / "index.faiss"), expected_rows=len(index._keys))
+        table = pq.read_table(path / VALUES_FILENAME)
+        values = [str(row["text"]) for row in table.to_pylist()]
+        index._postings = _ValuePostings.load_postings(path / POSTINGS_FILENAME, values)
+        index._faiss = read_faiss(str(path / VECTORS_FILENAME), expected_rows=len(values))
         return index
 
     def _require_embedder(self) -> EmbeddingProvider:
@@ -239,38 +394,72 @@ class VectorIndex:
         return self._embedder
 
 
-class BM25Index:
-    """BM25 index over one catalog field."""
+class HybridIndex:
+    """Hybrid index fusing BM25 and vector components over one field."""
 
-    kind: Literal["bm25"] = "bm25"
+    kind: str = "hybrid"
 
-    def __init__(self, name: str, field: str = "title") -> None:
-        self.name = normalize_code(name)
-        self.field = field
-        self._keys: list[tuple[str, str]] = []
-        self._tokens: list[list[str]] = []
-        self._bm25: BM25Okapi | None = None
+    def __init__(
+        self,
+        *,
+        components: list[CatalogIndex],
+        fusion: Ranker | None = None,
+    ) -> None:
+        if not components:
+            raise ValueError("HybridIndex requires at least one component")
+        kinds: dict[str, CatalogIndex] = {}
+        for component in components:
+            kind = _component_kind(component)
+            if kind in kinds:
+                raise ValueError(f"HybridIndex duplicate component kind {kind!r}")
+            kinds[kind] = component
+        self._components = kinds
+        self._fusion = fusion if fusion is not None else ZScoreFusion()
 
-    async def build(self, entries: list[CatalogEntry]) -> None:
-        docs = [
-            ((entry.namespace, entry.code), tokens)
-            for entry in entries
-            if (tokens := tokenize(field_text(entry, self.field)))
-        ]
-        self._keys = [key for key, _ in docs]
-        self._tokens = [tokens for _, tokens in docs]
-        if not self._tokens:
-            self._bm25 = None
-            return
-        from rank_bm25 import BM25Okapi
+    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        await asyncio.gather(*(component.build(entries, ctx=ctx) for component in self._components.values()))
 
-        self._bm25 = BM25Okapi(self._tokens)
+    async def score_candidates(
+        self,
+        query: str,
+        *,
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> dict[int, float]:
+        value_rankings: dict[str, Ranking] = {}
+        per_kind_scores: dict[str, dict[int, float]] = {}
+        for kind, component in self._components.items():
+            if isinstance(component, BM25Index):
+                value_scores = component._score_values(query)
+            elif isinstance(component, VectorIndex):
+                value_scores = component._score_values(query, query_vectors=query_vectors)
+            else:
+                raise TypeError(f"Unsupported hybrid component: {type(component)!r}")
+            per_kind_scores[kind] = value_scores
+            rows = [("", str(vid), float(score)) for vid, score in value_scores.items() if score > 0.0]
+            value_rankings[kind] = ranking_from_scores(rows, limit=len(rows))
+        if not value_rankings:
+            return {}
+        positive_vids = {vid for scores in per_kind_scores.values() for vid, score in scores.items() if score > 0.0}
+        fused_values = self._fusion(concat(value_rankings), limit=max(len(positive_vids), 1))
+        fused_scores = {
+            int(item.code): max(scores.get(int(item.code), 0.0) for scores in per_kind_scores.values())
+            for item in fused_values.items
+        }
+        reference = next(iter(self._components.values()))
+        if not isinstance(reference, (BM25Index, VectorIndex)):
+            raise TypeError(f"Unsupported hybrid component for postings: {type(reference)!r}")
+        return reference._postings.expand(fused_scores)
 
-    async def ranking(self, query: str, *, limit: int) -> Ranking:
-        if self._bm25 is None:
-            return Ranking.empty()
-        rows = _bm25_query_scores(self._bm25, query, doc_tokens=self._tokens)
-        return _ranking_from_index_scores(self._keys, rows, limit=limit)
+    async def ranking(
+        self,
+        query: str,
+        *,
+        limit: int,
+        entries: list[Entity],
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> Ranking:
+        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def save(self, path: Path) -> None:
         path.mkdir(parents=True, exist_ok=True)
@@ -278,47 +467,62 @@ class BM25Index:
             json.dumps(
                 {
                     "kind": self.kind,
-                    "name": self.name,
-                    "field": self.field,
+                    "fusion": ranker_to_spec(self._fusion).model_dump(mode="json"),
+                    "components": sorted(self._components),
                 },
                 indent=2,
             )
         )
-        schema = pa.schema(
-            [
-                ("namespace", pa.string()),
-                ("code", pa.string()),
-                ("tokens", pa.list_(pa.string())),
-            ]
-        )
-        if not self._keys:
-            pq.write_table(pa.Table.from_pylist([], schema=schema), path / "tokens.parquet", compression="zstd")
-        else:
-            rows = [
-                {
-                    "namespace": ns,
-                    "code": code,
-                    "tokens": tokens,
-                }
-                for (ns, code), tokens in zip(self._keys, self._tokens, strict=True)
-            ]
-            pq.write_table(pa.Table.from_pylist(rows, schema=schema), path / "tokens.parquet", compression="zstd")
+        components_dir = path / COMPONENTS_DIRNAME
+        components_dir.mkdir(parents=True, exist_ok=True)
+        for kind, component in self._components.items():
+            if isinstance(component, (BM25Index, VectorIndex)):
+                component.save(components_dir / kind)
+            else:
+                raise TypeError(f"Hybrid component {kind!r} is not serializable")
 
     @classmethod
     def load(cls, path: Path) -> Self:
         raw = json.loads((path / META_FILENAME).read_text())
-        index = cls(raw["name"], raw["field"])
-        table = pq.read_table(path / "tokens.parquet")
-        rows = table.to_pylist()
-        index._keys = [(str(row["namespace"]), str(row["code"])) for row in rows]
-        index._tokens = [list(row["tokens"]) for row in rows]
-        if not index._tokens:
-            index._bm25 = None
-        else:
-            from rank_bm25 import BM25Okapi
+        fusion = ranker_from_spec(TypeAdapter(RankerSpec).validate_python(raw["fusion"]))
+        components: list[CatalogIndex] = []
+        for kind in raw["components"]:
+            component_path = path / COMPONENTS_DIRNAME / kind
+            component_raw = json.loads((component_path / META_FILENAME).read_text())
+            if component_raw["kind"] == "bm25":
+                components.append(BM25Index.load(component_path))
+            elif component_raw["kind"] == "vector":
+                components.append(VectorIndex.load(component_path))
+            else:
+                raise ValueError(f"Unsupported hybrid component kind {component_raw['kind']!r}")
+        return cls(components=components, fusion=fusion)
 
-            index._bm25 = BM25Okapi(index._tokens)
-        return index
+
+def collect_vector_indexes(index: CatalogIndex) -> list[VectorIndex]:
+    if isinstance(index, VectorIndex):
+        return [index]
+    if isinstance(index, HybridIndex):
+        return [idx for idx in index._components.values() if isinstance(idx, VectorIndex)]
+    return []
+
+
+async def embed_query_vectors(
+    query: str,
+    indexes: Iterable[CatalogIndex],
+) -> dict[tuple[str, int, bool], list[float]]:
+    """Embed *query* once per distinct embedder identity used by *indexes*."""
+    vectors: dict[tuple[str, int, bool], list[float]] = {}
+    pending: dict[tuple[str, int, bool], EmbeddingProvider] = {}
+    for index in indexes:
+        for vector_index in collect_vector_indexes(index):
+            info = vector_index.embedder_info
+            key = _embedder_key(info)
+            if key not in vectors and key not in pending:
+                pending[key] = vector_index._require_embedder()
+    for key, embedder in pending.items():
+        batch = await embedder.embed_texts([query])
+        vectors[key] = list(batch[0])
+    return vectors
 
 
 def _faiss_query_scores(
@@ -333,37 +537,41 @@ def _faiss_query_scores(
     q = np.asarray([query_vector], dtype=np.float32)
     if normalize:
         faiss.normalize_L2(q)
-    query_size = min(index.ntotal, max(limit * 10, 100))
+    query_size = min(index.ntotal, max(limit, 1))
     scores, ids = index.search(q, query_size)
     return [(int(idx), float(scores[0][pos])) for pos, idx in enumerate(ids[0]) if idx != -1]
 
 
-def _bm25_query_scores(
+def _bm25_value_scores(
     bm25: object,
     query: str,
     *,
-    doc_tokens: list[list[str]] | None = None,
+    doc_tokens: list[list[str]],
 ) -> list[tuple[int, float]]:
     query_tokens = tokenize(query)
     if not query_tokens:
         return []
     scores = bm25.get_scores(query_tokens)  # type: ignore[attr-defined]
     rows = [(int(idx), float(score)) for idx, score in enumerate(scores) if float(score) > 0]
-    if rows or doc_tokens is None:
+    if rows:
         return rows
     query_set = set(query_tokens)
-    overlap_rows = [
+    return [
         (idx, float(sum(1 for token in tokens if token in query_set)))
         for idx, tokens in enumerate(doc_tokens)
         if any(token in query_set for token in tokens)
     ]
-    return overlap_rows
 
 
-def _ranking_from_index_scores(
-    keys: list[tuple[str, str]],
-    rows: list[tuple[int, float]],
+def _ranking_from_row_scores(
+    entries: list[Entity],
+    row_scores: dict[int, float],
     *,
     limit: int,
 ) -> Ranking:
-    return ranking_from_scores([(keys[idx][0], keys[idx][1], score) for idx, score in rows], limit=limit)
+    rows = [
+        (entries[row_id].namespace, entries[row_id].code, score)
+        for row_id, score in row_scores.items()
+        if 0 <= row_id < len(entries)
+    ]
+    return ranking_from_scores(rows, limit=limit)

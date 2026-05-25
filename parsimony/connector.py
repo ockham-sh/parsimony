@@ -28,7 +28,6 @@ from typing import Any, get_args, get_origin, get_type_hints, overload
 
 import pandas as pd
 
-from parsimony.catalog.models import CatalogEntry
 from parsimony.errors import ParseError
 from parsimony.result import ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
@@ -205,33 +204,32 @@ class Connector:
 
     def _wrap_result(self, raw: Any, call_params: Mapping[str, Any]) -> Result:
         """Wrap a connector return value in a :class:`Result` with framework-built provenance."""
-        connector_properties: dict[str, Any] = dict(raw.provenance.properties) if isinstance(raw, Result) else {}
+        if isinstance(raw, tuple):
+            raise TypeError(
+                f"connector {self.name!r}: must return raw data, not (data, properties) tuples; "
+                "put provider facts in DataFrame columns."
+            )
+
+        if isinstance(raw, (Result, TabularResult)):
+            raise TypeError(
+                f"connector {self.name!r}: must return raw data, not Result/TabularResult; "
+                "the framework builds the execution envelope."
+            )
+
         safe_call_params = {k: v for k, v in call_params.items() if k not in self.secrets}
         provenance = Provenance.model_construct(
             source=self.name,
             source_description=self.description,
             fetched_at=datetime.now(UTC),
             params=dict(safe_call_params),
-            properties=connector_properties,
+            properties={},
         )
 
-        if isinstance(raw, TabularResult):
-            return raw.model_copy(update={"provenance": provenance})
-        if isinstance(raw, list) and all(isinstance(item, CatalogEntry) for item in raw):
-            return Result(data=raw, provenance=provenance)
-        if "enumerator" in self.tags and isinstance(raw, (pd.DataFrame, pd.Series)):
-            raise TypeError(
-                f"connector {self.name!r}: enumerator must return list[CatalogEntry], not a DataFrame"
-            )
-        if isinstance(raw, Result):
-            if self.output_config is not None and isinstance(raw.data, (pd.DataFrame, pd.Series)):
-                raise TypeError(
-                    f"connector {self.name!r} declares output= but returned Result(data={type(raw.data).__name__}). "
-                    "Return the DataFrame directly, or return output.build_table_result(df).with_properties(...)."
-                )
-            return Result(data=raw.data, provenance=provenance)
         if self.output_config is not None and isinstance(raw, (pd.DataFrame, pd.Series)):
-            result = self.output_config.build_table_result(raw)
+            merge_unmapped = "enumerator" not in self.tags
+            result = self.output_config.build_table_result(raw, merge_unmapped_as_data=merge_unmapped)
+            if "enumerator" in self.tags:
+                _validate_enumerator_dataframe(result.data, self.output_config)
             return result.model_copy(update={"provenance": provenance})
         if isinstance(raw, (pd.DataFrame, pd.Series)):
             return TabularResult(data=pd.DataFrame(raw), provenance=provenance)
@@ -420,6 +418,58 @@ def connector(
     return decorator
 
 
+def _validate_enumerator_output(output: OutputConfig) -> None:
+    """Raise if *output* is not a strict entity-discovery schema."""
+    cols = output.columns
+    key_cols = [c for c in cols if c.role == ColumnRole.KEY]
+    if len(key_cols) != 1:
+        raise ValueError(f"Enumerator output must define exactly one KEY column; found {len(key_cols)}")
+    key = key_cols[0]
+    if key.namespace is None or not str(key.namespace).strip():
+        raise ValueError("Enumerator KEY column must declare a non-empty namespace=...")
+    if key.namespace == "__row__":
+        ns_cols = [c.name for c in cols if c.role == ColumnRole.METADATA and c.name not in ("*",)]
+        if "entity_namespace" not in ns_cols:
+            raise ValueError('Enumerator with namespace="__row__" requires entity_namespace METADATA column')
+    title_cols = [c for c in cols if c.role == ColumnRole.TITLE]
+    if not title_cols:
+        raise ValueError("Enumerator output must include at least one TITLE column")
+    data_cols = [c.name for c in cols if c.role == ColumnRole.DATA]
+    if data_cols:
+        raise ValueError(f"Enumerator output must not include DATA columns; remove: {data_cols!r}")
+    invalid = [c.name for c in cols if c.role not in (ColumnRole.KEY, ColumnRole.TITLE, ColumnRole.METADATA)]
+    if invalid:
+        raise ValueError(f"Enumerator output has invalid column roles: {invalid!r}")
+
+
+def _validate_enumerator_dataframe(df: pd.DataFrame, output: OutputConfig) -> None:
+    """Raise if *df* columns do not match the declared enumerator schema."""
+    declared = {c.name for c in output.columns if c.name != "*"}
+    actual = set(df.columns)
+    missing = sorted(declared - actual)
+    if missing:
+        raise ValueError(f"Enumerator DataFrame missing declared columns: {missing}")
+    extra = sorted(actual - declared)
+    if extra:
+        raise ValueError(f"Enumerator DataFrame has undeclared columns: {extra}")
+
+
+def _validate_enumerator_return(fn: Callable[..., Any]) -> None:
+    """Raise if *fn* does not annotate ``pd.DataFrame`` return."""
+    try:
+        hints = get_type_hints(fn, include_extras=True)
+    except Exception:  # noqa: BLE001 - local annotations may be unavailable
+        hints = getattr(fn, "__annotations__", {})
+    ann = hints.get("return")
+    if ann is None:
+        raise ValueError(f"{fn.__name__}: enumerator must annotate return type pd.DataFrame")
+    return_str = str(_strip_annotated(ann))
+    if "DataFrame" not in return_str and "Series" not in return_str:
+        raise ValueError(f"{fn.__name__}: enumerator return must be pd.DataFrame")
+    if "Entity" in return_str or "list[" in return_str:
+        raise ValueError(f"{fn.__name__}: enumerator must not return list[Entity]")
+
+
 def _validate_loader_output(output: OutputConfig) -> None:
     """Raise if *output* is not valid for data loading via :func:`loader`."""
     cols = output.columns
@@ -467,28 +517,31 @@ def loader(
 
 def enumerator(
     *,
-    output: OutputConfig | None = None,
+    output: OutputConfig,
     name: str | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **enumerator** returning ``list[CatalogEntry]``.
+    """Decorate an async **enumerator** returning a raw ``pd.DataFrame``."""
 
-    The wrapped function must return ``list[CatalogEntry]`` (or another
-    ``Iterable[CatalogEntry]``). Legacy ``output=`` on the decorator is ignored.
-    """
+    _validate_enumerator_output(output)
 
-    merged_tags = ["enumerator", *(tags or [])]
-    return connector(
-        name=name,
-        description=description,
-        output=output,
-        tags=merged_tags,
-        properties=dict(properties or {}),
-        secrets=secrets,
-    )
+    def decorator(inner: Callable[..., Any]) -> Connector:
+        _validate_enumerator_return(inner)
+        inner.__parsimony_role__ = "enumerator"  # type: ignore[attr-defined]
+        merged_tags = ["enumerator", *(tags or [])]
+        return connector(
+            name=name,
+            description=description,
+            output=output,
+            tags=merged_tags,
+            properties=dict(properties or {}),
+            secrets=secrets,
+        )(inner)
+
+    return decorator
 
 
 # ---------------------------------------------------------------------------
@@ -523,26 +576,10 @@ class Connectors:
             out.append(c.bind(**scoped) if scoped else c)
         return Connectors(out)
 
-    @classmethod
-    def merge(cls, *others: Connectors) -> Connectors:
-        """Combine ``others`` into a new collection. Duplicate names raise ``ValueError``."""
-        items: list[Connector] = []
-        for coll in others:
-            if not isinstance(coll, Connectors):
-                raise TypeError(f"Connectors.merge arguments must be Connectors; got {type(coll).__name__}")
-            items.extend(coll._items)
-        return cls(items)
-
-    def replace(self, name: str, connector: Connector) -> Connectors:
-        """Return a new collection with the entry named ``name`` swapped for ``connector``."""
-        if not any(c.name == name for c in self._items):
-            available = sorted(c.name for c in self._items)
-            raise KeyError(f"No connector {name!r}. Available: {available}")
-        out = [connector if c.name == name else c for c in self._items]
-        return Connectors(out)
-
     def __add__(self, other: Connectors) -> Connectors:
-        return Connectors.merge(self, other)
+        if not isinstance(other, Connectors):
+            return NotImplemented
+        return Connectors([*self._items, *other._items])
 
     def __iter__(self) -> Iterator[Connector]:
         return iter(self._items)
@@ -603,24 +640,25 @@ class Connectors:
         names = [c.name for c in self._items]
         return f"Connectors({names!r})"
 
-    def filter(
+    def filter(self, predicate: Callable[[Connector], bool]) -> Connectors:
+        """Return connectors matching *predicate*."""
+        return Connectors([c for c in self._items if predicate(c)])
+
+    def search(
         self,
-        predicate: Callable[[Connector], bool] | None = None,
+        query: str,
         *,
-        name: str | None = None,
         tags: Sequence[str] | None = None,
         **properties: Any,
     ) -> Connectors:
-        """Return a filtered view."""
-        if predicate is not None:
-            return Connectors([c for c in self._items if predicate(c)])
-
+        """Substring match over connector name and description."""
         out: list[Connector] = []
+        needle = query.strip().lower()
+        if not needle:
+            return Connectors(list(self._items))
         for c in self._items:
-            if name is not None and name.strip():
-                n = name.lower()
-                if n not in c.name.lower() and n not in c.description.lower():
-                    continue
+            if needle not in c.name.lower() and needle not in c.description.lower():
+                continue
             if tags is not None:
                 tag_set = set(tags)
                 if not tag_set.issubset(set(c.tags)):

@@ -7,7 +7,7 @@ import pytest
 from parsimony.catalog import (
     BM25Index,
     Catalog,
-    CatalogEntry,
+    Entity,
     UnknownIndexedFieldError,
 )
 from parsimony.catalog.query import StructuredQuery, parse_query
@@ -47,29 +47,25 @@ def test_parse_query_malformed() -> None:
 @pytest.mark.asyncio
 async def test_structured_search_execution() -> None:
     entries = [
-        CatalogEntry(namespace="ns", code="A", title="Title A", metadata={"REF_AREA": "Germany", "ICP_ITEM": "energy"}),
-        CatalogEntry(namespace="ns", code="B", title="Title B", metadata={"REF_AREA": "Italy", "ICP_ITEM": "energy"}),
-        CatalogEntry(namespace="ns", code="C", title="Title C", metadata={"REF_AREA": "Germany", "ICP_ITEM": "food"}),
-        CatalogEntry(namespace="ns", code="D", title="Title D", metadata={"REF_AREA": "France", "ICP_ITEM": "food"}),
+        Entity(namespace="ns", code="A", title="Title A", metadata={"REF_AREA": "Germany", "ICP_ITEM": "energy"}),
+        Entity(namespace="ns", code="B", title="Title B", metadata={"REF_AREA": "Italy", "ICP_ITEM": "energy"}),
+        Entity(namespace="ns", code="C", title="Title C", metadata={"REF_AREA": "Germany", "ICP_ITEM": "food"}),
+        Entity(namespace="ns", code="D", title="Title D", metadata={"REF_AREA": "France", "ICP_ITEM": "food"}),
         # Add dummy entries to prevent IDF from going to 0 for 50% frequency terms in small corpus
-        CatalogEntry(namespace="ns", code="E", title="Title E", metadata={"REF_AREA": "Spain", "ICP_ITEM": "housing"}),
-        CatalogEntry(
-            namespace="ns", code="F", title="Title F", metadata={"REF_AREA": "Portugal", "ICP_ITEM": "health"}
-        ),
-        CatalogEntry(
-            namespace="ns", code="G", title="Title G", metadata={"REF_AREA": "Greece", "ICP_ITEM": "education"}
-        ),
+        Entity(namespace="ns", code="E", title="Title E", metadata={"REF_AREA": "Spain", "ICP_ITEM": "housing"}),
+        Entity(namespace="ns", code="F", title="Title F", metadata={"REF_AREA": "Portugal", "ICP_ITEM": "health"}),
+        Entity(namespace="ns", code="G", title="Title G", metadata={"REF_AREA": "Greece", "ICP_ITEM": "education"}),
     ]
 
     cat = Catalog("test_cat")
     cat.set_indexes(
-        [
-            BM25Index("title_bm25", field="title"),
-            BM25Index("ref_area_bm25", field="REF_AREA"),
-            BM25Index("icp_item_bm25", field="ICP_ITEM"),
-        ]
+        {
+            "title": BM25Index(),
+            "REF_AREA": BM25Index(),
+            "ICP_ITEM": BM25Index(),
+        }
     )
-    cat.set_entries(entries)
+    cat.set_entities(entries)
     await cat.build()
 
     with pytest.raises(UnknownIndexedFieldError, match="UNKNOWN_FIELD"):

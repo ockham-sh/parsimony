@@ -8,7 +8,6 @@ import pandas as pd
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
-from parsimony.catalog import CatalogEntry
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
 from parsimony.result import Column, ColumnRole, OutputConfig, Result, TabularResult
 
@@ -18,6 +17,7 @@ class _MacroParams(BaseModel):
 
     country: str
     indicator: str
+
 
 SEARCH_OUTPUT = OutputConfig(
     columns=[
@@ -163,27 +163,50 @@ class TestExposedSignature:
         assert result.provenance.params == {"payload": QueryModel(query="GDP")}
 
 
+ENUMERATE_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="code", role=ColumnRole.KEY, namespace="demo"),
+        Column(name="title", role=ColumnRole.TITLE),
+    ]
+)
+
+
 class TestEnumerator:
     def test_enumerator_adds_tag(self) -> None:
-        from parsimony.catalog import CatalogEntry
-
-        @enumerator(tags=["demo"])
-        async def enumerate_demo() -> list[CatalogEntry]:
+        @enumerator(output=ENUMERATE_OUTPUT, tags=["demo"])
+        async def enumerate_demo() -> pd.DataFrame:
             """Enumerate demo series."""
-            return [
-                CatalogEntry(namespace="demo", code="A", title="Series A"),
-            ]
+            return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
 
         assert enumerate_demo.tags == ("enumerator", "demo")
 
-    @pytest.mark.asyncio
-    async def test_enumerator_returning_dataframe_raises_typeerror(self) -> None:
-        @enumerator(name="bad_enumerator")
-        async def bad_enumerator() -> list[CatalogEntry]:
-            """Returns the wrong type at runtime."""
-            return pd.DataFrame({"code": ["A"]})  # type: ignore[return-value]
+    def test_enumerator_requires_output(self) -> None:
+        with pytest.raises(ValueError, match="exactly one KEY"):
 
-        with pytest.raises(TypeError, match="bad_enumerator"):
+            @enumerator(output=OutputConfig(columns=[Column(name="title", role=ColumnRole.TITLE)]))
+            async def bad() -> pd.DataFrame:
+                """Missing KEY."""
+                return pd.DataFrame()
+
+    @pytest.mark.asyncio
+    async def test_enumerator_wraps_dataframe_as_tabular_result(self) -> None:
+        @enumerator(output=ENUMERATE_OUTPUT, name="good_enumerator")
+        async def good_enumerator() -> pd.DataFrame:
+            """Returns a catalog discovery frame."""
+            return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
+
+        result = await good_enumerator()
+        assert isinstance(result, TabularResult)
+        assert list(result.data.columns) == ["code", "title"]
+
+    @pytest.mark.asyncio
+    async def test_enumerator_manual_result_raises_typeerror(self) -> None:
+        @enumerator(output=ENUMERATE_OUTPUT, name="bad_enumerator")
+        async def bad_enumerator() -> pd.DataFrame:
+            """Returns Result instead of raw data."""
+            return Result(data=pd.DataFrame({"code": ["A"], "title": ["X"]}))  # type: ignore[return-value]
+
+        with pytest.raises(TypeError, match="must return raw data"):
             await bad_enumerator()
 
 
@@ -318,16 +341,10 @@ class TestConnectorsCollection:
         with pytest.raises(ValueError, match="Duplicate connector names"):
             Connectors([demo_search, demo_search])
 
-    def test_merge_and_add(self) -> None:
+    def test_add(self) -> None:
         a = Connectors([demo_search])
         b = Connectors([demo_fetch])
-        assert Connectors.merge(a, b).names() == ["demo_fetch", "demo_search"]
         assert (a + b).names() == ["demo_fetch", "demo_search"]
-
-    def test_replace(self) -> None:
-        replacement = demo_search.bind(query="GDP")
-        coll = _fake_connectors().replace("demo_search", replacement)
-        assert coll["demo_search"] is replacement
 
 
 class TestResultWrap:
@@ -336,16 +353,14 @@ class TestResultWrap:
         assert result.provenance.source == "demo_search"
         assert "Search for test series" in result.provenance.source_description
 
-    def test_framework_overwrites_connector_provenance(self) -> None:
+    def test_manual_result_raises_typeerror(self) -> None:
         @connector
         async def manual_result(series_id: str) -> Result:
             """Real connector docstring."""
-            return Result(data=_make_fetch_df(), provenance=Result(data=None).provenance)
+            return Result(data=_make_fetch_df())
 
-        result = asyncio.run(manual_result(series_id="GDPC1"))
-        assert result.provenance.source == "manual_result"
-        assert result.provenance.source_description == "Real connector docstring."
-        assert result.provenance.params == {"series_id": "GDPC1"}
+        with pytest.raises(TypeError, match="must return raw data"):
+            asyncio.run(manual_result(series_id="GDPC1"))
 
     def test_flat_params_recorded_in_provenance(self) -> None:
         @connector()
@@ -366,17 +381,35 @@ class TestResultWrap:
             """Tabular fetch that incorrectly wraps a DataFrame in Result."""
             return Result(data=_make_fetch_df())
 
-        with pytest.raises(TypeError, match="declares output="):
+        with pytest.raises(TypeError, match="must return raw data"):
             asyncio.run(bad_fetch(series_id="GDPC1"))
 
-    def test_connector_properties_are_preserved(self) -> None:
+    def test_tabular_result_return_raises_typeerror(self) -> None:
         @connector
-        async def with_props(series_id: str) -> Result:
-            """Attaches source-specific metadata."""
-            return TabularResult.from_dataframe(_make_fetch_df()).with_properties(series_url="https://example.com/x")
+        async def with_props(series_id: str) -> TabularResult:
+            """Incorrectly returns TabularResult."""
+            return TabularResult.from_dataframe(_make_fetch_df())
 
-        result = asyncio.run(with_props(series_id="GDPC1"))
-        assert result.provenance.properties == {"series_url": "https://example.com/x"}
+        with pytest.raises(TypeError, match="must return raw data"):
+            asyncio.run(with_props(series_id="GDPC1"))
+
+    def test_build_table_result_return_raises_typeerror(self) -> None:
+        @connector(output=FETCH_OUTPUT)
+        async def bad_table(series_id: str) -> TabularResult:
+            """Incorrectly returns a framework-built TabularResult."""
+            return FETCH_OUTPUT.build_table_result(_make_fetch_df())
+
+        with pytest.raises(TypeError, match="must return raw data"):
+            asyncio.run(bad_table(series_id="GDPC1"))
+
+    def test_raw_tuple_return_raises_typeerror(self) -> None:
+        @connector(output=FETCH_OUTPUT)
+        async def with_meta(series_id: str) -> tuple[pd.DataFrame, dict[str, object]]:
+            """Incorrectly returns a (data, properties) tuple."""
+            return _make_fetch_df(), {"source_url": f"https://example.test/{series_id}"}
+
+        with pytest.raises(TypeError, match="must return raw data"):
+            asyncio.run(with_meta(series_id="GDPC1"))
 
 
 class TestCallback:

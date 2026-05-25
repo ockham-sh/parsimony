@@ -21,6 +21,7 @@ Keyword arguments:
 - `output`: optional `OutputConfig` for tabular result shaping.
 - `tags`: labels used by callers such as agent runtimes or apps.
 - `properties`: exact-match metadata for filtering.
+- `secrets`: parameter names omitted from provenance.
 
 The callable signature is the connector parameter surface.
 
@@ -48,17 +49,17 @@ Important attributes and methods:
 Immutable collection of `Connector` values.
 
 - `Connectors([...])`
-- `Connectors.merge(a, b, ...)`
+- `a + b` — combine two collections (duplicate names raise `ValueError`)
 - `connectors.bind(**kwargs)`
 - `connectors.with_callback(callback)`
-- `connectors.filter(predicate=None, *, name=None, tags=None, **properties)`
-- `connectors.replace(name, connector)`
+- `connectors.filter(predicate)`
+- `connectors.search(query, *, tags=None, **properties)`
 - `connectors.names()`
 - keyed lookup with `connectors["name"]`
 
 ## Specialized Decorators
 
-`@enumerator(output=...)` validates catalog-enumeration output: no `DATA` columns, exactly one `KEY`, exactly one `TITLE`.
+`@enumerator(output=...)` decorates async functions that return `pd.DataFrame`. The framework wraps them as `TabularResult`. Entity projection happens in catalog build code via `OutputConfig.build_entities()`.
 
 `@loader(output=...)` validates observation-loading output: exactly one namespaced `KEY`, at least one `DATA`, and no `TITLE` or `METADATA` columns.
 
@@ -70,21 +71,21 @@ Immutable collection of `Connector` values.
 
 ## Catalogs
 
-`CatalogEntry(namespace, code, title, metadata={...})` is the canonical catalog row.
+`Entity(namespace, code, title, metadata={...})` is the normalized discoverable identity record (`parsimony.entity`).
 
 `Catalog(name, indexes=None, default_field="title")` is the catalog lifecycle object.
 
 - Constructing it is cheap and does not build indexes.
-- `indexes` is a list of index objects, or `None` for default BM25 index on title.
+- `indexes=None` uses the default index policy: at `build()`, BM25 indexes are created for `code`, `title`, and each metadata key on the entries.
 - `default_field` is the field name targeted by broad queries, defaults to `"title"`.
-- `catalog.set_entries(entries)` replaces rows without rebuilding indexes.
+- `catalog.set_entities(entities)` replaces rows without rebuilding indexes.
 - `catalog.set_indexes(indexes)` changes indexing channels without rebuilding indexes.
 - `catalog.index_for(field)` returns the index configured for a given field (raises `KeyError` if missing).
 - `await catalog.build()` builds configured indexes over the current entries.
 - `await catalog.save(url_or_path)` writes a portable snapshot.
 - `await Catalog.load(url_or_path)` loads a built, searchable snapshot. Caching loaded catalogs is the caller's responsibility.
 
-`Catalog.name` is the artifact name used for snapshots. Entry namespaces live on `CatalogEntry.namespace` or on a catalog `Result`'s `KEY` column.
+`Catalog.name` is the artifact name used for snapshots. Entity namespaces live on `Entity.namespace` or on a tabular `Result`'s `KEY` column.
 
 Built-in index types:
 
@@ -92,7 +93,16 @@ Built-in index types:
 - `VectorIndex(name, field="title", embedder=...)`
 - `HybridIndex(name, field, indexes, fusion=None)` wraps multiple leaf indexes (e.g. BM25 + Vector) for the same field and fuses their results using a `Ranker` policy (defaults to `ZScoreFusion()`).
 
-`OutputConfig.build_entries(df)` is the catalog counterpart of `OutputConfig.build_table_result(df)`: the schema applies itself to *df*, reading the `KEY`/`TITLE`/`METADATA` columns to produce `list[CatalogEntry]`. A metadata column named `"*"` is a wildcard that captures every column not already claimed. Enumerators return the resulting list directly.
+`OutputConfig.build_entities(df)` projects tabular rows into `list[Entity]` using `KEY`/`TITLE`/`METADATA` columns. A metadata column named `"*"` is a wildcard that captures every column not already claimed. Catalog build helpers call this after enumerator `TabularResult`s are fetched — connectors do not return entities directly.
+
+### Local catalog search
+
+`make_local_search_connector(...)` builds a standard catalog-search connector for provider packages. Related helpers: `CatalogLRU`, `resolved_catalog_url`, `CatalogSearchParams`.
+
+## Stores
+
+- `InMemoryDataStore` — observation tables keyed by `(namespace, code)`
+- `LoadResult` — statistics from a data load run
 
 ## Ranking
 
@@ -114,4 +124,8 @@ Built-in index types:
 
 ## Testing
 
-`assert_plugin_valid(module)` and `ProviderTestSuite` check the minimal plugin contract: exported non-empty `CONNECTORS` and non-empty connector descriptions.
+`assert_plugin_valid(module)` and `ProviderTestSuite` check the plugin contract: exported non-empty `CONNECTORS`, non-empty connector descriptions, enumerator return types, and flat public parameters.
+
+## Errors
+
+`InvalidParameterError` is raised for call-time parameter validation failures before an upstream request is made.

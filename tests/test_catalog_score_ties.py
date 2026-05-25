@@ -1,6 +1,7 @@
 import pytest
 
-from parsimony.catalog import BM25Index, CatalogEntry, VectorIndex
+from parsimony.catalog import BM25Index, Entity, VectorIndex
+from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
 from parsimony.embedder import EmbedderInfo
 from parsimony.ranking import RankedItem, Ranking, RankingSet, ranking_from_scores
 
@@ -27,12 +28,12 @@ class _LiteralEmbedder:
         return [0.5, 0.5]
 
 
-def _entries() -> list[CatalogEntry]:
+def _entries() -> list[Entity]:
     return [
-        CatalogEntry(namespace="test", code="A", title="a", metadata={"label": "alpha"}),
-        CatalogEntry(namespace="test", code="B", title="b", metadata={"label": "beta"}),
-        CatalogEntry(namespace="test", code="C", title="c", metadata={"label": "rare gamma"}),
-        CatalogEntry(namespace="test", code="D", title="d", metadata={"label": "other gamma"}),
+        Entity(namespace="test", code="A", title="a", metadata={"label": "alpha"}),
+        Entity(namespace="test", code="B", title="b", metadata={"label": "beta"}),
+        Entity(namespace="test", code="C", title="c", metadata={"label": "rare gamma"}),
+        Entity(namespace="test", code="D", title="d", metadata={"label": "other gamma"}),
     ]
 
 
@@ -47,10 +48,13 @@ class _FixedRanker:
 
 @pytest.mark.asyncio
 async def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
-    index = VectorIndex("label_vector", field="label", embedder=_LiteralEmbedder())
-    await index.build(_entries())
+    entries = _entries()
+    index = VectorIndex(embedder=_LiteralEmbedder())
+    ctx = IndexBuildContext(field="label", vector_cache={})
+    await index.build(entries, ctx=ctx)
 
-    ranking = await index.ranking("query", limit=1)
+    query_vectors = await embed_query_vectors("query", [index])
+    ranking = await index.ranking("query", limit=1, entries=entries, query_vectors=query_vectors)
     items = sorted(ranking.items, key=lambda item: item.code)
 
     assert [item.code for item in items] == ["A", "B"]
@@ -61,42 +65,42 @@ async def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
 @pytest.mark.asyncio
 async def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
     embedder = _LiteralEmbedder()
-    index = VectorIndex("label_vector", field="label", embedder=embedder)
-    await index.build(
-        [
-            CatalogEntry(namespace="test", code="A", title="a", metadata={"label": "alpha"}),
-            CatalogEntry(namespace="test", code="B", title="b", metadata={"label": "alpha"}),
-            CatalogEntry(namespace="test", code="C", title="c", metadata={"label": "rare gamma"}),
-        ]
-    )
+    index = VectorIndex(embedder=embedder)
+    entries = [
+        Entity(namespace="test", code="A", title="a", metadata={"label": "alpha"}),
+        Entity(namespace="test", code="B", title="b", metadata={"label": "alpha"}),
+        Entity(namespace="test", code="C", title="c", metadata={"label": "rare gamma"}),
+    ]
+    ctx = IndexBuildContext(field="label", vector_cache={})
+    await index.build(entries, ctx=ctx)
 
     assert embedder.embedded_text_batches == [["alpha", "rare gamma"]]
 
 
 @pytest.mark.asyncio
 async def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
-    index = BM25Index("label_bm25", field="label")
-    await index.build(
-        [
-            CatalogEntry(
-                namespace="test",
-                code="A",
-                title="a",
-                metadata={"label": "instantaneous forward rate 1 year"},
-            ),
-            CatalogEntry(
-                namespace="test",
-                code="B",
-                title="b",
-                metadata={"label": "instantaneous forward rate 2 year"},
-            ),
-            CatalogEntry(namespace="test", code="C", title="c", metadata={"label": "unrelated label"}),
-            CatalogEntry(namespace="test", code="D", title="d", metadata={"label": "other unrelated"}),
-            CatalogEntry(namespace="test", code="E", title="e", metadata={"label": "different words"}),
-        ]
-    )
+    entries = [
+        Entity(
+            namespace="test",
+            code="A",
+            title="a",
+            metadata={"label": "instantaneous forward rate 1 year"},
+        ),
+        Entity(
+            namespace="test",
+            code="B",
+            title="b",
+            metadata={"label": "instantaneous forward rate 2 year"},
+        ),
+        Entity(namespace="test", code="C", title="c", metadata={"label": "unrelated label"}),
+        Entity(namespace="test", code="D", title="d", metadata={"label": "other unrelated"}),
+        Entity(namespace="test", code="E", title="e", metadata={"label": "different words"}),
+    ]
+    index = BM25Index()
+    ctx = IndexBuildContext(field="label", vector_cache={})
+    await index.build(entries, ctx=ctx)
 
-    ranking = await index.ranking("instantaneous forward rate one year", limit=1)
+    ranking = await index.ranking("instantaneous forward rate one year", limit=1, entries=entries)
     items = sorted(ranking.items, key=lambda item: item.code)
 
     assert [item.code for item in items] == ["A", "B"]

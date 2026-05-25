@@ -16,7 +16,7 @@ import pytest
 from parsimony.catalog import (
     BM25Index,
     Catalog,
-    CatalogEntry,
+    Entity,
     VectorIndex,
 )
 from parsimony.catalog.urls import parse_catalog_url
@@ -118,20 +118,20 @@ class _StubEmbedder:
         return vector
 
 
-def _entry(namespace: str, code: str, title: str) -> CatalogEntry:
-    return CatalogEntry(namespace=namespace, code=code, title=title)
+def _entry(namespace: str, code: str, title: str) -> Entity:
+    return Entity(namespace=namespace, code=code, title=title)
 
 
 @pytest.mark.asyncio
 async def test_file_roundtrip_no_sub(tmp_path: Path) -> None:
-    catalog = Catalog(name="solo", indexes=[VectorIndex("title_vector", field="title", embedder=_StubEmbedder())])
-    catalog.set_entries([_entry("solo", "A", "alpha")])
+    catalog = Catalog(name="solo", indexes={"title": VectorIndex(embedder=_StubEmbedder())})
+    catalog.set_entities([_entry("solo", "A", "alpha")])
     await catalog.build()
     await catalog.save(f"file://{tmp_path}/snapshot")
-    assert (tmp_path / "snapshot" / "indexes" / "title_vector" / "index.faiss").exists()
+    assert (tmp_path / "snapshot" / "indexes" / "title" / "vectors.faiss").exists()
     loaded = await Catalog.load(f"file://{tmp_path}/snapshot")
     assert len(loaded) == 1
-    assert loaded.entries[0].code == "A"
+    assert loaded.entities[0].code == "A"
 
 
 @pytest.mark.asyncio
@@ -140,29 +140,29 @@ async def test_file_url_pointing_at_subdir_loads_directly(tmp_path: Path) -> Non
     no special sub semantics, the URL points straight at the bundle."""
     bundle = tmp_path / "multi" / "bundle_a"
     catalog = Catalog(name="bundle_a")
-    catalog.set_entries([_entry("bundle_a", "X", "x-title")])
+    catalog.set_entities([_entry("bundle_a", "X", "x-title")])
     await catalog.build()
     await catalog.save(f"file://{bundle}")
     assert (bundle / "meta.json").exists()
     loaded = await Catalog.load(f"file://{bundle}")
-    assert loaded.entries[0].code == "X"
+    assert loaded.entities[0].code == "X"
 
 
 @pytest.mark.asyncio
 async def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) -> None:
     catalog = Catalog(
         name="ranked",
-        indexes=[
-            BM25Index("title_bm25", field="title"),
-            BM25Index("description_bm25", field="description"),
-        ],
+        indexes={
+            "title": BM25Index(),
+            "description": BM25Index(),
+        },
         default_field="description",
     )
-    catalog.set_entries(
+    catalog.set_entities(
         [
-            CatalogEntry(namespace="ranked", code="A", title="alpha", metadata={"description": "gamma"}),
-            CatalogEntry(namespace="ranked", code="B", title="gamma", metadata={"description": "alpha"}),
-            CatalogEntry(namespace="ranked", code="C", title="gamma", metadata={"description": "gamma"}),
+            Entity(namespace="ranked", code="A", title="alpha", metadata={"description": "gamma"}),
+            Entity(namespace="ranked", code="B", title="gamma", metadata={"description": "alpha"}),
+            Entity(namespace="ranked", code="C", title="gamma", metadata={"description": "gamma"}),
         ]
     )
     await catalog.build()
@@ -237,7 +237,7 @@ async def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(catalog_urls, "_save_hf", _spy_save_hf)
 
     catalog = Catalog(name="x")
-    catalog.set_entries([_entry("x", "A", "alpha")])
+    catalog.set_entities([_entry("x", "A", "alpha")])
     await catalog.build()
     await catalog.save("hf://org/repo/bundle")
 

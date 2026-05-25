@@ -20,9 +20,10 @@ from __future__ import annotations
 import asyncio
 import os
 
-from parsimony import Connectors
 from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
+
+from parsimony import Connectors
 
 
 async def main() -> None:

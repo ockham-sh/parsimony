@@ -94,9 +94,6 @@ Immutable ordered collection of `Connector` instances.
 | `describe` | `(self) -> str` | Multi-line summary. |
 | `names` | `() -> list[str]` | Sorted list of connector names. |
 
-> `__add__` exists as an internal helper but public callers should prefer
-> `Connectors.merge(*others)` so duplicate-name failures surface explicitly.
-
 ### `connector` decorator
 
 ```python
@@ -178,10 +175,12 @@ from parsimony import Column, ColumnRole, OutputConfig, Provenance, Result
 
 ```python
 class ColumnRole(str, Enum):
-    KEY      = "key"
-    DATA     = "data"
-    TITLE    = "title"
-    METADATA = "metadata"
+    KEY         = "key"
+    DATA        = "data"
+    TITLE       = "title"
+    DESCRIPTION = "description"
+    METADATA    = "metadata"
+    FRAGMENTS   = "fragments"
 ```
 
 **Stable.**

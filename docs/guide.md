@@ -91,8 +91,7 @@ fred = fred_connectors.bind(api_key="explicit-key")
 
 The kernel does not auto-load `.env` files. Use
 [`python-dotenv`](https://github.com/theskumar/python-dotenv) or
-`uv run --env-file` to populate `os.environ`. The standalone
-`parsimony-mcp` distribution autoloads `.env` for the MCP boot path.
+`uv run --env-file` to populate `os.environ`.
 
 ## Errors
 
@@ -180,6 +179,6 @@ to swap an existing entry for a test double.
 
 - **[Connectors](connectors/index.md)** — every available data source
 - **[MCP Server](mcp-server/index.md)** — expose connectors as agent tools
-- **[Building Plugins](connector-implementation-guide.md)** — write your own connector
+- **[Author your first connector](authoring-connectors.md)** — write, test, and publish your own connector
 - **[Recipes](cookbook.md)** — practical end-to-end examples
 - **[Plugin Contract](contract.md)** — the authoritative spec

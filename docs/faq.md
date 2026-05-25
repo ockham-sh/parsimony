@@ -16,8 +16,7 @@
 | `all` | All of the above |
 
 Connectors are separate distributions (`parsimony-fred`, `parsimony-sdmx`,
-…); install whichever you need. The MCP server is its own distribution
-(`parsimony-mcp`).
+…); install whichever you need.
 
 ---
 

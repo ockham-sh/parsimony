@@ -31,8 +31,8 @@ jobs:
 
       - name: Install dependencies
         # Pulls mkdocs-material plus mkdocs-multirepo-plugin (which
-        # imports parsimony-connectors and parsimony-mcp docs at build
-        # time). Single source of truth: the [docs] extra in pyproject.
+        # imports parsimony-connectors docs at build time). Single source
+        # of truth: the [docs] extra in pyproject.
         run: pip install '.[docs]'
 
       - name: Build docs

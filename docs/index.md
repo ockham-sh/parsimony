@@ -18,7 +18,7 @@ result.provenance   # source, params, fetched_at
 
 ## Ecosystem
 
-parsimony ships as three pip-installable pieces:
+parsimony is four Apache-2.0 open-source libraries, plus the ockham terminal product:
 
 - **[parsimony-core](guide.md)** — the kernel: `@connector`, `@enumerator`,
   `@loader` decorators producing typed `Result`s with provenance, plus an
@@ -27,13 +27,19 @@ parsimony ships as three pip-installable pieces:
   FRED, SDMX, FMP, SEC EDGAR, Polymarket, central banks, and more. Each is
   a standalone PyPI distribution; the kernel discovers them at runtime via
   Python entry points.
-- **[parsimony-mcp](mcp-server/index.md)** — MCP stdio server exposing any
-  installed connector as a tool to Claude Desktop, Claude Code, Cursor, and
-  other MCP-compatible agent runtimes.
+- **[parsimony-agents](https://github.com/ockham-sh/parsimony-agents)** —
+  agent framework: run loop, failure detection and recovery, streaming events.
+  Powers the [ockham terminal](https://github.com/ockham-sh/terminal) and
+  usable independently in your own agent stack.
+
+The [ockham terminal](https://github.com/ockham-sh/terminal) (`ockham` on
+PyPI, AGPL-3.0) is the agentic data-analysis product built on top of this
+stack.
 
 ## Get started
 
 - **[Quickstart](quickstart.md)** — install and run your first fetch in 5 minutes
 - **[Guide](guide.md)** — how to use parsimony in real code
 - **[Connectors](connectors/index.md)** — browse the connector catalog
+- **[Author your first connector](authoring-connectors.md)** — build, test, and publish a connector end to end
 - **[Reference](contract.md)** — plugin contract, API, architecture

@@ -3,6 +3,10 @@
 How to build a public parsimony connector from scratch — provider research,
 scaffold, schema design, error mapping, testing, catalog integration.
 
+New to connector authoring? Start with
+[`authoring-connectors.md`](authoring-connectors.md) — the end-to-end
+orienting guide. This page is the deep dive it links into.
+
 For the **authoritative** plugin contract, see [`contract.md`](contract.md).
 For private / internal connectors (Postgres, Snowflake, S3), see
 [`building-a-private-connector.md`](building-a-private-connector.md). To contribute

@@ -486,7 +486,6 @@ No external users, so backward-compatibility risk is gone. Remaining risks:
 
 - The partitioning question (see `catalog-partitioning-design.md`).
 - Any new feature. This is a subtraction, not addition.
-- Rewriting `parsimony-mcp` (separate repo, already uses public surface).
 - Benchmarking. If something regresses measurably we'll find out; no prophylactic perf work.
 
 ## 13. Checklist for execution

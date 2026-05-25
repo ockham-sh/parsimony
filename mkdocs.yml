@@ -48,8 +48,8 @@ nav:
   - Quickstart: quickstart.md
   - Guide: guide.md
   - Connectors: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
-  - MCP Server: '!import https://github.com/ockham-sh/parsimony-mcp?branch=main&docs_dir=docs'
   - Building Plugins:
+      - Author your first connector: authoring-connectors.md
       - Walkthrough: connector-implementation-guide.md
       - Private &amp; Internal: building-a-private-connector.md
   - Recipes: cookbook.md
@@ -82,4 +82,4 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/ockham-sh/parsimony
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/parsimony/
+      link: https://pypi.org/project/parsimony-core/

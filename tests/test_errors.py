@@ -1,10 +1,10 @@
 """Locked-string tests for the agent-facing kernel default messages.
 
-The MCP bridge (``parsimony-mcp``) and the terminal sandbox renderer
-(``parsimony-agents``) both consume ``str(exc)`` for ``ConnectorError``
-subclasses as their canonical agent-facing string. This file is the
-single point that locks those strings down. A reword should be a
-deliberate kernel change with an LLM eval pass — not a casual edit.
+The terminal sandbox renderer (``parsimony-agents``) consumes ``str(exc)``
+for ``ConnectorError`` subclasses as its canonical agent-facing string.
+This file is the single point that locks those strings down. A reword
+should be a deliberate kernel change with an LLM eval pass — not a
+casual edit.
 """
 
 from __future__ import annotations

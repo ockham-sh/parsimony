@@ -4,7 +4,7 @@
 
 | Package | Version | Supported |
 |---------|---------|-----------|
-| parsimony | 0.1.x | Yes |
+| parsimony-core | latest minor | Yes |
 
 ## Reporting a Vulnerability
 
@@ -27,7 +27,9 @@ We will coordinate with you on disclosure timing. We follow responsible disclosu
 
 ## Scope
 
-This policy covers the open-source package:
-- `parsimony`
+This policy covers the open-source packages in the parsimony ecosystem:
+- `parsimony-core`
+- `parsimony-connectors` (all first-party connector distributions)
+- `parsimony-agents`
 
-For vulnerabilities in the hosted product (ockhamterminal.com), please also email security@ockham.sh.
+For vulnerabilities in the [ockham terminal](https://github.com/ockham-sh/terminal), please email security@ockham.sh and reference the `terminal` repository in your report.

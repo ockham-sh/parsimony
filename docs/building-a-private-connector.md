@@ -5,6 +5,10 @@ ToS, internal databases (Postgres, Snowflake, S3), or anything firewalled.
 Same plugin shape as a public connector — different distribution and
 credential injection.
 
+New to connector authoring? Start with
+[`authoring-connectors.md`](authoring-connectors.md) for the end-to-end path;
+this page is the private/internal-distribution deep dive.
+
 **Authoritative contract:** [`contract.md`](contract.md). When this guide and
 the contract disagree, the contract wins.
 

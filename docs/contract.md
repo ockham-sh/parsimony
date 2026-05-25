@@ -1,7 +1,9 @@
 # The Parsimony Plugin Contract
 
 **Status:** Contract v1 (kernel ≥ 0.4).
-**Author tutorials:** [`connector-implementation-guide.md`](connector-implementation-guide.md),
+**New authors start here:** [`authoring-connectors.md`](authoring-connectors.md) —
+the end-to-end guide. **Deep dives:**
+[`connector-implementation-guide.md`](connector-implementation-guide.md),
 [`building-a-private-connector.md`](building-a-private-connector.md).
 
 This document is the load-bearing surface of the framework. It is the only

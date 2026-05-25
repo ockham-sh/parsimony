@@ -1,10 +1,16 @@
 # Contributing to parsimony
 
-Thank you for your interest in contributing! This guide covers kernel
-development. For **new or updated connectors**, contribute to
-[ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)
-— the kernel accepts no provider-specific code. That's structurally
-enforced by [`tests/test_kernel_purity.py`](tests/test_kernel_purity.py).
+Thank you for your interest in contributing! This guide covers **kernel
+development**.
+
+**Want to write a connector instead?** The kernel accepts no
+provider-specific code — that's structurally enforced by
+[`tests/test_kernel_purity.py`](tests/test_kernel_purity.py). Connectors are
+separate distributions. Start with
+[**Author your first connector**](docs/authoring-connectors.md), the end-to-end
+guide covering scaffolding, a worked example, conformance, and publishing. To
+contribute a public source to the official monorepo, see
+[ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
 
 ## Development setup
 
@@ -122,8 +128,7 @@ parsimony/
 └── cli.py              Two verbs: `parsimony list`, `parsimony publish`.
 ```
 
-The MCP server lives in the separate `parsimony-mcp` distribution;
-individual connectors live in the `parsimony-connectors` monorepo.
+Individual connectors live in the `parsimony-connectors` monorepo.
 
 ### Key architectural decisions
 

@@ -72,9 +72,9 @@ dev = [
 ]
 docs = [
     "mkdocs-material",
-    # Pulls parsimony-connectors and parsimony-mcp docs into the unified
-    # site at build time. See `nav:` in mkdocs.yml — `!import` directives
-    # clone each sibling repo's `docs/` subtree.
+    # Pulls parsimony-connectors docs into the unified site at build time.
+    # See `nav:` in mkdocs.yml — `!import` directives clone each sibling
+    # repo's `docs/` subtree.
     "mkdocs-multirepo-plugin>=0.7",
 ]
 

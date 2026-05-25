@@ -437,8 +437,7 @@ ConnectorError(provider: str)
 ```
 
 Every error carries `.provider: str` so callers can identify the source
-without parsing message strings. The MCP server (separate `parsimony-mcp`
-distribution) maps these to MCP error responses.
+without parsing message strings.
 
 Operational errors only. Programmer errors (bad types, invalid parameters)
 remain `TypeError` / `ValueError` / Pydantic `ValidationError`.
@@ -582,6 +581,5 @@ result = await fred.bind_env()["fred_fetch"](series_id="UNRATE")
 The full DataFrame lands in the code-execution environment, where the
 agent can operate on it programmatically.
 
-The `"tool"` tag is the only mechanism. The MCP server
-(`parsimony-mcp` — separate distribution) filters with
-`connectors.filter(tags=["tool"])` at startup.
+The `"tool"` tag is the only mechanism. Agent-facing consumers filter
+with `connectors.filter(tags=["tool"])` at startup.

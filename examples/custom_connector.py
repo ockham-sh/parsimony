@@ -58,7 +58,7 @@ async def main() -> None:
 
     # Compose custom + built-in connectors into one bundle.
     fred = Connectors([fred_fetch]).bind(api_key=api_key)
-    bundle = fred + Connectors([my_data_source])
+    bundle = Connectors.merge(fred, Connectors([my_data_source]))
 
     print(f"Bundle connectors: {bundle.names()}")
     print()

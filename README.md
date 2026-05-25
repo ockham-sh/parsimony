@@ -67,7 +67,6 @@ The kernel ships with no connectors of its own. Pick what you need:
 pip install parsimony-core                          # kernel only (small footprint)
 pip install parsimony-core parsimony-fred           # + FRED
 pip install 'parsimony-core[standard]'              # + Catalog (FAISS + BM25 + sentence-transformers)
-pip install parsimony-mcp                           # MCP server, separate distribution
 ```
 
 Other install variants (ONNX runtime, LiteLLM embedders, CPU-only torch) are documented at [docs.parsimony.dev/install](https://docs.parsimony.dev/install/). The full list of officially-maintained connectors lives at [ockham-sh/parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors).
@@ -97,15 +96,16 @@ result.provenance  # Provenance(source="fred", params={"series_id": "UNRATE"}, f
 
 ## Repo boundaries
 
-Parsimony ships across three repositories, each with a single job:
+The parsimony ecosystem spans four repositories:
 
-| Repo | PyPI | Role |
-|---|---|---|
-| [`parsimony`](https://github.com/ockham-sh/parsimony) | `parsimony-core` | The kernel. Primitives, discovery, catalog, publish CLI |
-| [`parsimony-connectors`](https://github.com/ockham-sh/parsimony-connectors) | `parsimony-<name>` | First-party data source plugins |
-| [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp) | `parsimony-mcp` | MCP (Model Context Protocol) server |
+| Repo | PyPI | License | Role |
+|---|---|---|---|
+| [`parsimony`](https://github.com/ockham-sh/parsimony) | `parsimony-core` | Apache-2.0 | The kernel. Primitives, discovery, catalog, publish CLI |
+| [`parsimony-connectors`](https://github.com/ockham-sh/parsimony-connectors) | `parsimony-<name>` | Apache-2.0 | First-party data source plugins |
+| [`parsimony-agents`](https://github.com/ockham-sh/parsimony-agents) | `parsimony-agents` | Apache-2.0 | Agent framework: loop, failure handling, streaming events |
+| [`terminal`](https://github.com/ockham-sh/terminal) | `ockham` | AGPL-3.0 | Agentic data-analysis product built on the above |
 
-The kernel knows nothing about specific connectors. Connectors depend on the kernel through the stable `parsimony.providers` entry-point contract. Consumers like the MCP server call `discover.load_all()` and pick up whatever is installed.
+The kernel knows nothing about specific connectors. Connectors depend on the kernel through the stable `parsimony.providers` entry-point contract. Consumers like `parsimony-agents` call `discover.load_all()` and pick up whatever is installed.
 
 ## The plugin contract
 
@@ -138,7 +138,7 @@ CONNECTORS = Connectors([yourname_fetch])
 
 Per-connector env vars live on the decorator (`env={...}`); homepage and version come from `pyproject.toml`. The full spec is in [`docs/contract.md`](docs/contract.md), which is the authoritative reference for plugin authors.
 
-For a customer-private connector, see [`docs/building-a-private-connector.md`](docs/building-a-private-connector.md).
+**New to writing connectors? Start with [Author your first connector](docs/authoring-connectors.md)** — it walks scaffolding, a complete worked example, conformance testing, and publishing end to end. For a customer-private connector, see [`docs/building-a-private-connector.md`](docs/building-a-private-connector.md).
 
 ## Discovering plugins
 
@@ -172,26 +172,16 @@ The `file://` output is byte-identical to what `hf://` would write, so you can s
 
 ## Cache
 
-Heavy artefacts (HF snapshots, ONNX models, fragment embeddings, connector scratch) live in a shared user-home cache so a `parsimony-mcp` server and a REPL session reuse the same downloads. Override the root with `PARSIMONY_CACHE_DIR`. Inspect or clear with `parsimony cache info` and `parsimony cache clear`. Layout details: [docs.parsimony.dev/cache](https://docs.parsimony.dev/cache/).
-
-## MCP server
-
-The MCP server is a separate distribution, [`parsimony-mcp`](https://github.com/ockham-sh/parsimony-mcp):
-
-```bash
-pip install parsimony-mcp
-parsimony-mcp init
-```
-
-Connectors tagged `tool` (search, list, metadata) become MCP tools the agent can call. Bulk fetch goes through the agent's code interpreter via `discover.load_all().bind_env()`. See the `parsimony-mcp` README for the rationale.
+Heavy artefacts (HF snapshots, ONNX models, fragment embeddings, connector scratch) live in a shared user-home cache so agent runtimes and REPL sessions reuse the same downloads. Override the root with `PARSIMONY_CACHE_DIR`. Inspect or clear with `parsimony cache info` and `parsimony cache clear`. Layout details: [docs.parsimony.dev/cache](https://docs.parsimony.dev/cache/).
 
 ## Documentation
 
 Full docs at [docs.parsimony.dev](https://docs.parsimony.dev):
 
 - [Quickstart](https://docs.parsimony.dev/quickstart/)
+- [Author your first connector](docs/authoring-connectors.md)
 - [Plugin contract (authoritative)](docs/contract.md)
-- [Building a new plugin](docs/guide-new-plugin.md)
+- [Connector implementation walkthrough](docs/connector-implementation-guide.md)
 - [Building a private connector](docs/building-a-private-connector.md)
 - [Architecture](https://docs.parsimony.dev/architecture/)
 - [API reference](https://docs.parsimony.dev/api-reference/)

@@ -4,14 +4,16 @@ name: "parsimony CodeQL config"
 # `queries: security-and-quality`) and prune the rules below.
 #
 # Suppressions:
-# - `py/call/wrong-arguments` in tests/: test code deliberately calls APIs
-#   with rejected arguments to verify the rejection (e.g. `pytest.raises(TypeError)`
-#   around `Catalog(embedder=...)` after the API moved the param to VectorIndex).
+# - `py/call/wrong-arguments`: redundant with mypy/pyright, which run in CI and
+#   understand `pytest.raises(TypeError)` context (so they don't false-positive
+#   on intentional bad-input tests like `Catalog(embedder=...)` verifying the
+#   param moved to VectorIndex). CodeQL's version is path-agnostic and would
+#   flag legitimate test patterns. Note: `query-filters` doesn't support
+#   per-path scoping — it's all-or-nothing per query id.
 
 query-filters:
   - exclude:
       id: py/call/wrong-arguments
-      path: tests/.*
 
 paths-ignore:
   - "**/.venv/**"

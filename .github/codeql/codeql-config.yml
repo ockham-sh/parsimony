@@ -13,7 +13,7 @@ name: "parsimony CodeQL config"
 
 query-filters:
   - exclude:
-      id: py/call/wrong-arguments
+      id: py/call/wrong-named-argument
 
 paths-ignore:
   - "**/.venv/**"

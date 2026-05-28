@@ -36,6 +36,13 @@ if TYPE_CHECKING:
         HybridIndex,
         VectorIndex,
     )
+    from parsimony.ranking import (
+        RRF,
+        MinMaxScoreFusion,
+        Ranker,
+        Ranking,
+        ZScoreFusion,
+    )
     from parsimony.stores import InMemoryDataStore, LoadResult
 from parsimony.connector import (
     Connector,

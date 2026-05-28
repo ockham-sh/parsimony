@@ -12,7 +12,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from parsimony.catalog import urls
+import parsimony.catalog.urls as urls
 from parsimony.catalog.indexes import (
     BM25Index,
     CatalogIndex,

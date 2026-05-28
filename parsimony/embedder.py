@@ -3,7 +3,7 @@
 :class:`EmbeddingProvider` is the structural contract every embedder
 satisfies. It is *not* a plugin axis — users instantiate one of the bundled
 implementations (or write their own conforming class) and pass it to
-``Catalog("name", embedder=...)``. Three implementations ship out of the box:
+``VectorIndex(..., embedder=...)``. Three implementations ship out of the box:
 
 * :class:`SentenceTransformerEmbedder` — local model
   (``sentence-transformers/all-MiniLM-L6-v2`` by default, 384-dim, 6 layers).
@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import logging
 import math
 import time
@@ -34,7 +33,6 @@ from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 from pydantic import BaseModel, Field
 
 if TYPE_CHECKING:
-    import numpy as np
     from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
@@ -82,215 +80,6 @@ class EmbeddingProvider(Protocol):
     def info(self) -> EmbedderInfo:
         """Persisted identity for this embedder, used in catalog metadata."""
         ...
-
-
-class FragmentEmbeddingCache:
-    """Cache unique fragment vectors; compose per-item vectors via mean-pool.
-
-    Given per-item fragment lists (``list[list[str]]``), this utility
-    embeds each *unique* fragment exactly once via the wrapped
-    :class:`EmbeddingProvider`, then returns each item's L2-renormalized
-    mean of its fragment vectors. Amortizes expensive tokenizer +
-    inference cost across every series that shares a fragment
-    ("Monthly", "Spain", …).
-
-    Not an :class:`EmbeddingProvider`: composing is a different operation
-    from embedding, and pretending otherwise forced delimiter-parsing
-    contortions in earlier drafts. The signature is structural
-    (``list[list[str]]``) — no opinions about what fragments represent.
-
-    Cross-run persistence is on by default. The cache directory is
-    identity-keyed on (model, dim, normalize) — mismatched embedders
-    never share a cache. Layout::
-
-        parsimony.cache.embeddings_dir(<slug>) /
-            ├── fragments.parquet
-            └── meta.json
-
-    Pass ``cache_dir=`` to override the default location (mostly for
-    tests). Load happens on construction; :meth:`persist` is the only
-    write — callers decide when to save.
-    """
-
-    _FRAGMENT_CACHE_FILE = "fragments.parquet"
-    _FRAGMENT_CACHE_META = "meta.json"
-
-    def __init__(
-        self,
-        base: EmbeddingProvider,
-        *,
-        cache_dir: Path | None = None,
-    ) -> None:
-
-        self._base = base
-        # Vectors stored as ``np.ndarray[float32]`` (1.5 KB each at 384 dim)
-        # rather than ``list[float]`` (~9 KB each: 24 B/Python-float +
-        # list overhead). For an ESTAT-scale publish that hits ~1-2 M
-        # unique fragments, this is the difference between ~3 GiB and
-        # ~18 GiB resident — list[float] was the dominant memory hog
-        # observed during the 2026-04 publishes.
-        self._cache: dict[str, np.ndarray] = {}
-        self._hits = 0
-        self._misses = 0
-        if cache_dir is None:
-            from parsimony import cache as _cache
-
-            cache_dir = _cache.embeddings_dir(_embedder_slug(base.info()))
-        self._cache_dir = Path(cache_dir)
-        self._try_load(self._cache_dir)
-
-    async def compose_many(
-        self,
-        fragments_per_item: list[list[str]],
-    ) -> list[list[float]]:
-        """Return composed vectors (L2-renormalized mean-pool) for each item.
-
-        Empty per-item fragment lists raise :class:`ValueError` — they
-        signal a pipeline bug (the enumerator produced a row without
-        fragments even though the FRAGMENTS column was declared).
-        """
-        if not fragments_per_item:
-            return []
-        for i, frags in enumerate(fragments_per_item):
-            if not frags:
-                raise ValueError(
-                    f"FragmentEmbeddingCache: item {i} has no fragments. "
-                    "Empty fragment lists indicate a pipeline bug — check "
-                    "that the enumerator populated them."
-                )
-
-        # "miss" = fragment required a base embed call this batch (either
-        # not in cache, or not yet seen in the current batch).
-        # "hit"  = fragment already available without triggering base embed
-        # (already cached *or* dedup within this batch).
-        unseen: list[str] = []
-        seen_in_batch: set[str] = set()
-        total_refs = 0
-        for frags in fragments_per_item:
-            for frag in frags:
-                total_refs += 1
-                if frag in self._cache or frag in seen_in_batch:
-                    continue
-                seen_in_batch.add(frag)
-                unseen.append(frag)
-
-        self._misses += len(unseen)
-        self._hits += total_refs - len(unseen)
-
-        import numpy as np
-
-        if unseen:
-            vectors = await self._base.embed_texts(unseen)
-            for frag, vec in zip(unseen, vectors, strict=True):
-                self._cache[frag] = np.asarray(vec, dtype=np.float32)
-
-        out: list[list[float]] = []
-        for frags in fragments_per_item:
-            matrix = np.asarray([self._cache[f] for f in frags], dtype=np.float32)
-            pooled = matrix.mean(axis=0)
-            norm = float(np.linalg.norm(pooled))
-            if norm > 1e-12:
-                pooled = pooled / norm
-            out.append(pooled.astype(np.float32).tolist())
-        return out
-
-    def stats(self) -> dict[str, int]:
-        """Return ``{hits, misses, unique_fragments}`` for observability.
-
-        Callers log this after each publish so cache utilization is
-        visible without re-instrumenting. Essential for distinguishing
-        cold-cache from cache-identity-mismatch from slow-embedder when
-        debugging ESTAT-scale publishes.
-        """
-        return {
-            "hits": self._hits,
-            "misses": self._misses,
-            "unique_fragments": len(self._cache),
-        }
-
-    def persist(self) -> None:
-        """Save the current cache to disk; no-op if nothing has been embedded yet.
-
-        Writes a parquet of ``(fragment, vector)`` rows plus a small
-        ``meta.json`` carrying the embedder's identity. The identity
-        guards against stale-cache reuse when the embedder changes.
-
-        Writes are atomic via ``.tmp`` + ``os.replace`` so a kill (SIGKILL,
-        OOM) mid-write cannot leave a half-written parquet that
-        ``_try_load`` would then refuse and start cold from.
-        """
-        if not self._cache:
-            return
-        import os
-
-        import pyarrow as pa
-        import pyarrow.parquet as pq
-
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        fragments = list(self._cache.keys())
-        # Convert np.float32 arrays back to Python lists for the parquet
-        # write so the on-disk schema (list<double>) is unchanged. This
-        # is a per-publish cost; the in-memory cache stays as np.float32.
-        vectors = [v.tolist() for v in self._cache.values()]
-        table = pa.table(
-            {
-                "fragment": fragments,
-                "vector": vectors,
-            }
-        )
-        data_path = self._cache_dir / self._FRAGMENT_CACHE_FILE
-        meta_path = self._cache_dir / self._FRAGMENT_CACHE_META
-        data_tmp = data_path.with_suffix(data_path.suffix + ".tmp")
-        meta_tmp = meta_path.with_suffix(meta_path.suffix + ".tmp")
-        pq.write_table(table, data_tmp, compression="zstd")
-        info = self._base.info()
-        meta_payload = {
-            "model": info.model,
-            "dim": info.dim,
-            "normalize": info.normalize,
-        }
-        meta_tmp.write_text(json.dumps(meta_payload, indent=2))
-        os.replace(data_tmp, data_path)
-        os.replace(meta_tmp, meta_path)
-
-    def _try_load(self, cache_dir: Path) -> None:
-        meta_path = cache_dir / self._FRAGMENT_CACHE_META
-        data_path = cache_dir / self._FRAGMENT_CACHE_FILE
-        if not meta_path.exists() or not data_path.exists():
-            return
-        try:
-            meta = json.loads(meta_path.read_text())
-        except (OSError, ValueError):
-            logger.warning("FragmentEmbeddingCache: could not read %s", meta_path)
-            return
-        info = self._base.info()
-        expected = (info.model, info.dim, info.normalize)
-        actual = (
-            meta.get("model"),
-            meta.get("dim"),
-            meta.get("normalize"),
-        )
-        if expected != actual:
-            logger.warning(
-                "FragmentEmbeddingCache: on-disk cache identity %r does "
-                "not match embedder %r; discarding cached vectors.",
-                actual,
-                expected,
-            )
-            return
-        import pyarrow.parquet as pq
-
-        try:
-            table = pq.read_table(data_path)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("FragmentEmbeddingCache: could not read %s: %s", data_path, exc)
-            return
-        import numpy as np
-
-        frags = table.column("fragment").to_pylist()
-        vecs = table.column("vector").to_pylist()
-        for frag, vec in zip(frags, vecs, strict=True):
-            self._cache[str(frag)] = np.asarray(vec, dtype=np.float32)
 
 
 class SentenceTransformerEmbedder:
@@ -350,14 +139,24 @@ class SentenceTransformerEmbedder:
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         model = self._get_model()
-        vectors = model.encode(
-            texts,
+        # Length-bucketed batching for the same reason as
+        # OnnxEmbedder._encode_all: sentence-transformers' encode() also
+        # uses dynamic per-batch padding, so sorting near-equal-length
+        # docs together eliminates pad-token compute. ~1.6× speedup on
+        # the diverse-short-text corpora typical of catalog rows.
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        sorted_texts = [texts[i] for i in order]
+        sorted_vectors = model.encode(
+            sorted_texts,
             batch_size=self._batch_size,
             convert_to_numpy=True,
             normalize_embeddings=self._normalize,
             show_progress_bar=False,
         )
-        return [vec.tolist() for vec in vectors]
+        out: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
+        for sorted_pos, original_pos in enumerate(order):
+            out[original_pos] = sorted_vectors[sorted_pos].tolist()
+        return out
 
     def _get_model(self) -> SentenceTransformer:
         if self._model is None:
@@ -458,9 +257,20 @@ class OnnxEmbedder:
         self._ensure_session()
         import numpy as np
 
-        out: list[list[float]] = []
-        for start in range(0, len(texts), self._batch_size):
-            chunk = texts[start : start + self._batch_size]
+        # Length-bucketed batching: dynamic padding pads every doc in a
+        # batch to the longest one. Sorting by length (proxy: character
+        # count) before batching keeps each batch's lengths near-uniform,
+        # so padding overhead is ~0 instead of ~25-30% on diverse corpora.
+        # Measured ~1.6× throughput on real ECB/HICP composite labels at
+        # batch_size=32. We compute on the sorted order and remap results
+        # back to the caller's input order so the public contract is
+        # preserved.
+        order = sorted(range(len(texts)), key=lambda i: len(texts[i]))
+        sorted_texts = [texts[i] for i in order]
+
+        sorted_vectors: list[list[float]] = []
+        for start in range(0, len(sorted_texts), self._batch_size):
+            chunk = sorted_texts[start : start + self._batch_size]
             enc = self._tokenizer(
                 chunk,
                 padding=True,
@@ -478,7 +288,11 @@ class OnnxEmbedder:
             if self._normalize:
                 norms = np.linalg.norm(pooled, axis=1, keepdims=True)
                 pooled = pooled / np.maximum(norms, 1e-12)
-            out.extend(vec.tolist() for vec in pooled.astype("float32"))
+            sorted_vectors.extend(vec.tolist() for vec in pooled.astype("float32"))
+
+        out: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
+        for sorted_pos, original_pos in enumerate(order):
+            out[original_pos] = sorted_vectors[sorted_pos]
         return out
 
     def _ensure_session(self) -> None:
@@ -607,21 +421,6 @@ def _slug_model(model_name: str) -> str:
     return f"{safe}-{digest}"
 
 
-def _embedder_slug(info: EmbedderInfo) -> str:
-    """Identity-keyed slug for :class:`FragmentEmbeddingCache` directories.
-
-    Combines model + dim + normalize so two embedders with the same
-    model name but different dimensions (matryoshka, truncated) or
-    normalization choices never share a cache file.
-    """
-    safe = info.model.replace("/", "__").replace(":", "_")
-    digest = hashlib.sha1(
-        f"{info.model}|{info.dim}|{info.normalize}".encode(),
-        usedforsecurity=False,
-    ).hexdigest()[:8]
-    return f"{safe}-{digest}"
-
-
 def _has_onnx_model(target: Path) -> bool:
     if not target.is_dir():
         return False
@@ -738,7 +537,6 @@ __all__ = [
     "DEFAULT_MODEL",
     "EmbedderInfo",
     "EmbeddingProvider",
-    "FragmentEmbeddingCache",
     "LiteLLMEmbeddingProvider",
     "OnnxEmbedder",
     "SentenceTransformerEmbedder",

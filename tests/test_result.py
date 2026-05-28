@@ -11,7 +11,7 @@ from parsimony.result import (
     ColumnRole,
     OutputConfig,
     Provenance,
-    Result,
+    TabularResult,
 )
 
 
@@ -37,7 +37,7 @@ def test_build_table_result_rename_and_dtypes() -> None:
         ]
     )
     r = cfg.build_table_result(raw)
-    assert isinstance(r, Result)
+    assert isinstance(r, TabularResult)
     assert r.output_schema is not None
     assert list(r.data.columns) == ["d", "value", "meta"]
     assert r.provenance.properties.get("metadata") is None
@@ -69,7 +69,7 @@ def test_entity_keys() -> None:
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="v", role=ColumnRole.DATA),
     ]
-    r = Result(data=df, output_schema=OutputConfig(columns=cols))
+    r = TabularResult(data=df, output_schema=OutputConfig(columns=cols))
     assert list(r.entity_keys.columns) == ["sym"]
 
 
@@ -122,15 +122,16 @@ def test_key_without_title_output_config_valid_for_loader() -> None:
     assert len([c for c in cfg.columns if c.role == ColumnRole.DATA]) == 1
 
 
-def test_column_namespace_only_on_key() -> None:
-    with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
+def test_column_namespace_only_on_key_or_metadata() -> None:
+    assert Column(name="m", role=ColumnRole.METADATA, namespace="currency").namespace == "currency"
+    with pytest.raises(ValidationError, match="namespace is only allowed on KEY or METADATA"):
         Column(name="x", role=ColumnRole.DATA, namespace="fred")
 
 
 def test_result_from_dataframe_infers_data_columns() -> None:
     df = pd.DataFrame({"a": [1], "b": ["x"]})
-    r = Result.from_dataframe(df)
-    assert isinstance(r, Result)
+    r = TabularResult.from_dataframe(df)
+    assert isinstance(r, TabularResult)
     assert list(r.data.columns) == ["a", "b"]
     assert r.output_schema is None
     assert r.columns == []
@@ -138,7 +139,7 @@ def test_result_from_dataframe_infers_data_columns() -> None:
 
 def test_result_from_dataframe_rejects_empty() -> None:
     with pytest.raises(ValueError, match="empty"):
-        Result.from_dataframe(pd.DataFrame())
+        TabularResult.from_dataframe(pd.DataFrame())
 
 
 def test_provenance_field_set_is_locked() -> None:
@@ -164,21 +165,40 @@ def test_provenance_requires_source_and_description() -> None:
         Provenance.model_validate({"source": "fred"})  # type: ignore[arg-type]
 
 
-def test_result_with_properties_lifts_into_provenance() -> None:
-    df = pd.DataFrame({"a": [1]})
-    r = Result.from_dataframe(df).with_properties(metadata=[{"name": "id", "value": "X"}])
-    assert r.provenance.properties == {"metadata": [{"name": "id", "value": "X"}]}
+def test_build_table_result_metadata_columns_are_schema_roles() -> None:
+    raw = pd.DataFrame(
+        {
+            "series_id": ["UNRATE"],
+            "title": ["Unemployment Rate"],
+            "units": ["Percent"],
+            "date": ["2020-01-01"],
+            "value": [3.5],
+        }
+    )
+    cfg = OutputConfig(
+        columns=[
+            Column(name="series_id", role=ColumnRole.KEY),
+            Column(name="title", role=ColumnRole.TITLE),
+            Column(name="units", role=ColumnRole.METADATA),
+            Column(name="date", role=ColumnRole.DATA),
+            Column(name="value", role=ColumnRole.DATA),
+        ]
+    )
+    r = cfg.build_table_result(raw)
+    assert r.provenance.properties == {}
+    assert [c.name for c in r.metadata_columns] == ["units"]
+    assert r.data.loc[0, "units"] == "Percent"
 
 
 def test_result_with_properties_is_cumulative() -> None:
     df = pd.DataFrame({"a": [1]})
-    r = Result.from_dataframe(df).with_properties(a=1).with_properties(b=2)
+    r = TabularResult.from_dataframe(df).with_properties(a=1).with_properties(b=2)
     assert r.provenance.properties == {"a": 1, "b": 2}
 
 
 def test_result_to_table_adds_unmapped_as_data() -> None:
     df = pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]})
-    r = Result(data=df, provenance=_prov())
+    r = TabularResult(data=df, provenance=_prov())
     schema = OutputConfig(
         columns=[
             Column(name="k", role=ColumnRole.KEY),
@@ -186,7 +206,7 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
         ]
     )
     t = r.to_table(schema)
-    assert isinstance(t, Result)
+    assert isinstance(t, TabularResult)
     assert t.output_schema is not None
     roles = {c.name: c.role for c in t.output_schema.columns}
     assert roles["obs"] == ColumnRole.DATA
@@ -194,7 +214,7 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
 
 def test_table_result_to_table_reapplies_schema() -> None:
     df = pd.DataFrame({"a": [1], "b": [2]})
-    t1 = Result.from_dataframe(df)
+    t1 = TabularResult.from_dataframe(df)
     t2 = t1.to_table(
         OutputConfig(
             columns=[

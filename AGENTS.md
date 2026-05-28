@@ -1,3 +1,8 @@
+---
+description: 
+alwaysApply: true
+---
+
 # parsimony
 
 ## Commands
@@ -13,14 +18,16 @@ make format   # ruff format + auto-fix
 |------|-------|
 | Decorators, `Connectors` | `parsimony/connector.py` |
 | Result types, `OutputConfig` | `parsimony/result.py` |
-| `CatalogBackend` Protocol, `Catalog` | `parsimony/catalog.py` |
+| `Catalog` | `parsimony/catalog/catalog.py` (package `parsimony.catalog`) |
+| Catalog search helpers | `parsimony/catalog/search.py` |
+| FAISS/BM25 pure functions | `parsimony/indexes.py` |
+| Catalog index types | `parsimony/catalog/indexes.py` |
 | Plugin discovery | `parsimony/discover.py` |
-| Publish orchestrator (`CATALOGS`) | `parsimony/publish.py` |
-| CLI (`list`, `publish`, `cache`) | `parsimony/cli.py` |
+| CLI (`list`, `cache`) | `parsimony/cli.py` |
 | Global cache (root, subdirs, `TTLDiskCache`) | `parsimony/cache.py` |
 | Conformance suite | `parsimony/testing.py` |
 | Error hierarchy | `parsimony/errors.py` |
-| HTTP transport | `parsimony/transport.py` |
+| HTTP transport | `parsimony/transport/` (package; `helpers.py` for connectors) |
 | Plugin contract (authoritative) | [docs/contract.md](docs/contract.md) |
 | Architecture | [docs/architecture.md](docs/architecture.md) |
 | API reference | [docs/api-reference.md](docs/api-reference.md) |

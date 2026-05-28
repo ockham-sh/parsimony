@@ -5,15 +5,12 @@ sentence-transformers / huggingface-hub stack) load lazily on first access
 via :pep:`562` so that ``import parsimony`` stays cheap.
 
 * :class:`Connectors` is an immutable collection of :class:`Connector` objects;
-  callers use ``await connectors[name](**kwargs)``. Each connector validates
-  its input through a Pydantic param model.
-* :class:`CatalogBackend` is the structural contract every catalog matches.
-  :class:`Catalog` is the canonical implementation (Parquet rows + FAISS
-  vectors + BM25 keywords + RRF) and is loaded lazily.
+  callers use ``await connectors[name](**kwargs)``. The callable signature is
+  the connector's parameter surface.
+* :class:`Catalog` is the canonical implementation (Parquet rows + HybridIndex
+  over FAISS vectors and BM25 keywords with ZScoreFusion) and is loaded lazily.
 * Connector plugins are discovered through the ``parsimony.providers``
-  entry-point group via :mod:`parsimony.discover`. Catalog publishing reads
-  ``CATALOGS`` / optional ``RESOLVE_CATALOG`` on the plugin module — see
-  :func:`parsimony.publish.publish`.
+  entry-point group via :mod:`parsimony.discover`.
 """
 
 from __future__ import annotations
@@ -31,31 +28,25 @@ from parsimony import discover as discover  # re-export so ``from parsimony impo
 # lazy; ``TYPE_CHECKING`` keeps the imports out of the runtime path.
 if TYPE_CHECKING:
     from parsimony.catalog import (
+        BM25Index,
         Catalog,
-        CatalogBackend,
-        CatalogCache,
-        IndexResult,
-        SeriesEntry,
-        SeriesMatch,
-        catalog_key,
-        code_token,
-        normalize_code,
-        normalize_entity_code,
-        parse_catalog_url,
-        series_match_from_entry,
+        CatalogIndex,
+        CatalogMatch,
+        Entity,
+        HybridIndex,
+        VectorIndex,
     )
-    from parsimony.embedder import (
-        EmbedderInfo,
-        EmbeddingProvider,
-        FragmentEmbeddingCache,
-        LiteLLMEmbeddingProvider,
-        OnnxEmbedder,
-        SentenceTransformerEmbedder,
+    from parsimony.ranking import (
+        RRF,
+        MinMaxScoreFusion,
+        Ranker,
+        Ranking,
+        ZScoreFusion,
     )
+    from parsimony.stores import InMemoryDataStore, LoadResult
 from parsimony.connector import (
     Connector,
     Connectors,
-    ResultCallback,
     connector,
     enumerator,
     loader,
@@ -63,20 +54,14 @@ from parsimony.connector import (
 from parsimony.errors import (
     ConnectorError,
     EmptyDataError,
+    InvalidParameterError,
     ParseError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
     UnauthorizedError,
 )
-from parsimony.result import (
-    Column,
-    ColumnRole,
-    OutputConfig,
-    Provenance,
-    Result,
-)
-from parsimony.stores import InMemoryDataStore, LoadResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
 try:
     __version__ = version("parsimony-core")
@@ -85,49 +70,41 @@ except PackageNotFoundError:
 
 
 __all__ = [
-    # --- Connector primitives ---
     "Connector",
     "Connectors",
-    "ResultCallback",
     "connector",
     "enumerator",
     "loader",
-    # --- Result system ---
+    "Result",
+    "TabularResult",
+    "OutputConfig",
     "Column",
     "ColumnRole",
-    "OutputConfig",
     "Provenance",
-    "Result",
-    # --- Catalog (lazy) ---
-    "Catalog",
-    "CatalogBackend",
-    "CatalogCache",
-    "EmbedderInfo",
-    "EmbeddingProvider",
-    "FragmentEmbeddingCache",
-    "IndexResult",
-    "LiteLLMEmbeddingProvider",
-    "OnnxEmbedder",
-    "SentenceTransformerEmbedder",
-    "SeriesEntry",
-    "SeriesMatch",
-    "catalog_key",
-    "code_token",
-    "normalize_code",
-    "normalize_entity_code",
-    "parse_catalog_url",
-    "series_match_from_entry",
-    # --- Data persistence ---
-    "InMemoryDataStore",
-    "LoadResult",
-    # --- Errors ---
     "ConnectorError",
     "EmptyDataError",
+    "InvalidParameterError",
     "ParseError",
     "PaymentRequiredError",
     "ProviderError",
     "RateLimitError",
     "UnauthorizedError",
+    "cache",
+    "discover",
+    "Catalog",
+    "Entity",
+    "CatalogMatch",
+    "BM25Index",
+    "VectorIndex",
+    "HybridIndex",
+    "CatalogIndex",
+    "InMemoryDataStore",
+    "LoadResult",
+    "RRF",
+    "Ranker",
+    "Ranking",
+    "ZScoreFusion",
+    "MinMaxScoreFusion",
 ]
 
 
@@ -135,24 +112,20 @@ __all__ = [
 # pull torch / faiss / huggingface-hub. Keys are public attribute names; values
 # are ``(module, attribute)``.
 _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
+    "BM25Index": ("parsimony.catalog", "BM25Index"),
     "Catalog": ("parsimony.catalog", "Catalog"),
-    "CatalogBackend": ("parsimony.catalog", "CatalogBackend"),
-    "CatalogCache": ("parsimony.catalog", "CatalogCache"),
-    "EmbedderInfo": ("parsimony.embedder", "EmbedderInfo"),
-    "EmbeddingProvider": ("parsimony.embedder", "EmbeddingProvider"),
-    "FragmentEmbeddingCache": ("parsimony.embedder", "FragmentEmbeddingCache"),
-    "IndexResult": ("parsimony.catalog", "IndexResult"),
-    "LiteLLMEmbeddingProvider": ("parsimony.embedder", "LiteLLMEmbeddingProvider"),
-    "OnnxEmbedder": ("parsimony.embedder", "OnnxEmbedder"),
-    "SentenceTransformerEmbedder": ("parsimony.embedder", "SentenceTransformerEmbedder"),
-    "SeriesEntry": ("parsimony.catalog", "SeriesEntry"),
-    "SeriesMatch": ("parsimony.catalog", "SeriesMatch"),
-    "catalog_key": ("parsimony.catalog", "catalog_key"),
-    "code_token": ("parsimony.catalog", "code_token"),
-    "normalize_code": ("parsimony.catalog", "normalize_code"),
-    "normalize_entity_code": ("parsimony.catalog", "normalize_entity_code"),
-    "parse_catalog_url": ("parsimony.catalog", "parse_catalog_url"),
-    "series_match_from_entry": ("parsimony.catalog", "series_match_from_entry"),
+    "Entity": ("parsimony.catalog", "Entity"),
+    "CatalogIndex": ("parsimony.catalog", "CatalogIndex"),
+    "CatalogMatch": ("parsimony.catalog", "CatalogMatch"),
+    "HybridIndex": ("parsimony.catalog", "HybridIndex"),
+    "VectorIndex": ("parsimony.catalog", "VectorIndex"),
+    "InMemoryDataStore": ("parsimony.stores", "InMemoryDataStore"),
+    "LoadResult": ("parsimony.stores", "LoadResult"),
+    "RRF": ("parsimony.ranking", "RRF"),
+    "Ranker": ("parsimony.ranking", "Ranker"),
+    "Ranking": ("parsimony.ranking", "Ranking"),
+    "ZScoreFusion": ("parsimony.ranking", "ZScoreFusion"),
+    "MinMaxScoreFusion": ("parsimony.ranking", "MinMaxScoreFusion"),
 }
 
 

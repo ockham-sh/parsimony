@@ -241,13 +241,15 @@ def test_map_timeout_error_message_includes_provider_and_op() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pooled_client_yields_client_reusing_single_async_client() -> None:
+async def test_pooled_client_yields_client_reusing_single_async_client(monkeypatch: pytest.MonkeyPatch) -> None:
     created: list[httpx.AsyncClient] = []
     original_init = httpx.AsyncClient.__init__
 
     def tracking_init(self: httpx.AsyncClient, *args: object, **kwargs: object) -> None:
         original_init(self, *args, **kwargs)
         created.append(self)
+
+    monkeypatch.setattr(httpx.AsyncClient, "__init__", tracking_init)
 
     http = HttpClient(
         "https://api.example.com",
@@ -269,16 +271,13 @@ async def test_pooled_client_yields_client_reusing_single_async_client() -> None
     )
 
     async with pooled_client(pooled) as shared:
-        # Two consecutive requests through the same shared client.
         r1 = await shared.request("GET", "/a")
         r2 = await shared.request("GET", "/b")
 
     assert r1.status_code == 200
     assert r2.status_code == 200
-    # Both requests reused the single underlying client — verify that the
-    # shared HttpClient carried through the config from the outer one.
+    assert len(created) == 1
     assert shared.base_url == pooled.base_url
-    # The outer HttpClient used for construction is untouched.
     assert http.base_url == "https://api.example.com"
 
 

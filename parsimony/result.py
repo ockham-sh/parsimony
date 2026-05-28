@@ -8,29 +8,27 @@ __all__ = [
     "OutputConfig",
     "Provenance",
     "Result",
-    "safe_dump_provenance",
+    "TabularResult",
 ]
 
 import json
 import logging
-import re
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from parsimony.entity import Entity
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
-SECRET_NAME_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)")
-
 # Oversized values are replaced with a structured marker rather than a
 # prefix — a prefix can leak the head of an unredacted secret.
 _PROVENANCE_FIELD_BUDGET = 2000
-
-REDACTED = "«redacted»"
 
 #: Key under which Result embeds its schema+provenance payload in Arrow table metadata.
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
@@ -44,20 +42,7 @@ class ColumnRole(StrEnum):
     DATA = "data"
     KEY = "key"
     TITLE = "title"
-    #: Free-form per-entry text folded into :attr:`SeriesEntry.description`.
-    #: Unlike METADATA (which only reaches BM25 via ``keyword_text``), a
-    #: DESCRIPTION column also feeds :meth:`SeriesEntry.semantic_text` —
-    #: so the embedder sees it at index time. Use for rich definitional
-    #: text (upstream field definitions, provider-authored descriptions)
-    #: where semantic recall on the phrase itself matters.
-    DESCRIPTION = "description"
     METADATA = "metadata"
-    #: Per-row list-of-strings. Atomic compositional units consumed by
-    #: :class:`~parsimony.FragmentEmbeddingCache` when wired on the
-    #: catalog. Enumerators declare the FRAGMENTS column; when no cache
-    #: is provided, the column is ignored and the catalog embeds via
-    #: :meth:`SeriesEntry.semantic_text` as today.
-    FRAGMENTS = "fragments"
 
 
 class Column(BaseModel):
@@ -73,11 +58,10 @@ class Column(BaseModel):
     param_key: str | None = None
     description: str | None = None
     exclude_from_llm_view: bool = False
-    #: Catalog namespace for the entity code when ``role`` is :attr:`ColumnRole.KEY`.
-    #:
-    #: When omitted on a KEY column, :meth:`~parsimony.catalog.Catalog.add_from_result`
-    #: uses the catalog's own ``name`` as the default. Static plain strings only —
-    #: plugins that need dynamic namespaces build the :class:`OutputConfig` per call.
+    #: Catalog namespace for KEY entity codes or METADATA value universes.
+    #: Catalog-producing results must set this on their KEY column. On
+    #: METADATA columns this is a lightweight annotation only; Parsimony does
+    #: not enforce references.
     namespace: str | None = None
 
     @model_validator(mode="after")
@@ -86,11 +70,9 @@ class Column(BaseModel):
             raise ValueError("exclude_from_llm_view is not allowed for data columns")
         if self.exclude_from_llm_view and self.role == ColumnRole.TITLE:
             raise ValueError("exclude_from_llm_view is not allowed for title columns")
-        if self.exclude_from_llm_view and self.role == ColumnRole.DESCRIPTION:
-            raise ValueError("exclude_from_llm_view is not allowed for description columns")
         if self.namespace is not None:
-            if self.role != ColumnRole.KEY:
-                raise ValueError("namespace is only allowed on KEY columns")
+            if self.role not in (ColumnRole.KEY, ColumnRole.METADATA):
+                raise ValueError("namespace is only allowed on KEY or METADATA columns")
             if not str(self.namespace).strip():
                 raise ValueError("namespace must be non-empty when set")
         return self
@@ -127,8 +109,9 @@ class Provenance(BaseModel):
     """Where and how tabular data was obtained.
 
     Framework-only type. Connector code never imports this; the framework
-    builds it in :meth:`Connector._wrap_result`. Connectors contribute
-    source-specific extras through :meth:`Result.with_properties`.
+    builds it in :meth:`Connector._wrap_result`. ``properties`` is for
+    framework/internal use (e.g. serialization round-trips), not
+    connector-authored provider metadata.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -140,89 +123,40 @@ class Provenance(BaseModel):
     properties: dict[str, Any] = Field(default_factory=dict)
 
     def safe_dump(self) -> dict[str, Any]:
-        """Wire-safe JSON projection: redact secret-named keys, mark oversize values."""
-        return safe_dump_provenance(self)
-
-
-def safe_dump_provenance(provenance: Provenance) -> dict[str, Any]:
-    """Free-function form of :meth:`Provenance.safe_dump`."""
-    raw = provenance.model_dump(mode="json")
-    for key in ("params", "properties"):
-        if key in raw and raw[key]:
-            raw[key] = {k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v) for k, v in raw[key].items()}
-    for key in ("params", "properties"):
-        if key in raw and raw[key]:
-            blob = json.dumps(raw[key], default=str)
-            if len(blob) > _PROVENANCE_FIELD_BUDGET:
-                raw[key] = {
-                    "truncated": True,
-                    "byte_length": len(blob),
-                    "field": key,
-                }
-    return raw
+        """Wire-safe JSON projection with oversize field truncation."""
+        raw = self.model_dump(mode="json")
+        for key in ("params", "properties"):
+            if key in raw and raw[key]:
+                blob = json.dumps(raw[key], default=str)
+                if len(blob) > _PROVENANCE_FIELD_BUDGET:
+                    raw[key] = {
+                        "truncated": True,
+                        "byte_length": len(blob),
+                        "field": key,
+                    }
+        return raw
 
 
 class Result(BaseModel):
-    """Free-form connector output: any data plus provenance and optional tabular schema.
+    """Opaque connector output: any payload plus provenance.
 
-    ``data`` can be anything the connector returns — a pandas DataFrame,
-    a string, a dict, etc. The framework wraps connector return values
-    automatically; connectors should not construct this directly. To attach
-    source-specific extras, use :meth:`with_properties`.
+    Use :class:`TabularResult` when ``data`` is a :class:`~pandas.DataFrame`.
+    The framework wraps connector return values automatically; connectors
+    should not construct this directly. Put provider facts in returned
+    tabular columns with :class:`ColumnRole` semantics; do not attach
+    provider metadata through ``provenance.properties``.
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
     data: Any
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
-    output_schema: OutputConfig | None = Field(default=None)
-
-    # ------------------------------------------------------------------
-    # Factories
-    # ------------------------------------------------------------------
-
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> Result:
-        """Build a raw :class:`Result` containing tabular data with no schema applied."""
-        frame = pd.DataFrame(df)
-        if frame.empty:
-            raise ValueError("Returned an empty DataFrame.")
-        return Result(data=frame)
 
     def with_properties(self, **properties: Any) -> Result:
-        """Merge source-specific extras into ``provenance.properties``."""
+        """Merge extras into ``provenance.properties`` (serialization/tests only)."""
         merged = {**self.provenance.properties, **properties}
         new_prov = self.provenance.model_copy(update={"properties": merged})
         return self.model_copy(update={"provenance": new_prov})
-
-    def to_table(self, output: OutputConfig) -> Result:
-        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
-        if not isinstance(self.data, (pd.DataFrame, pd.Series)):
-            raise TypeError(f"Result.to_table requires tabular data, got {type(self.data).__name__}")
-        result = output.build_table_result(self.data, merge_unmapped_as_data=True)
-        return result.model_copy(update={"provenance": self.provenance})
-
-    # ------------------------------------------------------------------
-    # Convenience accessors
-    # ------------------------------------------------------------------
-
-    @property
-    def columns(self) -> list[Column]:
-        """Column schema (empty list if no schema set)."""
-        if self.output_schema is None:
-            return []
-        return self.output_schema.columns
-
-    @property
-    def df(self) -> pd.DataFrame:
-        """Return :attr:`data` as a :class:`~pandas.DataFrame`, raising if incompatible."""
-        if isinstance(self.data, pd.DataFrame):
-            return self.data
-        if isinstance(self.data, pd.Series):
-            return self.data.to_frame()
-        raise TypeError(
-            f"Result.data is {type(self.data).__name__}, not a DataFrame. Use result.data to access the raw value."
-        )
 
     @property
     def text(self) -> str:
@@ -230,16 +164,50 @@ class Result(BaseModel):
             return self.data
         return str(self.data)
 
+
+class TabularResult(Result):
+    """Tabular connector output with optional :class:`OutputConfig` schema."""
+
+    data: pd.DataFrame
+    output_schema: OutputConfig | None = Field(default=None)
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> TabularResult:
+        """Build tabular data with no schema applied."""
+        frame = pd.DataFrame(df)
+        if frame.empty:
+            raise ValueError("Returned an empty DataFrame.")
+        return cls(data=frame)
+
+    def with_properties(self, **properties: Any) -> TabularResult:
+        merged = {**self.provenance.properties, **properties}
+        new_prov = self.provenance.model_copy(update={"properties": merged})
+        return self.model_copy(update={"provenance": new_prov})
+
+    def to_table(self, output: OutputConfig) -> TabularResult:
+        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
+        result = output.build_table_result(self.data, merge_unmapped_as_data=True)
+        return result.model_copy(update={"provenance": self.provenance})
+
+    @property
+    def columns(self) -> list[Column]:
+        if self.output_schema is None:
+            return []
+        return self.output_schema.columns
+
+    @property
+    def df(self) -> pd.DataFrame:
+        return self.data
+
     @property
     def entity_keys(self) -> pd.DataFrame:
         key_names = [c.mapped_name or c.name for c in self.columns if c.role == ColumnRole.KEY]
         if not key_names:
             return pd.DataFrame()
-        df = self.df
-        missing = [n for n in key_names if n not in df.columns]
+        missing = [n for n in key_names if n not in self.data.columns]
         if missing:
             raise ValueError(f"Result data missing key columns: {missing}")
-        return df[key_names].copy()
+        return self.data[key_names].copy()
 
     @property
     def data_columns(self) -> list[Column]:
@@ -249,13 +217,9 @@ class Result(BaseModel):
     def metadata_columns(self) -> list[Column]:
         return [c for c in self.columns if c.role == ColumnRole.METADATA]
 
-    # ------------------------------------------------------------------
-    # Arrow / Parquet serialization (tabular data only)
-    # ------------------------------------------------------------------
-
     def to_arrow(self) -> pa.Table:
         """Serialize to Arrow with embedded provenance and optional schema metadata."""
-        table = pa.Table.from_pandas(self.df, preserve_index=False)
+        table = pa.Table.from_pandas(self.data, preserve_index=False)
         payload: dict[str, Any] = {
             "provenance": self.provenance.safe_dump(),
         }
@@ -266,36 +230,36 @@ class Result(BaseModel):
         return table.replace_schema_metadata(meta)
 
     @classmethod
-    def from_arrow(cls, table: pa.Table) -> Result:
+    def from_arrow(cls, table: pa.Table) -> TabularResult:
         """Deserialize an Arrow table written by :meth:`to_arrow`."""
         df = table.to_pandas()
         raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
         if not raw:
-            return Result(data=df)
+            return cls(data=df)
         payload = json.loads(raw.decode("utf-8"))
         provenance = Provenance.model_validate(payload.get("provenance", {}))
         cols_raw = payload.get("columns") or []
         if cols_raw:
             columns = [Column.model_validate(c) for c in cols_raw]
-            return Result(
+            return cls(
                 data=df,
                 provenance=provenance,
                 output_schema=OutputConfig(columns=columns),
             )
-        return Result(data=df, provenance=provenance)
+        return cls(data=df, provenance=provenance)
 
     def to_parquet(self, path: str | Path) -> None:
         """Write Parquet with embedded column schema and provenance."""
         pq.write_table(self.to_arrow(), path)
 
     @classmethod
-    def from_parquet(cls, path: str | Path) -> Result:
+    def from_parquet(cls, path: str | Path) -> TabularResult:
         """Read Parquet written by :meth:`to_parquet`."""
         return cls.from_arrow(pq.read_table(path))
 
 
 class OutputConfig(BaseModel):
-    """Declarative schema: maps raw data frames into schema-applied :class:`Result` instances."""
+    """Declarative schema: maps raw data frames into schema-applied :class:`TabularResult` instances."""
 
     columns: list[Column]
 
@@ -366,7 +330,7 @@ class OutputConfig(BaseModel):
         df: pd.DataFrame | pd.Series,
         *,
         merge_unmapped_as_data: bool = True,
-    ) -> Result:
+    ) -> TabularResult:
         """Apply column schema to *df*; unmapped columns become DATA when requested."""
         if not isinstance(df, (pd.DataFrame, pd.Series)):
             raise TypeError(f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}")
@@ -406,4 +370,44 @@ class OutputConfig(BaseModel):
         new_df = pd.concat([s for _, s in processed_series], axis=1)
         resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
         resolved_config = OutputConfig(columns=resolved_schema)
-        return Result(data=new_df, output_schema=resolved_config)
+        return TabularResult(data=new_df, output_schema=resolved_config)
+
+    def build_entities(self, df: pd.DataFrame) -> list[Entity]:
+        """Apply this schema to *df* to extract a list of :class:`Entity`.
+
+        The schema must declare exactly one ``KEY`` column with a
+        ``namespace``. Optional ``TITLE`` and ``METADATA`` columns populate
+        the corresponding fields on each entry. A metadata column named
+        ``"*"`` is a wildcard that matches every DataFrame column not
+        already claimed by ``KEY``, ``TITLE``, or another explicit
+        ``METADATA`` entry.
+        """
+        from parsimony.entity import entities_from_dataframe
+
+        key_cols = [c for c in self.columns if c.role == ColumnRole.KEY]
+        if len(key_cols) != 1:
+            raise ValueError(f"Expected exactly one KEY column, found {len(key_cols)}")
+        key_col = key_cols[0]
+        if not key_col.namespace:
+            raise ValueError("KEY column must declare namespace=...")
+        title_cols = [c for c in self.columns if c.role == ColumnRole.TITLE]
+        title_name = title_cols[0].name if len(title_cols) == 1 else None
+
+        declared_meta = [c.name for c in self.columns if c.role == ColumnRole.METADATA]
+        explicit_meta = [name for name in declared_meta if name != "*"]
+        if "*" in declared_meta:
+            claimed = {key_col.name, *([title_name] if title_name else []), *explicit_meta}
+            wildcard_meta = [str(col) for col in df.columns if str(col) not in claimed]
+            meta_names = [*explicit_meta, *wildcard_meta]
+        else:
+            meta_names = explicit_meta
+
+        namespace_column = "entity_namespace" if key_col.namespace == "__row__" else None
+        return entities_from_dataframe(
+            df,
+            namespace=key_col.namespace,
+            key_column=key_col.name,
+            title_column=title_name,
+            metadata_columns=meta_names,
+            namespace_column=namespace_column,
+        )

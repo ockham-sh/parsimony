@@ -89,9 +89,8 @@ Run all checks before submitting a PR. CI will run the same commands.
 
 ### What belongs in the kernel
 
-The kernel ships connector primitives, the `CatalogBackend` Protocol and
-`Catalog` reference implementation, plugin discovery, conformance, the
-publish orchestrator, the CLI, and shared HTTP utilities. That's it.
+The kernel ships connector primitives, the `Catalog` reference implementation,
+plugin discovery, conformance, the CLI, and shared HTTP utilities. That's it.
 
 Provider-specific code — API wrappers, endpoint knowledge, response-shape
 transformations — lives in individual `parsimony-<name>` plugin
@@ -116,16 +115,17 @@ parsimony/
 ├── __init__.py         Public surface (lazy-loaded via PEP 562).
 ├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
 ├── result.py           Result + Provenance + OutputConfig + Column + ColumnRole.
-├── catalog.py          CatalogBackend Protocol + Catalog + SeriesEntry/Match/IndexResult + parse_catalog_url.
-├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + LiteLLMEmbeddingProvider.
-├── indexes.py          FAISS + BM25 + RRF pure functions (private).
-├── publish.py          publish(module, ...) — reads CATALOGS / RESOLVE_CATALOG.
+├── catalog/            Catalog runtime, indexes, query parsing, search helpers, snapshot I/O.
+├── catalog/search.py   make_local_search_connector and related helpers.
+├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + OnnxEmbedder + LiteLLMEmbeddingProvider.
+├── indexes.py          FAISS + BM25 pure functions (private).
+├── catalog/indexes.py  BM25Index, VectorIndex, HybridIndex, CatalogIndex.
 ├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
 ├── stores.py           InMemoryDataStore + LoadResult.
 ├── errors.py           ConnectorError hierarchy.
-├── transport.py        HttpClient + pooled_client + map_http_error + redact_url.
+├── transport/          HttpClient, pooled_client, map_http_error, redact_url + helpers.py.
 ├── testing.py          assert_plugin_valid + ProviderTestSuite.
-└── cli.py              Two verbs: `parsimony list`, `parsimony publish`.
+└── cli.py              Two verbs: `parsimony list`, `parsimony cache`.
 ```
 
 Individual connectors live in the `parsimony-connectors` monorepo.
@@ -135,20 +135,20 @@ Individual connectors live in the `parsimony-connectors` monorepo.
 - **Three decorator primitives**: `@connector` (fetch/search),
   `@enumerator` (catalog population), `@loader` (data persistence). All
   produce the same `Connector` type.
-- **Structural typing over ABCs**: `CatalogBackend` and
-  `EmbeddingProvider` are `typing.Protocol` classes. Custom backends
-  match the shape; no subclassing required.
-- **Flat module layout**: no subpackages. Each public-surface module is
-  a single file at the top level of `parsimony/`.
+- **Structural typing over ABCs**: `EmbeddingProvider` is a
+  `typing.Protocol` class. Custom embedders match the shape; no
+  subclassing required.
+- **Module layout**: connector/result/discover/errors at the top level;
+  `catalog/` is the catalog subpackage; heavy ranking/index helpers live
+  in sibling modules.
 - **Frozen dataclasses + immutable collections**: `Connector` is
   `@dataclass(frozen=True)`, `Connectors` is immutable.
-- **Pydantic models at boundaries**: every connector validates params
-  via a Pydantic `BaseModel`.
+- **Typed boundaries**: connector parameters use normal Python signatures
+  (`inspect.Signature.bind`); Pydantic models are used for `Result`,
+  `Provenance`, and catalog row types.
 - **Lazy loading** in `__init__.py` via `__getattr__` (PEP 562) — keeps
   `import parsimony` fast.
-- **Dependency injection** — keyword-only args after `*` in connector
-  functions, bound via `bind()` (manual) or `bind_env()` (env-driven, using
-  the decorator's `env={...}` map).
+- **Dependency injection** — bind operator-supplied values via `Connector.bind()` or `Connectors.bind()`.
 
 ## Reporting bugs
 

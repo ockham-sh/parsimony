@@ -1,4 +1,4 @@
-"""Tests for the ``parsimony`` CLI (``list`` and ``publish`` verbs).
+"""Tests for the ``parsimony`` CLI (``list`` and ``cache`` verbs).
 
 The new kernel surfaces ``parsimony.discover`` — these tests monkeypatch its
 ``iter_providers`` seam rather than reaching into a cache-backed discovery
@@ -12,27 +12,22 @@ from types import ModuleType
 from typing import Any
 
 import pytest
-from pydantic import BaseModel
 
 from parsimony.connector import Connectors, connector
 from parsimony.discover import Provider
 
 
-class _TP(BaseModel):
-    x: str = "y"
-
-
-def _toy(name: str, *, env: dict[str, str] | None = None, **kwargs: Any):
-    async def _fn(params: _TP, *, api_key: str) -> dict[str, Any]:
+def _toy(name: str, **kwargs: Any):
+    async def _fn(x: str = "y", api_key: str = "") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Fetch a toy observation with a plenty long description."
     _fn.__name__ = name
-    return connector(env=env, **kwargs)(_fn)
+    return connector(**kwargs)(_fn)
 
 
 def _public_toy(name: str, **kwargs: Any):
-    async def _fn(params: _TP) -> dict[str, Any]:
+    async def _fn(x: str = "y") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Public fetch with no deps."
@@ -55,12 +50,10 @@ def _patch_providers(
 ) -> None:
     """Install a fake ``iter_providers`` + ``import_module`` pair.
 
-    Patches both the kernel ``parsimony.discover`` exports AND the names bound
-    in downstream modules (``cli``, ``publish``) that imported them at module
-    load time.
+    Patches both the kernel ``parsimony.discover`` exports and the name bound
+    in ``cli`` at module load time.
     """
     from parsimony import cli as cli_mod
-    from parsimony import publish as publish_mod
 
     providers = [provider] if provider is not None else []
 
@@ -71,7 +64,6 @@ def _patch_providers(
 
     monkeypatch.setattr(discover_mod, "iter_providers", lambda: iter(_fake_iter()))
     monkeypatch.setattr(cli_mod, "iter_providers", lambda: iter(_fake_iter()))
-    monkeypatch.setattr(publish_mod, "iter_providers", lambda: iter(_fake_iter()))
 
     if module is not None:
         monkeypatch.setitem(__import__("sys").modules, module.__name__, module)
@@ -87,7 +79,7 @@ def test_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
 
     mod = _make_module(
         "pkg_foo_cli",
-        CONNECTORS=Connectors([_toy("foo_fetch", env={"api_key": "FOO_API_KEY"})]),
+        CONNECTORS=Connectors([_toy("foo_fetch")]),
     )
     prov = Provider(
         name="foo",
@@ -113,8 +105,7 @@ def test_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
     assert entry["version"] == "0.1.0"
     assert entry["connector_count"] == 1
     assert entry["conformance"] == "pass"
-    assert entry["catalogs"] == []
-    assert payload["env_vars"] == ["FOO_API_KEY"]
+    assert "env_vars" not in payload
 
 
 def test_list_metadata_only_without_strict(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
@@ -172,7 +163,7 @@ def test_list_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: p
     assert "No parsimony plugins" in captured.out or "0 plugins" in captured.out
 
 
-def test_list_reports_conformance_pass_without_strict_flag(
+def test_list_skips_conformance_without_strict_flag(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli import main
@@ -201,11 +192,9 @@ def test_list_reports_conformance_pass_without_strict_flag(
 def test_list_strict_exits_nonzero_on_conformance_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from parsimony.cli import main
 
-    # A connector whose env_map key doesn't match any dep → conformance fail.
-    bad = _toy("ok_fetch", env={"ghost_dep": "GHOST_KEY"})
     mod = _make_module(
         "pkg_bad_conformance_strict",
-        CONNECTORS=Connectors([bad]),
+        CONNECTORS=Connectors([]),
     )
     prov = Provider(
         name="broken_strict",
@@ -219,20 +208,19 @@ def test_list_strict_exits_nonzero_on_conformance_failure(monkeypatch: pytest.Mo
     assert exit_code == 1
 
 
-def test_list_includes_static_catalog_namespaces(
+def test_list_does_not_report_provider_build_protocols(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
 ) -> None:
     from parsimony.cli import main
 
     toy = _public_toy("fred_enumerate")
     mod = _make_module(
-        "pkg_with_catalogs",
+        "pkg_connector_only",
         CONNECTORS=Connectors([toy]),
-        CATALOGS=[("fred", toy)],
     )
     prov = Provider(
         name="fred",
-        module_path="pkg_with_catalogs",
+        module_path="pkg_connector_only",
         dist_name="parsimony-fred",
         version="0.1.0",
     )
@@ -243,29 +231,4 @@ def test_list_includes_static_catalog_namespaces(
     payload = json.loads(captured.out)
 
     assert exit_code == 0
-    assert payload["plugins"][0]["catalogs"] == ["fred"]
-
-
-# ---------------------------------------------------------------------------
-# publish
-# ---------------------------------------------------------------------------
-
-
-def test_publish_rejects_target_without_namespace_placeholder(capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli import main
-
-    exit_code = main(["publish", "--provider", "fred", "--target", "file:///tmp/catalog"])
-    captured = capsys.readouterr()
-    assert exit_code == 2
-    assert "{namespace}" in captured.err
-
-
-def test_publish_unknown_provider(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
-    from parsimony.cli import main
-
-    _patch_providers(monkeypatch, module=None, provider=None)
-
-    exit_code = main(["publish", "--provider", "bogus", "--target", "file:///tmp/{namespace}"])
-    captured = capsys.readouterr()
-    assert exit_code == 2
-    assert "bogus" in captured.err
+    assert "catalogs" not in payload["plugins"][0]

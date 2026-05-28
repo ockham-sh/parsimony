@@ -4,6 +4,44 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.6.0]
+
+### Breaking changes
+
+- **Decoupled `embedder` parameter from `Catalog`**: `Catalog` constructor and `Catalog.load` no longer accept `embedder`. Instead, the `embedder` is managed at the `VectorIndex` level.
+- **Removed `CatalogCache` and the in-process LRU from the kernel**: Catalog reuse is now the caller's responsibility (a one-time `Catalog.load(url)` plus a module-level singleton or small dict). Provider packages use `parsimony.catalog.search.CatalogLRU` when needed.
+- **Unified `Catalog.load` and `catalog.save`**: Removed `Catalog.from_url` and `Catalog.push`, replacing them with unified `Catalog.load(url_or_path)` and `catalog.save(url_or_path)`.
+- **Removed `CatalogBackend`**: Dropped the obsolete `CatalogBackend` protocol and references.
+- **Dropped v2 migration shim**: Removed the v2-to-v3 snapshot loader migration shim. `SCHEMA_VERSION` is pinned strictly to its current value.
+- **Removed mutable/legacy methods**: Deleted `Catalog.{add_entries, add_indexes, set_default_field, delete, exists, list_namespaces, list_entries}` and the `indexes` property.
+- **Tabular factories moved to `TabularResult`**: `from_dataframe`, `from_arrow`, and `from_parquet` are no longer on `Result`; import and call them on `TabularResult` instead.
+- **Explicit connector secrets**: `@connector`, `@enumerator`, and `@loader` accept `secrets=(...)`. Declared names are omitted from `Provenance.params`. Name-based secret conformance (`check_unbound_secret_params`) is removed — connector packages must declare `secrets=` for auth-bearing parameters.
+- **Flat public connector parameters**: Connectors must expose flat function parameters only. Bundled `params: BaseModel` signatures and kernel field-splat binding are removed. Use Pydantic models internally for validation if helpful.
+- **`Connectors.merge` and `Connectors.replace` removed**: Combine collections with `a + b` or `Connectors([*a, *b])`. Substring search uses `connectors.search(query)` instead of `connectors.filter(name=...)`.
+- **`@enumerator` requires `output=`**: Enumerators return raw `pd.DataFrame`; entity projection happens in catalog build via `entities_from_connector` / `entities_from_raw`.
+
+### Added
+
+- **BM25 Token Persistence**: `BM25Index.save` now writes a compressed `tokens.parquet` file. `BM25Index.load` synchronously reads tokens and rebuilds the BM25 model, enabling completely offline/self-contained keyword search.
+- **Snapshot Integrity Check**: Added required `content_sha256` hash under `BuildInfo` to verify snapshot contents (excluding `meta.json`) on load.
+- **Local catalog search helpers**: `parsimony.catalog.search.make_local_search_connector` and related types for provider catalog search connectors.
+- **Local Cache Subdirectories Split**: Added `parsimony.cache.staging_dir(provider)` for staging local connector builds.
+- **`Connector.secrets`**: Tuple of parameter names excluded from provenance at decoration time; validated against the wrapped function signature.
+- **`InvalidParameterError`**: Typed error for call-time parameter validation failures.
+
+### Changed
+
+- **`Provenance.safe_dump()`**: Truncates oversize `params` / `properties` blobs only; it no longer name-redacts entries by parameter name.
+- **Conformance checks**: Five checks remain (`check_connectors_exported`, `check_descriptions_non_empty`, `check_enumerator_decorator`, `check_enumerator_return_type`, `check_flat_public_params`).
+- **Catalog dirty-state errors**: `search()` and `save()` on an unbuilt catalog now raise with an actionable message pointing to `await catalog.build()`.
+
+### Removed
+
+- **`SECRET_NAME_PATTERN` and `REDACTED`** exports from `parsimony.result`.
+- **`safe_dump_provenance()`** module helper (use `Provenance.safe_dump()`).
+- **`HttpClient.aclose()`** no-op.
+- **`ResultCallback`** from top-level `parsimony` exports (still available from `parsimony.connector`).
+
 ## [0.5.0]
 
 ### Breaking changes
@@ -19,11 +57,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   longer accepts `provenance=` / `params=`.** Pure schema application; the
   framework's `Connector._wrap_result` is the only path that authors
   provenance.
-- **`@connector` rejects param models with secret-shaped fields** at
-  decoration time. Field names matching `(api[_-]?key|token|secret|
-  password|credential|bearer|auth)`, or annotations of `SecretStr` /
-  `SecretBytes` / `bytes` / `bytearray` / bare `Any` raise `TypeError`.
-  Use keyword-only deps + `Connectors.bind_env()` for credentials.
+- **Connectors are plain async callables.** Function signatures are the
+  connector parameter contract; Pydantic models are ordinary parameters,
+  not a required first argument.
+- **Framework env binding is removed.** Connector implementations own any
+  env fallback they support, and operators use `Connector.bind(...)` /
+  `Connectors.bind(...)` to create variants with fixed values hidden from
+  the exposed call surface and call-time provenance.
+- **Tool schema export is a projection.** Required secret-shaped parameters must be bound before tool export; optional secret-shaped parameters are omitted from the schema.
 
 ### Added
 
@@ -45,6 +86,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `Provenance` field: `source` (from `fn.__name__`),
   `source_description` (from `fn.__doc__`), `fetched_at`, `params`, and
   `properties` (from any `Result.with_properties` calls).
+
+### Removed
+
+- **`FragmentEmbeddingCache`** and its public re-export from
+  `parsimony.__all__`. The fragment-composition embedding strategy is no
+  longer used by any in-tree connector; downstream catalogs index a single
+  composite document per entry directly via `EmbeddingProvider.embed_texts`.
+- **`parsimony.cache.embeddings_dir()`** and the `embeddings/` named
+  subdirectory under the cache root. The remaining named subdirs are
+  `catalogs/`, `models/`, and `connectors/`.
 
 ## [0.4.2]
 
@@ -129,16 +180,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   required env var was unresolved. `env_map` defaults to the empty mapping.
 - **Conformance checks renamed**: `_check_env_vars_map_to_deps` →
   `_check_env_map_matches_deps` (walks each `Connector.env_map` instead of
-  reading `module.ENV_VARS`). `ProviderTestSuite.test_env_vars_map_to_deps`
-  renamed to `test_env_map_matches_deps`.
+  reading `module.ENV_VARS`).
 - **CLI `parsimony list` output.** Dropped per-plugin `env_vars_present` /
   `env_vars_missing` / `provider_metadata` keys. Env-var aggregation happens
   at the collection level via `CONNECTORS.env_vars()` — the JSON payload now
   has a single top-level `env_vars: [...]` array. Metadata-only by default;
   `--strict` imports each plugin for the conformance check.
-- **`parsimony.publish`** now uses the connector's `env_map` directly
-  via `Connectors.bind_env()`; the `env_vars` parameter on `publish()` is
-  gone.
+- **Catalog lifecycle simplified.** Providers expose lazy `Catalog`
+  declarations; maintainer scripts call `build()` and `push()` directly.
+  The old framework publisher module is gone.
 
 ## [0.3.1]
 
@@ -163,9 +213,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `parsimony.http` renamed to `parsimony.transport` (the module now covers
   more than just the `HttpClient`). `parsimony.http` remains as a
   deprecation shim through the 0.3.x line.
-- Publish optimisation: when `--only` is set and a plugin exports
-  `RESOLVE_CATALOG`, the publisher tries the resolver first and skips the
-  `CATALOGS` walk entirely if every requested namespace resolves.
+- Catalog publication optimisation in the legacy publisher improved targeted
+  maintainer builds.
 
 ## [0.3.0]
 
@@ -180,15 +229,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `add(entries)` and `search(query, limit, namespaces=...)`). The
   canonical `Catalog` class still ships but as the reference
   implementation, not a nominal base.
-- **Catalog method renames.** `upsert()` → `add()`. `index_result()` →
-  `add_from_result()`. `entries_from_table_result()` →
-  `entries_from_result()`.
-- **`Column(role=KEY).namespace` is now optional.** When omitted,
-  `Catalog.add_from_result()` uses the catalog's own `name` as the default.
-- **Catalog publishing.** `@enumerator(catalog=CatalogSpec(...))` replaced
-  by exporting `CATALOGS: list[(ns, fn)]` or `async def CATALOGS(): ...`
-  on the plugin module. Optional `RESOLVE_CATALOG(ns) -> fn | None` for
-  on-demand builds. `CatalogSpec` / `CatalogPlan` / `to_async` removed.
+- **Catalog method renames.** `upsert()` became explicit entry mutation APIs.
+  `entries_from_table_result()` became `entries_from_result()`.
+- **`Column(role=KEY).namespace` is required for catalog results.** `Catalog.name`
+  identifies the snapshot artifact only.
+- **Catalog publishing.** Legacy catalog declaration hooks replaced
+  `@enumerator(catalog=CatalogSpec(...))`. `CatalogSpec` / `CatalogPlan` /
+  `to_async` removed.
 - **`SemanticTableResult` merged into `Result`.** Results carry an optional
   `output_schema: OutputConfig | None`; no separate subclass. Schema-aware
   accessors (`entity_keys`, `data_columns`, `metadata_columns`) return
@@ -203,8 +250,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   PRESERVED** — observer semantics unchanged (exceptions logged, not raised).
 - **CLI verbs: 4 → 2.** `parsimony list [--strict|--json]` (merges
   `list-plugins` + `conformance verify` + `bundles list`) and
-  `parsimony publish --provider NAME --target 'url/{namespace}'` (replaces
-  `bundles build`). `--force` flag removed.
+  `parsimony cache`. `--force` flag removed.
 - **Conformance checks: 7 → 3.** Kept: `connectors_exported`,
   `descriptions_non_empty`, `env_vars_map_to_deps`. Dropped:
   `tool_tag_description_length`, `env_vars_shape`,

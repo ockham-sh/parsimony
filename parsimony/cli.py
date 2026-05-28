@@ -1,16 +1,12 @@
 """``parsimony`` command-line interface.
 
-Three verbs:
+Two verbs:
 
-* ``parsimony list`` — enumerate installed plugins and their declared
-  catalogs. ``--strict`` folds the conformance suite in: exit non-zero on
+* ``parsimony list`` — enumerate installed plugins and their connectors.
+  ``--strict`` folds the conformance suite in: exit non-zero on
   any plugin failure.
-* ``parsimony publish --provider NAME --target URL_TEMPLATE`` — build one
-  :class:`~parsimony.Catalog` per declared namespace and push to
-  ``URL_TEMPLATE.format(namespace=...)``.
 * ``parsimony cache {path,info,clear}`` — inspect or clear the global
-  parsimony cache (HF snapshots, ONNX models, fragment embeddings,
-  connector scratch).
+  parsimony cache (HF snapshots, ONNX models, connector scratch).
 
 Wired as the ``parsimony`` console script in ``pyproject.toml``.
 """
@@ -18,19 +14,15 @@ Wired as the ``parsimony`` console script in ``pyproject.toml``.
 from __future__ import annotations
 
 import argparse
-import asyncio
 import importlib
 import json
-import os
 import sys
 from collections.abc import Sequence
-from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, TextIO
+from typing import Any, TextIO, TypedDict
 
 from parsimony import cache
-from parsimony.discover import Provider, iter_providers
-from parsimony.publish import publish_provider
+from parsimony.discover import iter_providers
 
 __all__ = ["main"]
 
@@ -49,10 +41,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     ls = subparsers.add_parser(
         "list",
-        help="List discovered plugins and their catalogs.",
+        help="List discovered plugins and their connectors.",
         description=(
             "Inspects the 'parsimony.providers' entry-point group. Shows each "
-            "plugin's connectors, declared catalogs, and env-var status. "
+            "plugin's connectors and env-var status. "
             "With --strict, runs the conformance suite against each plugin "
             "and exits non-zero on any failure."
         ),
@@ -64,38 +56,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Run conformance checks; exit non-zero on any failure.",
     )
 
-    pub = subparsers.add_parser(
-        "publish",
-        help="Build + push catalogs for a provider.",
-        description=(
-            "Build one parsimony Catalog per declared namespace and push it to "
-            "the URL given by --target (with '{namespace}' substitution)."
-        ),
-    )
-    pub.add_argument("--provider", required=True, help="Provider name (from 'parsimony list').")
-    pub.add_argument(
-        "--target",
-        required=True,
-        metavar="URL_TEMPLATE",
-        help="Publish target URL template; must contain '{namespace}'.",
-    )
-    pub.add_argument(
-        "--only",
-        metavar="NAMESPACE",
-        action="append",
-        default=[],
-        help="Only publish these namespaces (repeatable).",
-    )
-    pub.add_argument("--dry-run", action="store_true", help="Resolve catalogs and targets, skip enumerate + push.")
-
     cc = subparsers.add_parser(
         "cache",
         help="Inspect or clear the parsimony cache.",
         description=(
             "Manage the global parsimony cache. The root resolves through "
             "PARSIMONY_CACHE_DIR (defaulting to "
-            "platformdirs.user_cache_dir('parsimony')) and contains four "
-            "named subdirectories: catalogs, models, embeddings, connectors."
+            "platformdirs.user_cache_dir('parsimony')) and contains three "
+            "named subdirectories: catalogs, models, connectors."
         ),
     )
     cc_sub = cc.add_subparsers(dest="cache_action", required=True)
@@ -111,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cc_clear.add_argument(
         "--subdir",
         metavar="NAME",
-        help="Clear only this subdir (catalogs, models, embeddings, connectors).",
+        help="Clear only this subdir (catalogs, models, connectors).",
     )
     cc_clear.add_argument(
         "--yes",
@@ -127,13 +95,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     if args.command == "list":
         return _run_list(json_output=args.json_output, strict=args.strict)
-    if args.command == "publish":
-        return _run_publish(
-            provider=args.provider,
-            target=args.target,
-            only=list(args.only or []) or None,
-            dry_run=bool(args.dry_run),
-        )
     if args.command == "cache":
         return _run_cache(args)
     return 2  # argparse raises before we get here
@@ -144,61 +105,43 @@ def main(argv: Sequence[str] | None = None) -> int:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _PluginRow:
+class _PluginRow(TypedDict):
     name: str
     module: str
     distribution: str | None
     version: str | None
     connector_count: int
-    catalogs: list[str]
     conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "name": self.name,
-            "module": self.module,
-            "distribution": self.distribution,
-            "version": self.version,
-            "connector_count": self.connector_count,
-            "catalogs": self.catalogs,
-            "conformance": self.conformance,
-            "conformance_detail": self.conformance_detail,
-        }
-
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
-    rows, env_vars = _collect_rows(strict=strict)
+    rows = _collect_rows(strict=strict)
     if json_output:
         payload: dict[str, Any] = {
-            "plugins": [r.to_dict() for r in rows],
-            "env_vars": sorted(env_vars),
+            "plugins": [dict(r) for r in rows],
         }
         print(json.dumps(payload, indent=2))
     else:
-        _render_table(rows, env_vars, sys.stdout)
-    if strict and any(r.conformance == "fail" for r in rows):
+        _render_table(rows, sys.stdout)
+    if strict and any(r["conformance"] == "fail" for r in rows):
         return 1
     return 0
 
 
-def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], set[str]]:
+def _collect_rows(*, strict: bool) -> list[_PluginRow]:
     """Walk ``iter_providers`` metadata-only.
 
-    Only imports each plugin when ``strict`` is requested (conformance needs
-    the module). Env-var surfaces are aggregated from loaded connectors'
-    ``env_map`` when available, empty otherwise.
+    Only imports each plugin when ``strict`` is requested because conformance
+    needs the module.
     """
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
     rows: list[_PluginRow] = []
-    env_vars: set[str] = set()
 
     for provider in iter_providers():
         module: ModuleType | None = None
         connector_count = 0
-        catalogs: list[str] = []
         conformance = "skipped"
         detail: str | None = None
 
@@ -207,8 +150,6 @@ def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], set[str]]:
                 module = importlib.import_module(provider.module_path)
                 connectors = provider.load()
                 connector_count = len(connectors)
-                env_vars.update(connectors.env_vars())
-                catalogs = _list_catalog_namespaces(module)
                 assert_plugin_valid(module)
                 conformance = "pass"
             except ConformanceError as exc:
@@ -219,40 +160,20 @@ def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], set[str]]:
                 detail = f"{type(exc).__name__}: {exc}"
 
         rows.append(
-            _PluginRow(
-                name=provider.name,
-                module=provider.module_path,
-                distribution=provider.dist_name,
-                version=provider.version,
-                connector_count=connector_count,
-                catalogs=catalogs,
-                conformance=conformance,
-                conformance_detail=detail,
-            )
+            {
+                "name": provider.name,
+                "module": provider.module_path,
+                "distribution": provider.dist_name,
+                "version": provider.version,
+                "connector_count": connector_count,
+                "conformance": conformance,
+                "conformance_detail": detail,
+            }
         )
-    return rows, env_vars
+    return rows
 
 
-def _list_catalog_namespaces(module: Any) -> list[str]:
-    """Return the static namespaces declared on *module* (best-effort, sync).
-
-    Async CATALOGS generators are reported as ``[...]`` without iteration so
-    ``parsimony list`` stays network-free.
-    """
-    raw = getattr(module, "CATALOGS", None)
-    if raw is None:
-        return []
-    if isinstance(raw, list):
-        out: list[str] = []
-        for item in raw:
-            if isinstance(item, tuple) and len(item) == 2 and isinstance(item[0], str):
-                out.append(item[0])
-        return out
-    # callable / async generator — can't enumerate without running it
-    return ["<dynamic>"]
-
-
-def _render_table(rows: list[_PluginRow], env_vars: set[str], stream: TextIO) -> None:
+def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
     if not rows:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
@@ -261,17 +182,15 @@ def _render_table(rows: list[_PluginRow], env_vars: set[str], stream: TextIO) ->
         )
         return
 
-    header = ["NAME", "VERSION", "CONNECTORS", "CATALOGS", "CONFORMANCE"]
+    header = ["NAME", "VERSION", "CONNECTORS", "CONFORMANCE"]
     body: list[list[str]] = [header]
     for r in rows:
-        catalog_cell = ",".join(r.catalogs) if r.catalogs else "-"
         body.append(
             [
-                r.name,
-                r.version or "?",
-                str(r.connector_count) if r.connector_count else "?",
-                catalog_cell,
-                r.conformance,
+                r["name"],
+                r["version"] or "?",
+                str(r["connector_count"]) if r["connector_count"] else "?",
+                r["conformance"],
             ]
         )
 
@@ -284,49 +203,9 @@ def _render_table(rows: list[_PluginRow], env_vars: set[str], stream: TextIO) ->
 
     print(file=stream)
     print(f"{len(rows)} plugin(s) discovered.", file=stream)
-    if env_vars:
-        unset = sorted(v for v in env_vars if not os.environ.get(v))
-        if unset:
-            print(f"Env vars not set: {', '.join(unset)}", file=stream)
     for r in rows:
-        if r.conformance == "fail":
-            print(f"  ! {r.name}: {r.conformance_detail}", file=stream)
-
-
-# ---------------------------------------------------------------------------
-# publish
-# ---------------------------------------------------------------------------
-
-
-def _run_publish(
-    *,
-    provider: str,
-    target: str,
-    only: list[str] | None,
-    dry_run: bool,
-) -> int:
-    if "{namespace}" not in target:
-        print(f"error: --target {target!r} must contain '{{namespace}}'", file=sys.stderr)
-        return 2
-    try:
-        report = asyncio.run(publish_provider(provider, target=target, only=only, dry_run=dry_run))
-    except ValueError as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 2
-    for ns in report.published:
-        print(f"  published: {ns}")
-    for ns in report.skipped:
-        print(f"  skipped (no rows): {ns}")
-    for ns, err in report.failed:
-        print(f"  FAILED: {ns}: {err}", file=sys.stderr)
-    return 0 if report.ok else 1
-
-
-def _provider_by_name(name: str) -> Provider:
-    for p in iter_providers():
-        if p.name == name:
-            return p
-    raise ValueError(f"no parsimony provider named {name!r}")
+        if r["conformance"] == "fail":
+            print(f"  ! {r['name']}: {r['conformance_detail']}", file=stream)
 
 
 # ---------------------------------------------------------------------------

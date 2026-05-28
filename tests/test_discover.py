@@ -21,7 +21,8 @@ class _TP(BaseModel):
 
 
 def _toy(name: str) -> Any:
-    async def _fn(params: _TP) -> dict[str, Any]:
+    async def _fn(x: str = "y") -> dict[str, Any]:
+        _TP(x=x)
         return {"ok": True}
 
     _fn.__doc__ = "A toy connector."

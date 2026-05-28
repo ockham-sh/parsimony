@@ -1,8 +1,5 @@
 """Shared test fixtures for parsimony test suite.
 
-The new :mod:`parsimony.discover` is stateless — no cache — so the legacy
-autouse fixture that cleared the per-process cache between tests is gone.
-
 The :func:`_pin_parsimony_cache_dir` autouse fixture isolates the
 :mod:`parsimony.cache` root to a per-test tmp dir so no test (whatever
 kernel path it exercises) writes to the user's real cache.

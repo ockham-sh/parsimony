@@ -11,7 +11,8 @@ Hierarchy::
     ├── RateLimitError          (429 — burst or quota)
     ├── ProviderError           (5xx / unexpected status)
     ├── EmptyDataError          (200 but no rows)
-    └── ParseError              (200 but unparseable)
+    ├── ParseError              (200 but unparseable)
+    └── InvalidParameterError   (invalid call-time arguments)
 
 .. rubric:: Agent-facing contract
 
@@ -32,8 +33,10 @@ prompt-injection vectors.
 from __future__ import annotations
 
 __all__ = [
+    "CatalogNotFoundError",
     "ConnectorError",
     "EmptyDataError",
+    "InvalidParameterError",
     "ParseError",
     "PaymentRequiredError",
     "ProviderError",
@@ -203,6 +206,20 @@ class EmptyDataError(ConnectorError):
         super().__init__(msg, provider=provider)
 
 
+class CatalogNotFoundError(ConnectorError):
+    """Configured or lazy catalog bundle is missing or unreachable.
+
+    Raised when a catalog URL, Hugging Face repo, or on-disk lazy cache
+    cannot be loaded and no build path is available. The default message
+    includes ``DO NOT retry`` so agents do not tight-loop on bad URLs.
+    """
+
+    def __init__(self, message: str, *, provider: str = "catalog") -> None:
+        if "DO NOT retry" not in message:
+            message = f"{message.rstrip('.')}. DO NOT retry."
+        super().__init__(message, provider=provider)
+
+
 class ParseError(ConnectorError):
     """Provider returned HTTP 200 but the response could not be parsed.
 
@@ -217,3 +234,10 @@ class ParseError(ConnectorError):
             f"a different connector or report."
         )
         super().__init__(msg, provider=provider)
+
+
+class InvalidParameterError(ConnectorError):
+    """Call-time parameter validation failed before the upstream request."""
+
+    def __init__(self, provider: str, message: str) -> None:
+        super().__init__(message, provider=provider)

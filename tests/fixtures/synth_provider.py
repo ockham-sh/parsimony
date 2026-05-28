@@ -14,23 +14,9 @@ conformance test, not here.
 from __future__ import annotations
 
 import pandas as pd
-from pydantic import BaseModel, Field
 
 from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
-
-
-class SynthFetchParams(BaseModel):
-    """Parameters for the synthetic fetch connector."""
-
-    key: str = Field(..., min_length=1, description="Synthetic entity key.")
-
-
-class SynthEnumerateParams(BaseModel):
-    """Parameters for the synthetic catalog-enumeration connector."""
-
-    limit: int = Field(default=10, ge=1, le=1000)
-
+from parsimony.result import Column, ColumnRole, OutputConfig
 
 SYNTH_FETCH_OUTPUT = OutputConfig(
     columns=[
@@ -50,25 +36,20 @@ SYNTH_ENUMERATE_OUTPUT = OutputConfig(
 
 
 @connector(output=SYNTH_FETCH_OUTPUT, tags=["synth", "tool"])
-async def synth_fetch(params: SynthFetchParams) -> Result:
+async def synth_fetch(key: str) -> pd.DataFrame:
     """Fetch a synthetic observation series. Returns a two-row example table."""
-    df = pd.DataFrame(
+    return pd.DataFrame(
         [
-            {"key": params.key, "title": f"Synthetic: {params.key}", "date": "2024-01-01", "value": 1.0},
-            {"key": params.key, "title": f"Synthetic: {params.key}", "date": "2024-02-01", "value": 2.0},
+            {"key": key, "title": f"Synthetic: {key}", "date": "2024-01-01", "value": 1.0},
+            {"key": key, "title": f"Synthetic: {key}", "date": "2024-02-01", "value": 2.0},
         ]
-    )
-    return SYNTH_FETCH_OUTPUT.build_table_result(
-        df,
-        provenance=Provenance(source="synth", source_description="synth", params={"key": params.key}),
-        params={"key": params.key},
     )
 
 
 @enumerator(output=SYNTH_ENUMERATE_OUTPUT, tags=["synth"])
-async def enumerate_synth(params: SynthEnumerateParams) -> pd.DataFrame:
+async def enumerate_synth(limit: int = 10) -> pd.DataFrame:
     """Enumerate up to ``limit`` synthetic catalog entries."""
-    return pd.DataFrame([{"key": f"k{i}", "title": f"Item {i}"} for i in range(params.limit)])
+    return pd.DataFrame([{"key": f"k{i}", "title": f"Item {i}"} for i in range(limit)])
 
 
 CONNECTORS = Connectors([synth_fetch, enumerate_synth])

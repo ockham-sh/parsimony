@@ -139,6 +139,8 @@ If a structured query names a field that is not indexed, search fails fast with 
 
 When `Catalog(..., indexes=None)`, the framework builds BM25 indexes at `build()` time for `code`, `title`, and every metadata key present on the entries. Explicit `indexes=[...]` means the caller owns the full index policy — no extra indexes are added silently.
 
+Keys in `indexes` are *logical search-surface names*: they appear in the DSL and in `UnknownIndexedFieldError`. By convention they match an Entity field name when an index reads exactly one field. Composite indexes such as `DisMaxIndex` expose one surface name while reading multiple Entity fields internally.
+
 ## Conformance
 
 `parsimony.testing.assert_plugin_valid(module)` checks:

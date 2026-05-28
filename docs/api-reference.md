@@ -89,9 +89,27 @@ Immutable collection of `Connector` values.
 
 Built-in index types:
 
-- `BM25Index(name, field="title")`
-- `VectorIndex(name, field="title", embedder=...)`
-- `HybridIndex(name, field, indexes, fusion=None)` wraps multiple leaf indexes (e.g. BM25 + Vector) for the same field and fuses their results using a `Ranker` policy (defaults to `ZScoreFusion()`).
+- `BM25Index()` — BM25 over one Entity field (field name supplied at build time via the catalog dict key).
+- `VectorIndex(embedder=...)` — vector similarity over one Entity field.
+- `HybridIndex(components=[...], fusion=None)` — fuses multiple indexing methods (e.g. BM25 + Vector) over the **same** Entity field using a `Ranker` policy (defaults to `ZScoreFusion()`).
+- `DisMaxIndex(fields=[...], component_factory=BM25Index, tie_breaker=0.0)` — DisMax fusion across **multiple** Entity fields using the same component type (BM25 or Vector). The catalog dict key is the DSL surface name; `fields` lists the Entity fields read internally.
+
+Example — one search surface over short and long titles:
+
+```python
+Catalog(
+    name="provider",
+    indexes={
+        "title": DisMaxIndex(
+            fields=["short_title", "long_title"],
+            component_factory=BM25Index,
+        ),
+    },
+    default_field="title",
+)
+```
+
+Users query `title: World Bank GDP`; the index scores `short_title` and `long_title` and returns the per-row maximum.
 
 `OutputConfig.build_entities(df)` projects tabular rows into `list[Entity]` using `KEY`/`TITLE`/`METADATA` columns. A metadata column named `"*"` is a wildcard that captures every column not already claimed. Catalog build helpers call this after enumerator `TabularResult`s are fetched — connectors do not return entities directly.
 

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Iterable
-from dataclasses import dataclass
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from rank_bm25 import BM25Okapi
 
 COMPONENTS_DIRNAME = "components"
+PER_FIELD_DIRNAME = "per_field"
 EXACT_MATCH_SCORE = 1_000_000.0
 
 
@@ -498,11 +499,132 @@ class HybridIndex:
         return cls(components=components, fusion=fusion)
 
 
+class DisMaxIndex:
+    """DisMax across multiple Entity fields sharing one component index type.
+
+    The dict-key under which this index lives in ``Catalog.indexes`` is the
+    *logical search-surface name* (what users type in the DSL). The ``fields``
+    list names the actual Entity fields read by the per-field sub-indexes.
+    Score for a candidate row is ``max(per-field-scores) + tie_breaker *
+    sum(non-max scores)``.
+    """
+
+    kind: str = "dis_max"
+
+    def __init__(
+        self,
+        *,
+        fields: list[str],
+        component_factory: Callable[[], CatalogIndex],
+        tie_breaker: float = 0.0,
+    ) -> None:
+        if not fields:
+            raise ValueError("DisMaxIndex requires at least one field")
+        if len(set(fields)) != len(fields):
+            raise ValueError(f"DisMaxIndex fields must be unique: {fields}")
+        if not (0.0 <= tie_breaker <= 1.0):
+            raise ValueError("tie_breaker must be in [0.0, 1.0]")
+        per_field: dict[str, CatalogIndex] = {field: component_factory() for field in fields}
+        kinds = {_component_kind(idx) for idx in per_field.values()}
+        if len(kinds) != 1:
+            raise ValueError(f"DisMaxIndex requires uniform component kind across fields; got {sorted(kinds)}")
+        self._fields = list(fields)
+        self._tie_breaker = float(tie_breaker)
+        self._per_field = per_field
+        self._component_kind = next(iter(kinds))
+
+    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        for inner_field, inner_idx in self._per_field.items():
+            inner_ctx = replace(ctx, field=inner_field)
+            await inner_idx.build(entries, ctx=inner_ctx)
+
+    async def score_candidates(
+        self,
+        query: str,
+        *,
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> dict[int, float]:
+        per_field_scores = [
+            await idx.score_candidates(query, query_vectors=query_vectors) for idx in self._per_field.values()
+        ]
+        if not per_field_scores:
+            return {}
+        all_rows: set[int] = set().union(*per_field_scores)
+        out: dict[int, float] = {}
+        for row_id in all_rows:
+            scores = [d.get(row_id, 0.0) for d in per_field_scores]
+            best = max(scores)
+            rest = sum(s for s in scores if s != best)
+            out[row_id] = best + self._tie_breaker * rest
+        return out
+
+    async def ranking(
+        self,
+        query: str,
+        *,
+        limit: int,
+        entries: list[Entity],
+        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+    ) -> Ranking:
+        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        return _ranking_from_row_scores(entries, row_scores, limit=limit)
+
+    def save(self, path: Path) -> None:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / META_FILENAME).write_text(
+            json.dumps(
+                {
+                    "kind": self.kind,
+                    "fields": self._fields,
+                    "tie_breaker": self._tie_breaker,
+                    "component_kind": self._component_kind,
+                },
+                indent=2,
+            )
+        )
+        per_field_dir = path / PER_FIELD_DIRNAME
+        per_field_dir.mkdir(parents=True, exist_ok=True)
+        for field, component in self._per_field.items():
+            if isinstance(component, (BM25Index, VectorIndex)):
+                component.save(per_field_dir / field)
+            else:
+                raise TypeError(f"DisMax component for field {field!r} is not serializable")
+
+    @classmethod
+    def load(cls, path: Path, *, embedder: EmbeddingProvider | None = None) -> Self:
+        raw = json.loads((path / META_FILENAME).read_text())
+        fields = list(raw["fields"])
+        tie_breaker = float(raw["tie_breaker"])
+        component_kind = raw["component_kind"]
+        per_field: dict[str, CatalogIndex] = {}
+        for field in fields:
+            component_path = path / PER_FIELD_DIRNAME / field
+            component_raw = json.loads((component_path / META_FILENAME).read_text())
+            if component_kind == "bm25":
+                if component_raw["kind"] != "bm25":
+                    raise ValueError(f"DisMax field {field!r} expected bm25 component, got {component_raw['kind']!r}")
+                per_field[field] = BM25Index.load(component_path)
+            elif component_kind == "vector":
+                if component_raw["kind"] != "vector":
+                    raise ValueError(f"DisMax field {field!r} expected vector component, got {component_raw['kind']!r}")
+                per_field[field] = VectorIndex.load(component_path, embedder=embedder)
+            else:
+                raise ValueError(f"Unsupported DisMax component kind {component_kind!r}")
+        index = object.__new__(cls)
+        index._fields = fields
+        index._tie_breaker = tie_breaker
+        index._per_field = per_field
+        index._component_kind = component_kind
+        return index
+
+
 def collect_vector_indexes(index: CatalogIndex) -> list[VectorIndex]:
     if isinstance(index, VectorIndex):
         return [index]
     if isinstance(index, HybridIndex):
         return [idx for idx in index._components.values() if isinstance(idx, VectorIndex)]
+    if isinstance(index, DisMaxIndex):
+        return [idx for idx in index._per_field.values() if isinstance(idx, VectorIndex)]
     return []
 
 

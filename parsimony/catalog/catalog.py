@@ -16,6 +16,7 @@ from parsimony.catalog import urls
 from parsimony.catalog.indexes import (
     BM25Index,
     CatalogIndex,
+    DisMaxIndex,
     HybridIndex,
     IndexBuildContext,
     VectorIndex,
@@ -72,6 +73,12 @@ class Catalog:
     :meth:`build`, BM25 indexes are created for ``code``, ``title``, and each
     metadata key present on the catalog entries. Pass an explicit ``indexes``
     dict to take full control — no extra indexes are added silently.
+
+    Keys in ``indexes`` are *logical search-surface names*: they appear in the
+    DSL (``FIELD: value``) and in ``UnknownIndexedFieldError``. By convention
+    they match an Entity field name when an index reads exactly one Entity
+    field. Composite indexes such as :class:`~parsimony.catalog.indexes.DisMaxIndex`
+    may expose one surface name while reading multiple Entity fields internally.
     """
 
     def __init__(
@@ -415,7 +422,7 @@ class Catalog:
     def _write_indexes(self, target: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
         for field, index in self._indexes.items():
-            if isinstance(index, (VectorIndex, BM25Index, HybridIndex)):
+            if isinstance(index, (VectorIndex, BM25Index, HybridIndex, DisMaxIndex)):
                 index.save(target / field)
             else:
                 raise TypeError(f"Catalog index for field {field!r} is runtime-only and cannot be serialized")
@@ -449,6 +456,8 @@ def _load_indexes(
             indexes[field] = BM25Index.load(field_path)
         elif kind == "hybrid":
             indexes[field] = HybridIndex.load(field_path)
+        elif kind == "dis_max":
+            indexes[field] = DisMaxIndex.load(field_path)
         else:
             raise ValueError(f"Unsupported catalog index kind {kind!r} for field {field!r}")
     return indexes

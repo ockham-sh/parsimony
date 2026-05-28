@@ -197,9 +197,9 @@ async def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
         captured["sub"] = sub
         return object()  # Catalog isn't actually constructed here.
 
-    from parsimony.catalog import urls as catalog_urls
+    from parsimony.catalog import catalog as catalog_module
 
-    monkeypatch.setattr(catalog_urls, "_load_hf", _spy_load_hf)
+    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
 
     await Catalog.load("hf://org/repo/bundle")
 
@@ -215,9 +215,9 @@ async def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
         captured["sub"] = sub
         return object()
 
-    from parsimony.catalog import urls as catalog_urls
+    from parsimony.catalog import catalog as catalog_module
 
-    monkeypatch.setattr(catalog_urls, "_load_hf", _spy_load_hf)
+    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
 
     await Catalog.load("hf://org/repo")
 
@@ -232,9 +232,9 @@ async def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
         captured["root"] = root
         captured["sub"] = sub
 
-    from parsimony.catalog import urls as catalog_urls
+    from parsimony.catalog import catalog as catalog_module
 
-    monkeypatch.setattr(catalog_urls, "_save_hf", _spy_save_hf)
+    monkeypatch.setattr(catalog_module, "_save_hf", _spy_save_hf)
 
     catalog = Catalog(name="x")
     catalog.set_entities([_entry("x", "A", "alpha")])

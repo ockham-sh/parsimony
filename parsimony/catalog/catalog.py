@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -12,7 +13,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-import parsimony.catalog.urls as urls
 from parsimony.catalog.indexes import (
     BM25Index,
     CatalogIndex,
@@ -41,7 +41,7 @@ from parsimony.catalog.storage import (
     _read_parquet,
     read_meta,
 )
-from parsimony.catalog.urls import parse_catalog_url
+from parsimony.catalog.urls import REPO_TYPE, parse_catalog_url
 from parsimony.entity import Entity, entity_key, normalize_namespace
 from parsimony.ranking import Ranking, ranking_from_scores
 
@@ -298,9 +298,9 @@ class Catalog:
         self._ensure_built("saved")
         parsed = parse_catalog_url(str(url))
         if parsed.scheme == "file":
-            await urls._save_file(self, parsed.root, parsed.sub, builder=builder)
+            await _save_file(self, parsed.root, parsed.sub, builder=builder)
         elif parsed.scheme == "hf":
-            await urls._save_hf(self, parsed.root, parsed.sub, builder=builder)
+            await _save_hf(self, parsed.root, parsed.sub, builder=builder)
         else:
             raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")
 
@@ -335,7 +335,7 @@ class Catalog:
         dataset URLs (hf://). Caching loaded catalogs is the caller's
         responsibility.
         """
-        return await urls._dispatch_load(str(url))
+        return await _dispatch_load(str(url))
 
     @classmethod
     async def _load_from_path(cls, path: Path) -> Catalog:
@@ -461,3 +461,77 @@ def _load_indexes(
         else:
             raise ValueError(f"Unsupported catalog index kind {kind!r} for field {field!r}")
     return indexes
+
+
+# ---------------------------------------------------------------------------
+# Snapshot load/save dispatch.
+#
+# These helpers live here (rather than in :mod:`parsimony.catalog.urls`) so the
+# module that knows :class:`Catalog` is the one that depends on the URL parser,
+# not the other way around — keeping the import graph acyclic.
+# ---------------------------------------------------------------------------
+
+
+async def _load_file(root: str, sub: str) -> Catalog:
+    path = Path(root) / sub if sub else Path(root)
+    if not path.exists():
+        raise FileNotFoundError(f"Catalog directory does not exist: {path}")
+    return await Catalog._load_from_path(path)
+
+
+async def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
+    target = Path(root) / sub if sub else Path(root)
+    await catalog._save_to_path(target, builder=builder)
+
+
+async def _load_hf(root: str, sub: str) -> Catalog:
+    from huggingface_hub import snapshot_download
+
+    from parsimony import cache
+
+    cache_dir = cache.catalogs_dir()
+    if sub:
+        local = await asyncio.to_thread(
+            lambda: Path(
+                snapshot_download(
+                    repo_id=root,
+                    repo_type=REPO_TYPE,
+                    cache_dir=cache_dir,
+                    allow_patterns=[f"{sub}/*"],
+                )
+            )
+        )
+        return await Catalog._load_from_path(local / sub)
+    local = await asyncio.to_thread(
+        lambda: Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
+    )
+    return await Catalog._load_from_path(local)
+
+
+async def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
+    from huggingface_hub import HfApi
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        staging = Path(tmpdir) / "snapshot"
+        await catalog._save_to_path(staging, builder=builder)
+
+        def _upload() -> None:
+            api = HfApi()
+            api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
+            api.upload_folder(
+                folder_path=str(staging),
+                repo_id=root,
+                repo_type=REPO_TYPE,
+                path_in_repo=sub or None,
+            )
+
+        await asyncio.to_thread(_upload)
+
+
+async def _dispatch_load(url: str) -> Catalog:
+    parsed = parse_catalog_url(url)
+    if parsed.scheme == "file":
+        return await _load_file(parsed.root, parsed.sub)
+    if parsed.scheme == "hf":
+        return await _load_hf(parsed.root, parsed.sub)
+    raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")

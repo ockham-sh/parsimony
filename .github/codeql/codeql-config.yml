@@ -1,0 +1,19 @@
+name: "parsimony CodeQL config"
+
+# Inherit the default security-and-quality query suite (set on the action via
+# `queries: security-and-quality`) and prune the rules below.
+#
+# Suppressions:
+# - `py/call/wrong-arguments` in tests/: test code deliberately calls APIs
+#   with rejected arguments to verify the rejection (e.g. `pytest.raises(TypeError)`
+#   around `Catalog(embedder=...)` after the API moved the param to VectorIndex).
+
+query-filters:
+  - exclude:
+      id: py/call/wrong-arguments
+      path: tests/.*
+
+paths-ignore:
+  - "**/.venv/**"
+  - "**/dist/**"
+  - "**/build/**"

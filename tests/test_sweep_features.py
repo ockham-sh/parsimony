@@ -34,7 +34,7 @@ class _SimpleEmbedder:
 @pytest.mark.asyncio
 async def test_catalog_embedder_separation() -> None:
     with pytest.raises(TypeError):
-        Catalog("test", **{"embedder": _SimpleEmbedder()})
+        Catalog("test", embedder=_SimpleEmbedder())  # type: ignore[call-arg]
 
     idx = VectorIndex(embedder=_SimpleEmbedder())
     assert idx._embedder is not None

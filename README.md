@@ -2,6 +2,10 @@
 
 Parsimony is a minimal connector framework for financial data and coding agents. A connector is an async Python callable that returns data; the kernel wraps successful calls in `Result` objects with provenance.
 
+<p align="center">
+  <img src="docs/assets/parsimony-hero.gif" alt="parsimony: decorate an async function with @connector, bind the operator's API key, and call it — the result comes back as a typed Result carrying both the data and full provenance (connector, source, call-time args, fetch time), with the bound api_key kept out of the record." width="900" />
+</p>
+
 ## Quickstart
 
 ```python

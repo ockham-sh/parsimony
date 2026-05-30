@@ -1,4 +1,11 @@
-# parsimony
+<div align="center">
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/parsimony-brand-dark.png" />
+  <img src="docs/assets/parsimony-brand-light.png" alt="parsimony" width="460" />
+</picture>
+
+</div>
 
 Parsimony is a minimal connector framework for financial data and coding agents. A connector is an async Python callable that returns data; the kernel wraps successful calls in `Result` objects with provenance.
 

@@ -3,7 +3,6 @@
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/parsimony-brand-dark.png" />
   <img src="docs/assets/parsimony-brand-light.png" alt="parsimony" width="460" />
 </picture>
-</div>
 
 **Typed connectors and a portable hybrid-search catalog for financial data.**
 
@@ -11,11 +10,8 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python](https://img.shields.io/pypi/pyversions/parsimony-core.svg)](https://pypi.org/project/parsimony-core/)
 
-```bash
-pip install parsimony-core
-```
+</div>
 
-Distribution: `parsimony-core` on PyPI. Import name: `parsimony`.
 
 <p align="center">
   <img src="docs/assets/parsimony-hero.gif" alt="parsimony: decorate an async function with @connector, bind the operator's API key, and call it — the result comes back as a typed Result carrying both the data and full provenance (connector, source, call-time args, fetch time), with the bound api_key kept out of the record." width="900" />

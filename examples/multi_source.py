@@ -23,14 +23,12 @@ import os
 from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
-from parsimony import Connectors
-
 
 async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
-    # Compose: FRED (needs API key) + SDMX (no key required).
-    bundle = Connectors.merge(FRED.bind(api_key=api_key), SDMX)
+    # Compose: FRED (needs API key) + SDMX (no key required), via the + operator.
+    bundle = FRED.bind(api_key=api_key) + SDMX
     print(f"Bundle connectors: {bundle.names()}")
     print()
 

@@ -51,9 +51,9 @@ async def my_data_source(category: str) -> pd.DataFrame:
 async def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
-    # Compose custom + built-in connectors into one bundle.
+    # Compose custom + built-in connectors into one bundle (the + operator).
     fred = Connectors([fred_fetch]).bind(api_key=api_key)
-    bundle = Connectors.merge(fred, Connectors([my_data_source]))
+    bundle = fred + Connectors([my_data_source])
 
     print(f"Bundle connectors: {bundle.names()}")
     print()

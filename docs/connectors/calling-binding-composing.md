@@ -1,0 +1,345 @@
+# Calling, binding, and composing
+
+A connector is an async callable plus metadata, so you invoke it with `await`,
+and the framework hands back a [`Result`](results.md). Binding fixes parameters
+ahead of time — the idiom for injecting secrets and base URLs without leaking
+them — and the immutable `Connectors` collection lets you merge, filter, and
+search connector bundles. This page covers all three.
+
+## Calling a connector
+
+Every connector is a coroutine. Call it with keyword (or positional) arguments
+and `await` the result; the framework wraps the connector's raw return value in
+a [`Result` or `TabularResult`](results.md) with framework-built
+[`Provenance`](results.md).
+
+```python
+import asyncio
+import pandas as pd
+from parsimony.connector import connector
+
+
+@connector
+async def demo_search(query: str) -> pd.DataFrame:
+    """Search demo series by keyword."""
+    return pd.DataFrame({"id": ["A", "B"], "title": [f"Series about {query}", "Another"]})
+
+
+async def main() -> None:
+    result = await demo_search(query="GDP")
+    print(result.df)                      # the returned DataFrame (no output= schema here)
+    print(result.provenance.source)       # "demo_search"
+    print(result.provenance.params)       # {"query": "GDP"}
+
+
+asyncio.run(main())
+```
+
+Arguments are bound against the connector's **exposed signature** (see
+[binding](#binding-parameters) below) and defaults are applied, so a connector
+called with no arguments still runs if all its parameters are optional. Invalid
+call-time arguments raise `TypeError` with a message naming the connector — for
+example `Invalid parameters for connector 'demo_search': ...` for an unknown
+keyword, and the underlying "missing a required argument" message when a
+required parameter is omitted.
+
+!!! warning "Connectors must return raw data"
+    A connector returns a DataFrame, Series, scalar, or dict — never a
+    pre-built envelope. Returning a `Result`, a `TabularResult`, or a
+    `(data, properties)` tuple raises `TypeError` at call time, because the
+    framework builds the execution envelope. If a schema or coercion failure
+    surfaces a `ValueError` while wrapping the result, it is re-raised as a
+    typed [`ParseError`](errors.md).
+
+### The exposed signature
+
+`Connector.exposed_signature` is the `inspect.Signature` callers actually see.
+For an unbound connector it equals the wrapped function's signature; after
+[binding](#binding-parameters), the fixed parameters are removed. This signature
+drives argument binding at call time and the parameter listing in
+`describe()` / `to_llm()`.
+
+```python
+import inspect
+print(list(demo_search.exposed_signature.parameters))   # ['query']
+```
+
+### Calling without wrapping: `call_raw`
+
+`await connector.call_raw(**kwargs)` invokes the underlying function and returns
+its **raw** value — no `Result`, no `Provenance`, no callbacks. Note that
+`call_raw` does not bind against the exposed signature or apply defaults; you
+pass the full merged argument set yourself. Use it when you want the data only,
+for example inside another connector or a test.
+
+```python
+async def main() -> None:
+    raw = await demo_search.call_raw(query="CPI")
+    assert isinstance(raw, pd.DataFrame)
+
+asyncio.run(main())
+```
+
+## Binding parameters
+
+`Connector.bind(**kwargs)` returns a **new** connector with the named parameters
+fixed. The bound names disappear from `exposed_signature` (and therefore from
+`describe()` / `to_llm()` cards), and they are **not** recorded in
+`provenance.params`. This is the mechanism for injecting credentials and
+configuration that the caller — or an LLM driving the connector — should never
+see or have to supply.
+
+```python
+import asyncio
+import os
+import pandas as pd
+from parsimony.connector import connector
+
+
+@connector(secrets=("api_key",))
+async def fetch_series(series_id: str, api_key: str, base_url: str = "https://api.example.com") -> pd.DataFrame:
+    """Fetch a series by id from the example provider."""
+    return pd.DataFrame({"series": [series_id]})
+
+
+# Inject the secret and base URL once; the agent only ever sees series_id.
+ready = fetch_series.bind(api_key=os.environ.get("EXAMPLE_API_KEY", "demo-key"))
+
+print(list(ready.exposed_signature.parameters))   # ['series_id', 'base_url']
+
+
+async def main() -> None:
+    result = await ready(series_id="GDP")
+    print(result.provenance.params)               # {'series_id': 'GDP', 'base_url': '...'} — no api_key
+
+asyncio.run(main())
+```
+
+!!! note "`secrets=` and binding are independent"
+    Declaring a parameter in `secrets=` strips it from `provenance.params`
+    whether you fix it with `bind()` or pass it at call time. Binding hides a
+    parameter from the **call surface** regardless of whether it is a secret.
+    Combine them — `secrets=("api_key",)` plus `bind(api_key=...)` — so the key
+    is both invisible to callers and absent from provenance. See
+    [Defining connectors](defining-connectors.md) for the `secrets=` declaration
+    and [Errors](errors.md) for the agent-facing error contract.
+
+Binding is composable: each `bind()` call returns a new connector, accumulating
+fixed parameters and shrinking the exposed signature.
+
+```python
+step1 = fetch_series.bind(api_key="k")
+step2 = step1.bind(base_url="https://api.test")
+print(list(step2.exposed_signature.parameters))   # ['series_id']
+```
+
+`bind()` validates its arguments and rejects two mistakes with `TypeError`:
+
+| Mistake | Example | Raised |
+|---|---|---|
+| Binding a name that is not a parameter | `fetch_series.bind(nope=1)` | `TypeError: ... received unexpected bind arguments: ['nope']` |
+| Re-binding an already-bound parameter | `step1.bind(api_key="k2")` | `TypeError: ... received already-bound arguments: ['api_key']` |
+
+Calling `bind()` with no keyword arguments returns the same connector
+unchanged. Because `Connector` is a frozen dataclass, `bind()` never mutates in
+place — it always returns a fresh instance.
+
+## Post-fetch observers: `with_callback`
+
+`Connector.with_callback(callback)` returns a new connector with an **observer**
+appended. After a successful fetch, every registered callback is invoked with
+the produced `Result`. A callback is any `(result) -> None | Awaitable`; both
+synchronous and `async` callbacks are supported, and awaitable returns are
+awaited. The type alias is `ResultCallback`.
+
+!!! warning "Import `ResultCallback` from the submodule"
+    `ResultCallback` is **not** exported from the top-level `parsimony`
+    package. Import it from `parsimony.connector`:
+    ```python
+    from parsimony.connector import ResultCallback
+    ```
+
+Observers run **after** the connector has already produced a valid `Result`, so
+their failures must not corrupt the caller's view. Any exception raised by a
+callback is logged (via `logger.exception`) and **swallowed** — the `Result` is
+still returned intact.
+
+```python
+import asyncio
+from parsimony.connector import connector
+
+
+@connector
+async def ping() -> dict:
+    """Return a tiny payload."""
+    return {"ok": True}
+
+
+seen: list[str] = []
+
+
+def record(result) -> None:
+    seen.append(result.provenance.source)
+
+
+observed = ping.with_callback(record)
+
+
+async def main() -> None:
+    await observed()
+    print(seen)        # ['ping']
+
+asyncio.run(main())
+```
+
+!!! tip "Use observers for telemetry, not for persistence you depend on"
+    Observer semantics mean a failing callback never propagates. If you need
+    fail-closed behavior — the caller must not see a successful `Result` when a
+    write fails — call the persistence function directly inside the connector or
+    wrap the call site, rather than relying on a post-fetch hook.
+
+Callbacks persist across `bind()`, because binding copies the connector with its
+hooks intact.
+
+## Composing with `Connectors`
+
+`Connectors` is an immutable, composable collection of `Connector` instances
+keyed by name. Construct one from a sequence of connectors; the constructor
+freezes the input and raises `ValueError` if two connectors share a name.
+
+```python
+from parsimony.connector import Connectors
+
+bundle = Connectors([demo_search, ping])
+print(bundle.names())        # ['demo_search', 'ping'] (sorted)
+print(len(bundle))           # 2
+print("ping" in bundle)      # True
+```
+
+### Calling by name
+
+The canonical execution idiom is `await connectors[name](**kwargs)`. Lookup is
+by connector **name** (a string), not by position.
+
+```python
+import asyncio
+from parsimony.connector import Connectors
+
+bundle = Connectors([demo_search, ping])
+
+
+async def main() -> None:
+    result = await bundle["demo_search"](query="GDP")
+    print(len(result.df))
+
+asyncio.run(main())
+```
+
+!!! warning "Indexing is by name, not by integer"
+    `connectors[0]` raises `KeyError`, not `IndexError`. `Connectors` is keyed
+    by connector name. A missing name raises a helpful
+    `KeyError: No connector 'x'. Available: [...]` listing the available names.
+    Use `get(name)` when you want `None` instead of an exception for an absent
+    connector.
+
+### Merging collections with `+`
+
+To merge two collections, use the `+` operator. There is **no `.merge` method** —
+concatenation is the composition primitive. The result re-checks for duplicate
+names and raises `ValueError` on a collision.
+
+```python
+from parsimony.connector import Connectors
+
+search_tools = Connectors([demo_search])
+health_tools = Connectors([ping])
+
+all_tools = search_tools + health_tools
+print(all_tools.names())     # ['demo_search', 'ping']
+```
+
+This is how you assemble a working set from multiple provider plugins — load
+each plugin's `CONNECTORS` and add them together. See
+[Discovering installed providers](../plugins/discovery.md) for loading plugin
+bundles.
+
+### Collection-wide binding
+
+`Connectors.bind(**kwargs)` binds matching parameters across every connector,
+**scoped per connector**: for each connector only the keyword arguments that
+appear in that connector's exposed signature are applied; connectors lacking a
+given parameter are left untouched. This lets you inject a shared secret across
+a heterogeneous bundle in one call.
+
+```python
+# Suppose every FRED connector takes api_key but the demo ones do not.
+wired = all_tools.bind(api_key="shared-key")   # binds api_key only where it exists
+```
+
+`Connectors.with_callback(callback)` works the same way — it returns a new
+collection where every connector has the observer appended.
+
+### Inspecting and filtering
+
+| Method | Returns | Behavior |
+|---|---|---|
+| `get(name)` | `Connector \| None` | lookup by name, `None` if absent |
+| `__getitem__(name)` | `Connector` | lookup; raises `KeyError` listing available names if absent |
+| `__contains__(name)` | `bool` | `True` if a connector has that name (`False` for non-`str`) |
+| `names()` | `list[str]` | sorted connector names |
+| `__len__()` / `__iter__()` | `int` / iterator | count and iteration over the connectors |
+| `filter(predicate)` | `Connectors` | connectors for which `predicate(connector)` is true |
+| `search(query, tags=, **properties)` | `Connectors` | substring match plus tag/property filters |
+
+```python
+# Keep only the loaders.
+loaders = all_tools.filter(lambda c: "loader" in c.tags)
+```
+
+`search(query, *, tags=None, **properties)` does a case-insensitive substring
+match of `query` against each connector's **name and description**, then applies
+two optional filters:
+
+- `tags` — the query tags must be a **subset** of the connector's tags.
+- `**properties` — each given property must match the connector's
+  `properties` value by **exact equality** (`connector.properties.get(k) == v`).
+
+A blank or whitespace-only query short-circuits and returns the whole
+collection **without** applying the `tags` / `**properties` filters — those
+filters only run when the query is non-empty. `filter`, `search`, and `bind`
+all return new `Connectors`; the original is never modified.
+
+```python
+# Description/name substring match, narrowed to a tag.
+hits = all_tools.search("series", tags=["loader"])
+```
+
+### Rendering for prompts and humans
+
+A `Connectors` collection renders itself two ways, mirroring the per-connector
+projections. Bound parameters (including bound secrets) never appear in either,
+because both read the **exposed** signature.
+
+- `describe()` — a numbered, human-readable listing (`Connectors (N):`, or
+  `Connectors (empty)` when there are none).
+- `to_llm(*, header="", heading="Connectors")` — a compact prompt section: an
+  optional leading `header`, then a `## {heading} (N)` line, then one
+  `to_llm()` card per connector. Returns an empty string when the collection is
+  empty **and** no `header` is given.
+
+```python
+prompt = all_tools.to_llm(header="Available tools:", heading="Connectors")
+print(prompt)
+print(all_tools.describe())
+```
+
+See [Defining connectors](defining-connectors.md) for what goes into each card
+and [The connector model](index.md) for the bigger picture.
+
+## See also
+
+- [Defining connectors](defining-connectors.md) — the `@connector` decorator, `secrets=`, and namespace hints
+- [Loaders and enumerators](loaders-and-enumerators.md) — the two stricter connector verbs you compose into bundles
+- [Results and output schemas](results.md) — the `Result` / `TabularResult` envelope every call returns
+- [Errors](errors.md) — the typed exceptions connectors raise
+- [Discovering installed providers](../plugins/discovery.md) — loading plugin `CONNECTORS` bundles to compose with `+`

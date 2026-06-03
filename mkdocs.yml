@@ -77,6 +77,7 @@ nav:
       - Environment variables: reference/environment.md
   - Development: development.md
   - Connector packages: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
+  - Agents: '!import https://github.com/ockham-sh/parsimony-agents?branch=main&docs_dir=docs'
 
 markdown_extensions:
   - pymdownx.highlight:

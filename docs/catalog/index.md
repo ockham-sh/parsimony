@@ -1,0 +1,252 @@
+# The Catalog
+
+A `Catalog` is Parsimony's discovery layer: a portable, in-memory index over normalized
+[`Entity`](entities.md) records. You load entities into it, build per-field indexes, then run
+structured or plain-text searches that return ranked matches. The same catalog can be saved to
+a local directory or a Hugging Face dataset and loaded back, fully built and searchable.
+
+A catalog is the natural sink for an [enumerator](../connectors/loaders-and-enumerators.md): an
+enumerator discovers entities (series, tickers, datasets), and a catalog makes them searchable.
+Both `Catalog` and `Entity` are top-level imports, but for catalog-heavy code the clearest
+convention is to import from the submodule:
+
+```python
+from parsimony.catalog import BM25Index, Catalog, Entity
+```
+
+!!! note "Optional dependencies"
+    The catalog runtime is lazy. `import parsimony` and constructing a `Catalog` pull in no
+    heavy dependencies. The actual index backends do: `BM25Index` needs `rank-bm25`, and the
+    vector/hybrid backends need FAISS and an embedder. Install the canonical catalog stack with
+    the `standard` extra: `pip install "parsimony-core[standard]"`. See
+    [Installation](../getting-started/installation.md).
+
+## The lifecycle
+
+A catalog moves through a fixed sequence: **construct → load entities → build → search → save**.
+Mutations always invalidate the built indexes, so the build step is a gate, not a one-off.
+
+```text
+Catalog(name, indexes=...)          construct (starts "dirty")
+        │
+        ▼
+set_entities([...])                 load / replace entities  ── marks dirty
+        │
+        ▼
+await catalog.build()               materialize indexes      ── clears dirty
+        │
+        ├──► await catalog.search("query", limit=5)   →  (list[CatalogMatch], SearchDiagnostic)
+        │
+        └──► await catalog.save("file:///path")        →  snapshot directory
+                                                            │
+                              await Catalog.load("file:///path")  ──►  built, searchable
+```
+
+### The build gate
+
+A freshly constructed catalog is *dirty*. So is one whose entities or indexes you have changed.
+`search()` and `save()` both refuse to run on a dirty catalog and raise a plain `ValueError`
+whose message tells you what to do:
+
+```text
+Catalog entries or indexes changed — call await catalog.build() before it can be searched
+```
+
+The mutating methods that mark a catalog dirty are `set_entities`, `set_index`, `set_indexes`,
+`update_indexes`, and `delete_many`. `get()` does not require a build and never raises this
+error. Re-run `await catalog.build()` after any mutation.
+
+!!! warning "Build before you search or save"
+    Forgetting to `await catalog.build()` is the most common foot-gun. The error is an ordinary
+    `ValueError`, not a custom catalog exception, so do not try to catch a special type — fix the
+    call order instead. The exact same gate guards `save()` (the message ends in "before it can
+    be saved").
+
+## A minimal catalog
+
+This example constructs a catalog with a single BM25 index over the `title` field, loads two
+entities, builds, and runs a plain-text (broad) search. Building a `BM25Index` requires the
+`standard` extra (`rank-bm25`), so install it first: `pip install "parsimony-core[standard]"`.
+
+```python
+import asyncio
+
+from parsimony.catalog import BM25Index, Catalog, Entity
+
+
+async def main() -> None:
+    catalog = Catalog("artifact", indexes={"title": BM25Index()})
+    catalog.set_entities(
+        [
+            Entity(namespace="series", code="A", title="alpha growth index"),
+            Entity(namespace="series", code="B", title="beta consumer prices"),
+        ]
+    )
+    await catalog.build()
+
+    matches, diagnostic = await catalog.search("alpha", limit=5)
+    print(diagnostic.mode)          # -> broad
+    top = matches[0]
+    print(top.namespace, top.code)  # -> series A
+    print(top.title, round(top.score, 3))
+
+
+asyncio.run(main())
+```
+
+`search()` is async and returns a tuple: a list of [`CatalogMatch`](search.md) records ordered by
+descending score, and a `SearchDiagnostic` describing how the query was executed.
+
+## Constructing a catalog
+
+The constructor signature is:
+
+```python
+Catalog(name: str, *, indexes: dict[str, CatalogIndex] | None = None, default_field: str | None = None)
+```
+
+| Parameter | Meaning |
+| --- | --- |
+| `name` | Catalog identity. Normalized to lowercase snake_case via `normalize_namespace` — uppercase or hyphenated names raise `ValueError` (e.g. `"My Catalog"` is rejected; pass `"my_catalog"`). |
+| `indexes` | A map of *search-surface name* → [`CatalogIndex`](indexes.md). `None` enables the default index policy (see below). |
+| `default_field` | The field used for broad (plain-text) search. Defaults to `"title"` when a `title` index exists, otherwise broad search is disabled. |
+
+The keys of `indexes` are logical search-surface names — they are the field names you use in the
+query DSL (`FIELD: value`) and the names reported by errors. By convention a key matches an
+`Entity` field, but a composite index such as `DisMaxIndex` may expose one surface name while
+reading several entity fields internally.
+
+!!! warning "default_field must have a backing index"
+    If you pass an explicit `indexes` dict together with a `default_field` that the dict does not
+    cover, the constructor raises `BroadSearchConfigError` (a `ValueError` subclass) immediately —
+    not later at `build()`. Under the default index policy the check is deferred to `build()`,
+    since the indexes do not exist yet at construction time.
+
+## Index policy: default versus explicit
+
+There are two ways to configure indexes.
+
+**Default index policy** (`indexes=None`). The catalog starts with a placeholder and, at
+`build()`, materializes a `BM25Index` for `code`, `title`, and every metadata key observed across
+the loaded entities. This is the zero-configuration path — you get a searchable catalog over every
+field without naming any index.
+
+```python
+import asyncio
+
+from parsimony.catalog import Catalog, Entity
+
+
+async def main() -> None:
+    catalog = Catalog("demo")  # indexes=None -> default policy
+    catalog.set_entities(
+        [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
+    )
+    await catalog.build()
+    print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
+
+
+asyncio.run(main())
+```
+
+**Explicit indexes**. Pass a dict to take full control. No indexes are ever added silently, and
+any of `set_index` / `set_indexes` / `update_indexes` permanently switches the catalog off the
+default policy. Use this when you want a vector or hybrid backend on a specific field, or want to
+restrict search to a known set of surfaces. The available index types — `BM25Index`,
+`VectorIndex`, `HybridIndex`, `DisMaxIndex` — are covered in [Indexes](indexes.md).
+
+## Structured versus broad search at a glance
+
+`search(query, limit, *, namespaces=None)` inspects the query string and picks one of two modes.
+
+A query is **structured** when it begins with a `FIELD:` token (it matches `^\s*\w+\s*:`). Clauses
+are separated by `&&` and AND-intersected; within a clause, comma-separated values are OR-merged.
+Every referenced field must have an index, or the parse raises `UnknownIndexedFieldError`.
+
+```python
+matches, diagnostic = await catalog.search("title: alpha && region: eu, us", limit=5)
+print(diagnostic.mode)  # -> structured
+```
+
+Any query that does not start with a `FIELD:` token is a **broad** query, scored against the
+`default_field`. If no broad field is configured, `search()` raises `BroadSearchUnavailableError`.
+
+```python
+matches, diagnostic = await catalog.search("alpha growth", limit=5)
+print(diagnostic.mode)  # -> broad
+```
+
+`SearchDiagnostic.mode` is the literal `"broad"` or `"structured"`. The optional `namespaces`
+argument post-filters results to entities whose namespace is in the given list. The full DSL,
+result shape, and the search-time exceptions are documented in
+[Building and searching](search.md).
+
+## Saving and loading snapshots
+
+A built catalog can be serialized to a directory and reloaded fully built. `save()` and `load()`
+both dispatch on a URL scheme:
+
+| Scheme | Example | Notes |
+| --- | --- | --- |
+| `file://` (or a bare path) | `file:///srv/catalogs/fred` | Local directory snapshot. Works with only `parsimony-core` plus the index backends used. |
+| `hf://` | `hf://acme/economic-catalog` | Hugging Face dataset. Lazily imports `huggingface_hub`; needs the `standard` extra. |
+
+Any other scheme raises `ValueError`. A snapshot is a directory of `entries.parquet`
+(zstd-compressed), an `indexes/<field>/` subtree, and a `meta.json` manifest. Writes are atomic
+(staged in a sibling temp directory, then renamed), and `load()` verifies a `content_sha256`
+integrity digest and rejects any `schema_version` other than `1`.
+
+```python
+import asyncio
+from pathlib import Path
+
+from parsimony.catalog import BM25Index, Catalog, Entity
+
+
+async def main(tmp: Path) -> None:
+    catalog = Catalog("solo", indexes={"title": BM25Index()})
+    catalog.set_entities([Entity(namespace="solo", code="A", title="alpha")])
+    await catalog.build()
+
+    await catalog.save(f"file://{tmp}/snapshot", builder="nightly-job")
+    loaded = await Catalog.load(f"file://{tmp}/snapshot")
+    print(len(loaded), loaded.entities[0].code)  # -> 1 A
+
+
+asyncio.run(main(Path("/tmp/cat-demo")))
+```
+
+!!! note "Loaded catalogs keep exactly what was serialized"
+    A loaded catalog is non-dirty and immediately searchable, and the default index policy is
+    forced off. Its indexes are precisely what the snapshot stored — calling `build()` on a loaded
+    catalog will not re-derive metadata-key indexes. Only `BM25Index`, `VectorIndex`,
+    `HybridIndex`, and `DisMaxIndex` are serializable; any other `CatalogIndex` raises `TypeError`
+    at save time. The full layout, integrity model, and the higher-level `load_or_build_catalog`
+    lazy-cache helper are in [Snapshots and persistence](snapshots.md).
+
+## The catalog subsystem
+
+This section breaks the catalog down into focused pages:
+
+- **[Entities](entities.md)** — the `Entity` record model, normalization rules, and how
+  DataFrames become entities.
+- **[Building and searching](search.md)** — the full `Catalog` API, the query DSL,
+  `CatalogMatch` / `SearchDiagnostic`, and the search-time exceptions.
+- **[Indexes](indexes.md)** — the `CatalogIndex` protocol and the BM25, vector, hybrid, and
+  DisMax backends, plus the adaptive selection policies.
+- **[Ranking and fusion](ranking-and-fusion.md)** — `Ranking`, the `Ranker` protocol, and the
+  `RRF` / `ZScoreFusion` / `MinMaxScoreFusion` fusion strategies.
+- **[Embedders](embedders.md)** — the `EmbeddingProvider` implementations used by vector and
+  hybrid indexes.
+- **[Snapshots and persistence](snapshots.md)** — saving, loading, snapshot layout, integrity,
+  and the lazy-cache helpers.
+- **[Data stores](data-store.md)** — persisting loader output as observations, the loader-side
+  counterpart to the catalog.
+
+## See also
+
+- [Entities](entities.md) — the record model a catalog indexes.
+- [Building and searching](search.md) — the search API and query DSL in depth.
+- [Indexes](indexes.md) — choosing and configuring index backends.
+- [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — how an enumerator feeds a
+  catalog.

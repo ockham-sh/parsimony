@@ -53,3 +53,6 @@ PLAN-*.md
 
 # mkdocs build output
 site/
+
+# Scout workflow scaffolding (docs/README generation rig + subsystem maps)
+.scout/

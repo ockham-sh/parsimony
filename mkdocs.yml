@@ -32,7 +32,6 @@ theme:
     - navigation.instant
     - navigation.tracking
     - navigation.sections
-    - navigation.expand
     - navigation.top
     - search.suggest
     - search.highlight
@@ -45,19 +44,39 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Quickstart: quickstart.md
-  - Guide: guide.md
-  - Connectors: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
-  - Building Plugins:
-      - Author your first connector: authoring-connectors.md
-      - Walkthrough: connector-implementation-guide.md
-      - Private &amp; Internal: building-a-private-connector.md
-  - Recipes: cookbook.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Core concepts: getting-started/concepts.md
+  - Connectors:
+      - The connector model: connectors/index.md
+      - Defining connectors: connectors/defining-connectors.md
+      - Loaders and enumerators: connectors/loaders-and-enumerators.md
+      - Calling, binding, composing: connectors/calling-binding-composing.md
+      - Results and output schemas: connectors/results.md
+      - Errors: connectors/errors.md
+      - HTTP transport: connectors/http-transport.md
+  - Plugins:
+      - Plugins and providers: plugins/index.md
+      - Discovering providers: plugins/discovery.md
+      - Authoring a provider: plugins/authoring.md
+      - Conformance testing: plugins/conformance.md
+  - Catalog:
+      - The Catalog: catalog/index.md
+      - Entities: catalog/entities.md
+      - Building and searching: catalog/search.md
+      - Indexes: catalog/indexes.md
+      - Ranking and fusion: catalog/ranking-and-fusion.md
+      - Embedders: catalog/embedders.md
+      - Snapshots and persistence: catalog/snapshots.md
+      - Data stores: catalog/data-store.md
+  - CLI: cli.md
+  - Caching: caching.md
   - Reference:
-      - Plugin Contract: contract.md
-      - API Reference: api-reference.md
-      - Architecture: architecture.md
-      - FAQ: faq.md
+      - Public API & import map: reference/api.md
+      - Environment variables: reference/environment.md
+  - Development: development.md
+  - Connector packages: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
 
 markdown_extensions:
   - pymdownx.highlight:
@@ -70,6 +89,7 @@ markdown_extensions:
   - pymdownx.details
   - attr_list
   - md_in_html
+  - tables
   - toc:
       permalink: true
 

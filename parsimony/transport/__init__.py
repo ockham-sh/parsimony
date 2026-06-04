@@ -58,6 +58,7 @@ _SENSITIVE_QUERY_PARAM_NAMES: frozenset[str] = frozenset(
         "secret",
         "password",
         "authorization",
+        "registrationkey",
     }
 )
 

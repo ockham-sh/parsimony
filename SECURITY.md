@@ -32,4 +32,4 @@ This policy covers the open-source packages in the parsimony ecosystem:
 - `parsimony-connectors` (all first-party connector distributions)
 - `parsimony-agents`
 
-For vulnerabilities in the [ockham terminal](https://github.com/ockham-sh/terminal), please email security@ockham.sh and reference the `terminal` repository in your report.
+For vulnerabilities in the [ockham terminal](https://github.com/ockham-sh/terminal) (coming soon), please email security@ockham.sh and reference the `terminal` repository in your report.

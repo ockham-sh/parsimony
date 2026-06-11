@@ -1,15 +1,15 @@
 # Building and searching
 
 A [`Catalog`](index.md) is only searchable after you build it. This page covers the
-constructor, the entry and index mutators, the `build` gate, the `search` coroutine, and the
+constructor, the entry and index mutators, the `build` gate, the `search` method, and the
 small query DSL that decides between structured (`field: value`) and broad (plain-text)
 search.
 
 All of the runnable examples here use [`BM25Index`](indexes.md), which needs the optional
-`rank-bm25` backend at search time. Install it with the `standard` extra:
+`rank-bm25` backend at search time. Install it with the `catalog` extra:
 
 ```bash
-pip install "parsimony-core[standard]"
+pip install "parsimony-core[catalog]"
 ```
 
 !!! note "Imports"
@@ -54,20 +54,14 @@ materializes a [`BM25Index`](indexes.md) for `code`, for `title`, and for **ever
 key** observed across the current entries (sorted).
 
 ```python
-import asyncio
 from parsimony.catalog import Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("demo")  # indexes=None -> default policy
-    catalog.set_entities(
-        [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
-    )
-    await catalog.build()
-    print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
-
-
-asyncio.run(main())
+catalog = Catalog("demo")  # indexes=None -> default policy
+catalog.set_entities(
+    [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
+)
+catalog.build()
+print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 ```
 
 Calling any of `set_index`, `set_indexes`, or `update_indexes` permanently disables the
@@ -88,40 +82,34 @@ that always happens in `build()`.
 | Method | Effect |
 |---|---|
 | `set_entities(entries: list[Entity])` | Replace all entries. Entries are upserted by `(namespace, code)`, so duplicate keys overwrite earlier ones rather than appending. |
-| `await delete_many(keys)` | Remove entries by `(namespace, code)` pairs. Returns the count removed (`0` if none matched). |
+| `delete_many(keys)` | Remove entries by `(namespace, code)` pairs. Returns the count removed (`0` if none matched). |
 | `set_index(field, index)` | Replace one field index. Disables the default policy. |
 | `update_indexes(indexes)` | Merge field indexes into the current set. Disables the default policy. |
 | `set_indexes(indexes)` | Replace the entire index set. Disables the default policy. |
-| `await get(namespace, code)` | Look up a single `Entity` by key, or `None`. This does *not* require a build. |
+| `get(namespace, code)` | Look up a single `Entity` by key, or `None`. This does *not* require a build. |
 
 The `entities` and `indexes` properties return copies of the current entries and index map.
 `len(catalog)` is the entry count.
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("series", indexes={"title": BM25Index()})
-    catalog.set_entities(
-        [
-            Entity(namespace="series", code="A", title="alpha title"),
-            Entity(namespace="series", code="B", title="beta title"),
-        ]
-    )
-    await catalog.build()
-    print(len(catalog))                 # -> 2
-    print((await catalog.get("series", "A")).title)  # -> alpha title
-
-
-asyncio.run(main())
+catalog = Catalog("series", indexes={"title": BM25Index()})
+catalog.set_entities(
+    [
+        Entity(namespace="series", code="A", title="alpha title"),
+        Entity(namespace="series", code="B", title="beta title"),
+    ]
+)
+catalog.build()
+print(len(catalog))                 # -> 2
+print(catalog.get("series", "A").title)  # -> alpha title
 ```
 
 ## The build gate
 
-`await catalog.build()` validates the configuration and materializes every configured index
-over the current entries. The rebuild is guarded by an `asyncio.Lock`, and a single shared
+`catalog.build()` validates the configuration and materializes every configured index
+over the current entries. The rebuild is guarded by a `threading.Lock`, and a single shared
 vector cache is threaded through all indexes in one build, so identical texts across fields
 are embedded once.
 
@@ -130,7 +118,7 @@ Construction and every mutator (`set_entities`, `set_index`, `set_indexes`, `upd
 `ValueError`:
 
 ```text
-Catalog entries or indexes changed — call await catalog.build() before it can be searched
+Catalog entries or indexes changed — call catalog.build() before it can be searched
 ```
 
 !!! warning "Build before searching or saving"
@@ -141,7 +129,7 @@ Catalog entries or indexes changed — call await catalog.build() before it can 
 ## Searching
 
 ```python
-async def search(
+def search(
     self,
     query: str,
     limit: int,
@@ -151,7 +139,7 @@ async def search(
 ```
 
 `query` and `limit` are positional and both required; `namespaces` is keyword-only. The
-coroutine returns a tuple of the ranked matches and a diagnostic describing how the query ran.
+method returns a tuple of the ranked matches and a diagnostic describing how the query ran.
 
 - `limit` caps the number of results. (Whole tie-groups can slightly exceed it — see
   [Ranking and fusion](ranking-and-fusion.md).)
@@ -168,24 +156,18 @@ catalog's resolved default field. The query is scored against that one index and
 diagnostic reports `mode="broad"`.
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("artifact", indexes={"title": BM25Index()})
-    catalog.set_entities(
-        [
-            Entity(namespace="series", code="A", title="alpha title"),
-            Entity(namespace="series", code="B", title="beta title"),
-        ]
-    )
-    await catalog.build()
-    hits, diag = await catalog.search("alpha", limit=1)
-    print(diag.mode, hits[0].code)  # -> broad A
-
-
-asyncio.run(main())
+catalog = Catalog("artifact", indexes={"title": BM25Index()})
+catalog.set_entities(
+    [
+        Entity(namespace="series", code="A", title="alpha title"),
+        Entity(namespace="series", code="B", title="beta title"),
+    ]
+)
+catalog.build()
+hits, diag = catalog.search("alpha", limit=1)
+print(diag.mode, hits[0].code)  # -> broad A
 ```
 
 If no default field can be resolved — `default_field` is unset and there is no `"title"`
@@ -211,32 +193,26 @@ across the OR values; across clauses, the surviving rows (the intersection) have
 scores summed.
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("test_cat")
-    catalog.set_indexes(
-        {"title": BM25Index(), "ref_area": BM25Index(), "icp_item": BM25Index()}
-    )
-    catalog.set_entities(
-        [
-            Entity(namespace="ns", code="A", title="series a",
-                   metadata={"ref_area": "Germany", "icp_item": "energy"}),
-            Entity(namespace="ns", code="B", title="series b",
-                   metadata={"ref_area": "Italy", "icp_item": "energy"}),
-            Entity(namespace="ns", code="C", title="series c",
-                   metadata={"ref_area": "Germany", "icp_item": "food"}),
-        ]
-    )
-    await catalog.build()
-    res, diag = await catalog.search("ref_area: Germany && icp_item: energy", limit=5)
-    print(diag.mode)               # -> structured
-    print({m.code for m in res})   # -> {'A'}
-
-
-asyncio.run(main())
+catalog = Catalog("test_cat")
+catalog.set_indexes(
+    {"title": BM25Index(), "ref_area": BM25Index(), "icp_item": BM25Index()}
+)
+catalog.set_entities(
+    [
+        Entity(namespace="ns", code="A", title="series a",
+               metadata={"ref_area": "Germany", "icp_item": "energy"}),
+        Entity(namespace="ns", code="B", title="series b",
+               metadata={"ref_area": "Italy", "icp_item": "energy"}),
+        Entity(namespace="ns", code="C", title="series c",
+               metadata={"ref_area": "Germany", "icp_item": "food"}),
+    ]
+)
+catalog.build()
+res, diag = catalog.search("ref_area: Germany && icp_item: energy", limit=5)
+print(diag.mode)               # -> structured
+print({m.code for m in res})   # -> {'A'}
 ```
 
 !!! note "A bare field token is still broad"
@@ -279,21 +255,15 @@ The second tuple element is a `SearchDiagnostic`, whose `mode` is the literal `"
 `"structured"` and whose `notes` is a list of strings (empty by default).
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("demo", indexes={"title": BM25Index()})
-    catalog.set_entities([Entity(namespace="demo", code="A", title="alpha title")])
-    await catalog.build()
-    matches, diag = await catalog.search("alpha", limit=5)
-    top = matches[0]
-    print(top.namespace, top.code, top.title)  # -> demo A alpha title
-    print(diag.mode)                            # -> broad
-
-
-asyncio.run(main())
+catalog = Catalog("demo", indexes={"title": BM25Index()})
+catalog.set_entities([Entity(namespace="demo", code="A", title="alpha title")])
+catalog.build()
+matches, diag = catalog.search("alpha", limit=5)
+top = matches[0]
+print(top.namespace, top.code, top.title)  # -> demo A alpha title
+print(diag.mode)                            # -> broad
 ```
 
 ## Query errors

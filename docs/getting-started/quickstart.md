@@ -17,13 +17,11 @@ pip install parsimony-core
 
 ## 1. Define and call a connector
 
-A connector is a small **async** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result` / `TabularResult`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves.
+A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result` / `TabularResult`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves.
 
-The `@connector` decorator turns an `async def` into a frozen `Connector`. When you attach an [`OutputConfig`](../connectors/results.md), the framework applies the declared schema to the returned DataFrame — renaming, coercing dtypes, and tagging each column with a role.
+The `@connector` decorator turns a plain `def` into a frozen `Connector`. When you attach an [`OutputConfig`](../connectors/results.md), the framework applies the declared schema to the returned DataFrame — renaming, coercing dtypes, and tagging each column with a role.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import Column, ColumnRole, OutputConfig, TabularResult, connector
@@ -37,7 +35,7 @@ PRICE_OUTPUT = OutputConfig(
 
 
 @connector(output=PRICE_OUTPUT, tags=["demo"])
-async def daily_close(symbol: str) -> pd.DataFrame:
+def daily_close(symbol: str) -> pd.DataFrame:
     """Return a tiny synthetic price series for a ticker symbol."""
     # Replace this with a real HTTP call — see the HTTP transport guide.
     return pd.DataFrame(
@@ -48,23 +46,19 @@ async def daily_close(symbol: str) -> pd.DataFrame:
     )
 
 
-async def main() -> None:
-    result = await daily_close(symbol="ACME")
+result = daily_close(symbol="ACME")
 
-    assert isinstance(result, TabularResult)
-    print(result.df)                       # the schema-applied DataFrame
-    print(result.df["close"].dtype)        # float64 — coerced from strings by dtype="numeric"
-    print(result.provenance.source)        # "daily_close" (defaults to the function name)
-    print(result.provenance.params)        # {"symbol": "ACME"}
-    print([c.name for c in result.data_columns])  # ["close"]
-
-
-asyncio.run(main())
+assert isinstance(result, TabularResult)
+print(result.df)                       # the schema-applied DataFrame
+print(result.df["close"].dtype)        # float64 — coerced from strings by dtype="numeric"
+print(result.provenance.source)        # "daily_close" (defaults to the function name)
+print(result.provenance.params)        # {"symbol": "ACME"}
+print([c.name for c in result.data_columns])  # ["close"]
 ```
 
 A few things this example demonstrates, all enforced by the framework:
 
-- **The connector is async and you call it with `await`.** A non-coroutine function raises `TypeError` at decoration time.
+- **The connector is synchronous.** An `async def` raises `TypeError` at decoration time.
 - **A description is mandatory.** It defaults to the stripped docstring; pass `description=` to override. With neither, decoration raises `ValueError`.
 - **`provenance.source` is the connector name**, which defaults to `fn.__name__`. `provenance.params` records only the call-time arguments.
 - **`dtype="numeric"` coerced the string column to `float64`.** The `date` column declared `dtype="date"` and was normalized to midnight timestamps.
@@ -77,51 +71,45 @@ A few things this example demonstrates, all enforced by the framework:
 
 ## 2. Compose connectors and hide secrets
 
-Connectors live in an immutable `Connectors` collection. You merge collections with the `+` operator (there is no `.merge` method), look connectors up **by name** with `[]`, and invoke them with the canonical idiom `await collection[name](**kwargs)`.
+Connectors live in an immutable `Connectors` collection. You merge collections with the `+` operator (there is no `.merge` method), look connectors up **by name** with `[]`, and invoke them with the canonical idiom `collection[name](**kwargs)`.
 
 `bind(**kwargs)` fixes parameter values and returns a *new* connector with those parameters removed from its call surface. This is how you inject a secret or a base URL without exposing it: declare the parameter in `secrets=(...)`, then `bind` it. Bound secrets never appear in the connector's signature, its LLM-facing card, or its provenance.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import Connectors, connector
 
 
 @connector
-async def search_titles(query: str) -> pd.DataFrame:
+def search_titles(query: str) -> pd.DataFrame:
     """Search a demo index by keyword."""
     return pd.DataFrame({"code": ["A", "B"], "title": [f"{query} alpha", f"{query} beta"]})
 
 
 @connector(secrets=("api_key",))
-async def fetch_series(series_id: str, api_key: str) -> pd.DataFrame:
+def fetch_series(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch one observation for a series id (requires an API key)."""
     return pd.DataFrame({"date": ["2024-01-01"], "value": [1.0]})
 
 
-async def main() -> None:
-    # Merge two single-connector collections with the + operator.
-    bundle = Connectors([search_titles]) + Connectors([fetch_series])
-    print(bundle.names())          # ["fetch_series", "search_titles"] (sorted)
-    print("fetch_series" in bundle)  # True
-    print(len(bundle))             # 2
+# Merge two single-connector collections with the + operator.
+bundle = Connectors([search_titles]) + Connectors([fetch_series])
+print(bundle.names())          # ["fetch_series", "search_titles"] (sorted)
+print("fetch_series" in bundle)  # True
+print(len(bundle))             # 2
 
-    # Bind the secret across the whole collection. bind is scoped per connector:
-    # it only fixes parameters a connector actually has, so search_titles is untouched.
-    wired = bundle.bind(api_key="sk-demo")
-    print(list(wired["fetch_series"].exposed_signature.parameters))  # ["series_id"]
+# Bind the secret across the whole collection. bind is scoped per connector:
+# it only fixes parameters a connector actually has, so search_titles is untouched.
+wired = bundle.bind(api_key="sk-demo")
+print(list(wired["fetch_series"].exposed_signature.parameters))  # ["series_id"]
 
-    # Invoke by name with await.
-    titles = await wired["search_titles"](query="GDP")
-    print(len(titles.df))  # 2
+# Invoke by name.
+titles = wired["search_titles"](query="GDP")
+print(len(titles.df))  # 2
 
-    series = await wired["fetch_series"](series_id="UNRATE")
-    print(series.provenance.params)  # {"series_id": "UNRATE"} — api_key is stripped
-
-
-asyncio.run(main())
+series = wired["fetch_series"](series_id="UNRATE")
+print(series.provenance.params)  # {"series_id": "UNRATE"} — api_key is stripped
 ```
 
 !!! tip "Why binding hides secrets"
@@ -135,35 +123,28 @@ asyncio.run(main())
 
 ## 3. Build and search a Catalog
 
-A `Catalog` is a portable, in-memory index over normalized [`Entity`](../catalog/entities.md) records. An entity has a `namespace` (lowercase snake_case), a `code` (its identifier within that namespace), a `title`, and arbitrary `metadata`. The lifecycle is fixed: construct the catalog, load entities with `set_entities`, materialize indexes with `await build()`, then `await search(...)`.
+A `Catalog` is a portable, in-memory index over normalized [`Entity`](../catalog/entities.md) records. An entity has a `namespace` (lowercase snake_case), a `code` (its identifier within that namespace), a `title`, and arbitrary `metadata`. The lifecycle is fixed: construct the catalog, load entities with `set_entities`, materialize indexes with `build()`, then `search(...)`.
 
 ```python
-import asyncio
-
 from parsimony.catalog import BM25Index, Catalog, CatalogMatch, Entity
 
+# An explicit BM25 index over the "title" field; default_field makes plain-text
+# (broad) queries search that field.
+catalog = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
+catalog.set_entities(
+    [
+        Entity(namespace="series", code="UNRATE", title="Unemployment Rate"),
+        Entity(namespace="series", code="GDPC1", title="Real Gross Domestic Product"),
+    ]
+)
 
-async def main() -> None:
-    # An explicit BM25 index over the "title" field; default_field makes plain-text
-    # (broad) queries search that field.
-    catalog = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
-    catalog.set_entities(
-        [
-            Entity(namespace="series", code="UNRATE", title="Unemployment Rate"),
-            Entity(namespace="series", code="GDPC1", title="Real Gross Domestic Product"),
-        ]
-    )
+catalog.build()  # materialize the indexes; required before searching
 
-    await catalog.build()  # materialize the indexes; required before searching
-
-    matches, diagnostic = await catalog.search("unemployment", limit=5)
-    print(diagnostic.mode)  # "broad" — a plain-text query against default_field
-    for match in matches:
-        assert isinstance(match, CatalogMatch)
-        print(match.namespace, match.code, match.title, round(match.score, 3))
-
-
-asyncio.run(main())
+matches, diagnostic = catalog.search("unemployment", limit=5)
+print(diagnostic.mode)  # "broad" — a plain-text query against default_field
+for match in matches:
+    assert isinstance(match, CatalogMatch)
+    print(match.namespace, match.code, match.title, round(match.score, 3))
 ```
 
 `search` returns a tuple `(list[CatalogMatch], SearchDiagnostic)`. Each `CatalogMatch` carries the entity's `namespace`, `code`, `title`, `metadata`, and a final `score`. The `SearchDiagnostic.mode` tells you how the query was executed: `"broad"` for plain text, or `"structured"` when the query uses `FIELD: value` syntax.
@@ -171,13 +152,13 @@ asyncio.run(main())
 !!! warning "Build before you search"
     Every mutation (`set_entities`, `set_index`, `delete_many`, …) marks the
     catalog dirty. Calling `search()` or `save()` while dirty raises a plain
-    `ValueError` whose message tells you to `await catalog.build()` first.
+    `ValueError` whose message tells you to `catalog.build()` first.
     Re-run `build()` after any change.
 
-!!! note "BM25 needs the `standard` extra"
+!!! note "BM25 needs the `catalog` extra"
     `BM25Index` builds and scores with `rank-bm25`, which ships in the
-    `standard` optional extra, not the base install. Run this flow after
-    `pip install "parsimony-core[standard]"`. That extra also unlocks the
+    `catalog` optional extra, not the base install. Run this flow after
+    `pip install "parsimony-core[catalog]"`. That extra also unlocks the
     FAISS vector indexes, the default sentence-transformers embedder, and the
     `hf://` snapshot loader. See [Installation](installation.md).
 
@@ -186,21 +167,14 @@ asyncio.run(main())
 If you pass `indexes=None` (the default), the catalog uses the **default index policy**: at `build()` time it creates a BM25 index for `code`, `title`, and every metadata key observed across your entities. This is the quickest way to make a catalog searchable across all its fields:
 
 ```python
-import asyncio
-
 from parsimony.catalog import Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("demo")  # indexes=None -> default policy
-    catalog.set_entities(
-        [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
-    )
-    await catalog.build()
-    print(sorted(catalog.indexes))  # ["code", "region", "title"]
-
-
-asyncio.run(main())
+catalog = Catalog("demo")  # indexes=None -> default policy
+catalog.set_entities(
+    [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
+)
+catalog.build()
+print(sorted(catalog.indexes))  # ["code", "region", "title"]
 ```
 
 For structured queries, snapshot persistence (`save` / `load` over `file://` and `hf://`), and the index types in depth, see [Building and searching](../catalog/search.md), [Indexes](../catalog/indexes.md), and [Snapshots and persistence](../catalog/snapshots.md).
@@ -213,8 +187,6 @@ The connectors above are synthetic. A real data source is an installed
 through `parsimony.discover`:
 
 ```python
-import asyncio
-
 from parsimony import discover
 
 # discover.load("fred") loads a named provider (LookupError if not installed);

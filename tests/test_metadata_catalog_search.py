@@ -14,7 +14,7 @@ from parsimony.result import Column, ColumnRole, OutputConfig
 class _StubEmbedder:
     DIM = 8
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
         for text in texts:
             digest = hashlib.sha256(text.encode("utf-8")).digest()
@@ -23,8 +23,8 @@ class _StubEmbedder:
             out.append([x / norm for x in raw])
         return out
 
-    async def embed_query(self, query: str) -> list[float]:
-        (vector,) = await self.embed_texts([query])
+    def embed_query(self, query: str) -> list[float]:
+        (vector,) = self.embed_texts([query])
         return vector
 
     def info(self) -> EmbedderInfo:
@@ -59,7 +59,7 @@ def test_build_entities_keeps_description_as_metadata() -> None:
     assert "description" not in Entity.model_fields
 
 
-async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
+def test_metadata_is_searchable_only_when_index_targets_it() -> None:
     df = pd.DataFrame(
         {
             "code": [f"ROW.{i}" for i in range(10)] + ["A.1"],
@@ -73,8 +73,8 @@ async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
 
     title_only = Catalog(name="test_ns")
     title_only.set_entities(entries)
-    await title_only.build()
-    title_hits, _ = await title_only.search("renewable wind energy", limit=2)
+    title_only.build()
+    title_hits, _ = title_only.search("renewable wind energy", limit=2)
     assert not title_hits or title_hits[0].code != "A.1"
 
     description_indexed = Catalog(
@@ -83,7 +83,7 @@ async def test_metadata_is_searchable_only_when_index_targets_it() -> None:
         default_field="description",
     )
     description_indexed.set_entities(entries)
-    await description_indexed.build()
-    hits, _ = await description_indexed.search("renewable wind energy", limit=2)
+    description_indexed.build()
+    hits, _ = description_indexed.search("renewable wind energy", limit=2)
     assert hits[0].code == "A.1"
     assert hits[0].score > 0

@@ -18,16 +18,17 @@ from parsimony.discover import Provider
 
 
 def _toy(name: str, **kwargs: Any):
-    async def _fn(x: str = "y", api_key: str = "") -> dict[str, Any]:
+    def _fn(x: str = "y", api_key: str = "") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Fetch a toy observation with a plenty long description."
     _fn.__name__ = name
+    kwargs.setdefault("secrets", ("api_key",))
     return connector(**kwargs)(_fn)
 
 
 def _public_toy(name: str, **kwargs: Any):
-    async def _fn(x: str = "y") -> dict[str, Any]:
+    def _fn(x: str = "y") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Public fetch with no deps."

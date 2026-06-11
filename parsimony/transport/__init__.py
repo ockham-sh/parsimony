@@ -12,22 +12,21 @@ as the kernel adds support for additional protocols.
   :mod:`parsimony.errors` exception.
 * :func:`map_timeout_error` — translate ``httpx.TimeoutException`` into a
   typed :class:`~parsimony.errors.ProviderError` (status 408).
-* :func:`pooled_client` — async context manager that yields an
-  :class:`HttpClient` backed by a single pooled ``httpx.AsyncClient``, for
+* :func:`pooled_client` — sync context manager that yields an
+  :class:`HttpClient` backed by a single pooled ``httpx.Client``, for
   enumerator loops and fan-out fetches.
-* :class:`HttpClient` — async HTTP client with base URL, default
+* :class:`HttpClient` — sync HTTP client with base URL, default
   headers/query params, and redacted logging.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 import re
 import time
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -146,7 +145,13 @@ def parse_retry_after(response: httpx.Response, *, default: float = _DEFAULT_RAT
     return default
 
 
-def map_http_error(exc: httpx.HTTPStatusError, *, provider: str, op_name: str) -> NoReturn:
+def map_http_error(
+    exc: httpx.HTTPStatusError,
+    *,
+    provider: str,
+    op_name: str,
+    env_var: str | None = None,
+) -> NoReturn:
     """Translate an :class:`httpx.HTTPStatusError` into a typed connector error.
 
     Mapping (matches the kernel's :mod:`parsimony.errors` hierarchy):
@@ -163,10 +168,7 @@ def map_http_error(exc: httpx.HTTPStatusError, *, provider: str, op_name: str) -
     """
     status = exc.response.status_code
     if status in (401, 403):
-        raise UnauthorizedError(
-            provider=provider,
-            message=f"Invalid or missing {provider} API credentials",
-        ) from exc
+        raise UnauthorizedError(provider=provider, env_var=env_var) from exc
     if status == 402:
         raise PaymentRequiredError(
             provider=provider,
@@ -209,7 +211,7 @@ class HttpRetryPolicy:
     max_delay_s: float = 8.0
     jitter_s: float = 0.1
     retryable_methods: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
-    retryable_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+    retryable_statuses: frozenset[int] = frozenset({500, 502, 503, 504})
 
     def validate(self) -> HttpRetryPolicy:
         if self.max_attempts < 1:
@@ -237,12 +239,11 @@ DEFAULT_HTTP_RETRY_POLICY = HttpRetryPolicy().validate()
 
 
 class HttpClient:
-    """Async HTTP client with base URL, default headers/query params, and redacted logging.
+    """Sync HTTP client with base URL, default headers/query params, and redacted logging.
 
-    By default each request creates a short-lived ``httpx.AsyncClient`` so that
-    TCP connections are never shared across different ``asyncio.run()`` event
-    loops.  Pass ``shared_client=`` to reuse a single client for connection
-    pooling within one async call (e.g. screener fan-out).
+    By default each request creates a short-lived ``httpx.Client``.  Pass
+    ``shared_client=`` to reuse a single client for connection pooling within
+    one logical operation (e.g. enumerator fan-out).
     """
 
     def __init__(
@@ -255,8 +256,8 @@ class HttpClient:
         query_params: dict[str, Any] | None = None,
         follow_redirects: bool = True,
         max_redirects: int = 5,
-        _transport: httpx.AsyncBaseTransport | None = None,
-        shared_client: httpx.AsyncClient | None = None,
+        _transport: httpx.BaseTransport | None = None,
+        shared_client: httpx.Client | None = None,
         retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -274,7 +275,7 @@ class HttpClient:
     def base_url(self) -> str:
         return self._base_url
 
-    def with_shared_client(self, client: httpx.AsyncClient) -> HttpClient:
+    def with_shared_client(self, client: httpx.Client) -> HttpClient:
         """Return a new HttpClient that reuses *client* for connection pooling."""
         return HttpClient(
             self._base_url,
@@ -301,7 +302,7 @@ class HttpClient:
             kwargs["transport"] = self._transport
         return kwargs
 
-    async def request(
+    def request(
         self,
         method: str,
         path: str,
@@ -331,7 +332,7 @@ class HttpClient:
 
         for attempt in range(1, max_attempts + 1):
             try:
-                response = await self._request_once(
+                response = self._request_once(
                     method=method,
                     url=url,
                     params=request_params,
@@ -350,7 +351,7 @@ class HttpClient:
                     attempt + 1,
                     max_attempts,
                 )
-                await asyncio.sleep(delay)
+                time.sleep(delay)
                 continue
 
             if self._should_retry_response(response, policy=policy, method=method_upper) and attempt < max_attempts:
@@ -364,7 +365,7 @@ class HttpClient:
                     attempt + 1,
                     max_attempts,
                 )
-                await asyncio.sleep(delay)
+                time.sleep(delay)
                 continue
             break
 
@@ -385,14 +386,14 @@ class HttpClient:
             response.status_code,
             extra={
                 "http_method": method,
-                "http_url": url,
+                "http_url": redact_url(url),
                 "http_status_code": response.status_code,
                 "http_response_size": len(response.content) if response.content else 0,
             },
         )
         return response
 
-    async def _request_once(
+    def _request_once(
         self,
         *,
         method: str,
@@ -402,15 +403,15 @@ class HttpClient:
         headers: dict[str, Any],
     ) -> httpx.Response:
         if self._shared_client is not None:
-            return await self._shared_client.request(
+            return self._shared_client.request(
                 method=method,
                 url=url,
                 params=params,
                 json=json,
                 headers=headers,
             )
-        async with httpx.AsyncClient(**self._client_kwargs()) as client:
-            return await client.request(
+        with httpx.Client(**self._client_kwargs()) as client:
+            return client.request(
                 method=method,
                 url=url,
                 params=params,
@@ -431,9 +432,9 @@ class HttpClient:
         return response.status_code in policy.retryable_statuses
 
 
-@asynccontextmanager
-async def pooled_client(http: HttpClient) -> AsyncIterator[HttpClient]:
-    """Yield an :class:`HttpClient` backed by a single pooled ``httpx.AsyncClient``.
+@contextmanager
+def pooled_client(http: HttpClient) -> Iterator[HttpClient]:
+    """Yield an :class:`HttpClient` backed by a single pooled ``httpx.Client``.
 
     Use when a single logical operation issues many requests (enumerator
     loops, screener fan-out) and TCP/TLS state should be reused across them.
@@ -442,11 +443,11 @@ async def pooled_client(http: HttpClient) -> AsyncIterator[HttpClient]:
 
     Example::
 
-        async with pooled_client(http) as shared:
+        with pooled_client(http) as shared:
             for key in keys:
-                response = await shared.request("GET", f"/data/{key}")
+                response = shared.request("GET", f"/data/{key}")
     """
-    async with httpx.AsyncClient(**http._client_kwargs()) as shared:
+    with httpx.Client(**http._client_kwargs()) as shared:
         yield http.with_shared_client(shared)
 
 

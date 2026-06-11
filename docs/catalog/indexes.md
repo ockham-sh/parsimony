@@ -12,10 +12,10 @@ index types, how values are deduplicated before scoring, the build-time embeddin
 the adaptive policies in `parsimony.catalog.policy`, and the low-level FAISS/tokenizer
 helpers in `parsimony.indexes`.
 
-!!! note "Optional `standard` extra"
+!!! note "Optional `catalog` extra"
     `BM25Index` lazily imports `rank_bm25`, and `VectorIndex` lazily imports `faiss` and a
-    sentence-transformers embedder. Both are pulled in by the `standard` extra:
-    `pip install "parsimony-core[standard]"`. The imports happen inside `build`/`load`/`search`,
+    sentence-transformers embedder. Both are pulled in by the `catalog` extra:
+    `pip install "parsimony-core[catalog]"`. The imports happen inside `build`/`load`/`search`,
     so a missing dependency surfaces only when you actually run one of those — not at import.
     Index *construction* and the policy *selection* logic below run with only `parsimony-core`.
 
@@ -34,9 +34,9 @@ from parsimony.catalog.indexes import IndexBuildContext
 class CatalogIndex(Protocol):
     kind: str
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None: ...
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None: ...
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
@@ -66,7 +66,7 @@ from parsimony.catalog import BM25Index, CatalogIndex
 assert isinstance(BM25Index(), CatalogIndex)
 ```
 
-All four concrete indexes also expose a convenience coroutine
+All four concrete indexes also expose a convenience method
 `ranking(query, *, limit, entries, ...) -> Ranking` that wraps `score_candidates` and maps
 the row scores back to a [`Ranking`](ranking-and-fusion.md) of `(namespace, code)` items.
 
@@ -143,24 +143,20 @@ identity tuple `(model, dim, normalize)`. Embed once per distinct identity with 
 function `embed_query_vectors`:
 
 ```python
-import asyncio
 from parsimony.catalog import VectorIndex, Entity
 from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
 from parsimony.embedder import SentenceTransformerEmbedder
 
-async def main():
-    entries = [
-        Entity(namespace="ns", code="A", title="GDP of Germany"),
-        Entity(namespace="ns", code="B", title="CPI of France"),
-    ]
-    idx = VectorIndex(embedder=SentenceTransformerEmbedder())
-    await idx.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
+entries = [
+    Entity(namespace="ns", code="A", title="GDP of Germany"),
+    Entity(namespace="ns", code="B", title="CPI of France"),
+]
+idx = VectorIndex(embedder=SentenceTransformerEmbedder())
+idx.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
 
-    query_vectors = await embed_query_vectors("German output", [idx])
-    scores = await idx.score_candidates("German output", query_vectors=query_vectors)
-    print(scores)  # {row_id: score}
-
-asyncio.run(main())
+query_vectors = embed_query_vectors("German output", [idx])
+scores = idx.score_candidates("German output", query_vectors=query_vectors)
+print(scores)  # {row_id: score}
 ```
 
 !!! warning "Vector search needs a precomputed query vector"
@@ -170,7 +166,7 @@ asyncio.run(main())
     `query_vectors` dict is keyed by `(model, dim, normalize)`, **not** by field name, so two
     indexes sharing one embedder share one query embedding.
 
-    This example needs the `standard` extra (FAISS + sentence-transformers) and downloads a
+    This example needs the `catalog` extra (FAISS + sentence-transformers) and downloads a
     model on first use.
 
 `save` writes `meta.json` (including the embedder identity), `values.parquet`,
@@ -230,29 +226,25 @@ builds one homogeneous sub-index per field (the same component kind for all). Th
 score is `max(per-field scores) + tie_breaker * sum(non-max scores)`.
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, DisMaxIndex, Entity
 from parsimony.catalog.indexes import IndexBuildContext
 
-async def main():
-    entries = [
-        Entity(namespace="ns", code="A", title="placeholder",
-               metadata={"short_title": "World Bank GDP growth",
-                         "long_title": "World Bank macro indicator"}),
-        Entity(namespace="ns", code="B", title="placeholder",
-               metadata={"short_title": "CPI inflation France",
-                         "long_title": "Consumer price index"}),
-    ]
-    dismax = DisMaxIndex(
-        fields=["short_title", "long_title"],
-        component_factory=BM25Index,
-        tie_breaker=0.2,
-    )   # kind == "dis_max"
-    await dismax.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
-    scores = await dismax.score_candidates("World Bank GDP")
-    print(scores)  # {0: 3.4} — only row 0 matches; rows that score 0 are omitted
-
-asyncio.run(main())
+entries = [
+    Entity(namespace="ns", code="A", title="placeholder",
+           metadata={"short_title": "World Bank GDP growth",
+                     "long_title": "World Bank macro indicator"}),
+    Entity(namespace="ns", code="B", title="placeholder",
+           metadata={"short_title": "CPI inflation France",
+                     "long_title": "Consumer price index"}),
+]
+dismax = DisMaxIndex(
+    fields=["short_title", "long_title"],
+    component_factory=BM25Index,
+    tie_breaker=0.2,
+)   # kind == "dis_max"
+dismax.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
+scores = dismax.score_candidates("World Bank GDP")
+print(scores)  # {0: 3.4} — only row 0 matches; rows that score 0 are omitted
 ```
 
 !!! note "Surface name vs. underlying fields"
@@ -294,7 +286,7 @@ ctx = IndexBuildContext(field="title", vector_cache={})
 | `field` | `str` | the Entity field the index is being built for |
 | `vector_cache` | `dict[tuple[str, int, bool], dict[str, np.ndarray]]` | embeddings keyed by embedder identity, then text |
 
-The context's `embed_texts(embedder, texts)` coroutine batches embedding work in chunks of
+The context's `embed_texts(embedder, texts)` method batches embedding work in chunks of
 256 and memoizes vectors per text. Because the **same** `vector_cache` is shared across all
 field indexes in a single catalog build, identical strings appearing in different fields are
 embedded only once. When a `DisMaxIndex` builds its per-field sub-indexes it retargets the
@@ -346,7 +338,7 @@ print(type(adaptive_field_index("title", large)).__name__)  # BM25Index
     A `None` `embedder` uses a process-global shared `SentenceTransformerEmbedder`,
     instantiated once on first use. It is a module-level singleton, not thread- or
     process-isolated. The *selection* above (counting distinct values) runs without the
-    `standard` extra; only `HybridIndex`'s vector component touches the embedder, and only at
+    `catalog` extra; only `HybridIndex`'s vector component touches the embedder, and only at
     build time.
 
 ### `discovery_indexes`

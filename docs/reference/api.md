@@ -232,7 +232,7 @@ extras (`standard`, `standard-onnx`, `litellm`) are needed only at use, not at i
 |---|---|
 | `EmbeddingProvider` | protocol — `dimension`, async `embed_texts`/`embed_query`, `info()` |
 | `EmbedderInfo` | model — the `(model, dim, normalize)` identity key (Pydantic) |
-| `SentenceTransformerEmbedder` | class — default embedder (`[standard]`) |
+| `SentenceTransformerEmbedder` | class — default embedder (`[catalog]`) |
 | `OnnxEmbedder` | class — int8-quantized ONNX embedder (`[standard-onnx]`) |
 | `LiteLLMEmbeddingProvider` | class — hosted-API embedder (`[litellm]`) |
 | `DEFAULT_MODEL` | constant — `"sentence-transformers/all-MiniLM-L6-v2"` |
@@ -293,7 +293,7 @@ See [Conformance testing](../plugins/conformance.md).
 
 ### `parsimony.indexes`
 
-The low-level FAISS helpers used by `VectorIndex` / `HybridIndex` (the `standard` extra). `faiss`
+The low-level FAISS helpers used by `VectorIndex` / `HybridIndex` (the `catalog` extra). `faiss`
 imports lazily inside these functions, so importing the module itself does not require it.
 
 | Name | Kind |

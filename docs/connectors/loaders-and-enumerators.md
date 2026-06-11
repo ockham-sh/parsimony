@@ -135,7 +135,7 @@ result = asyncio.run(list_series(prefix="g"))
 assert list(result.df.columns) == ["code", "title", "frequency"]
 ```
 
-`@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and stamps `fn.__parsimony_role__ = "enumerator"` on the wrapped function. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
+`@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and sets `role="enumerator"` on the returned :class:`~parsimony.connector.Connector`. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
 
 ### The enumerator output contract
 

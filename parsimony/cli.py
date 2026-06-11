@@ -44,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List discovered plugins and their connectors.",
         description=(
             "Inspects the 'parsimony.providers' entry-point group. Shows each "
-            "plugin's connectors and env-var status. "
+            "plugin's name, version, connector count, and conformance status. "
             "With --strict, runs the conformance suite against each plugin "
             "and exits non-zero on any failure."
         ),
@@ -62,8 +62,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Manage the global parsimony cache. The root resolves through "
             "PARSIMONY_CACHE_DIR (defaulting to "
-            "platformdirs.user_cache_dir('parsimony')) and contains three "
-            "named subdirectories: catalogs, models, connectors."
+            "platformdirs.user_cache_dir('parsimony')) and contains four "
+            "named subdirectories: catalogs, models, connectors, staging."
         ),
     )
     cc_sub = cc.add_subparsers(dest="cache_action", required=True)
@@ -79,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cc_clear.add_argument(
         "--subdir",
         metavar="NAME",
-        help="Clear only this subdir (catalogs, models, connectors).",
+        help="Clear only this subdir (catalogs, models, connectors, staging).",
     )
     cc_clear.add_argument(
         "--yes",

@@ -33,18 +33,17 @@ whether or not it inherits from anything. You instantiate one of the bundled imp
 | Member | Signature | Purpose |
 |---|---|---|
 | `dimension` | `property -> int` | The vector dimension the provider emits. |
-| `embed_texts` | `async (texts: list[str]) -> list[list[float]]` | Embeddings for corpus documents (indexing). |
-| `embed_query` | `async (query: str) -> list[float]` | A single embedding optimized for retrieval queries. |
+| `embed_texts` | `(texts: list[str]) -> list[list[float]]` | Embeddings for corpus documents (indexing). |
+| `embed_query` | `(query: str) -> list[float]` | A single embedding optimized for retrieval queries. |
 | `info` | `() -> EmbedderInfo` | The persisted identity used in catalog metadata. |
 
-`embed_texts` and `embed_query` are coroutines — `await` them inside an `async def`. `dimension`
-and `info()` are synchronous.
+`embed_texts` and `embed_query` are ordinary synchronous methods. `dimension` and `info()` are
+synchronous as well.
 
 Because the protocol is `runtime_checkable`, you can verify a custom object structurally with
 `isinstance`. This example needs only `parsimony-core`:
 
 ```python
-import asyncio
 from parsimony.embedder import EmbeddingProvider, EmbedderInfo
 
 
@@ -58,10 +57,10 @@ class ZeroEmbedder:
     def dimension(self) -> int:
         return self._dim
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [[0.0] * self._dim for _ in texts]
 
-    async def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> list[float]:
         return [0.0] * self._dim
 
     def info(self) -> EmbedderInfo:
@@ -69,9 +68,9 @@ class ZeroEmbedder:
 
 
 emb = ZeroEmbedder()
-print(isinstance(emb, EmbeddingProvider))          # True — structural check
-print(asyncio.run(emb.embed_texts([])))            # []
-print(asyncio.run(emb.embed_query("anything")))    # [0.0, 0.0, ... ] (8 zeros)
+print(isinstance(emb, EmbeddingProvider))       # True — structural check
+print(emb.embed_texts([]))                      # []
+print(emb.embed_query("anything"))              # [0.0, 0.0, ... ] (8 zeros)
 ```
 
 !!! note "Empty input is a no-op"
@@ -128,12 +127,10 @@ SentenceTransformerEmbedder(
 Instantiation is cheap. The model loads lazily on the first attribute access that needs it — so
 `.dimension`, `.info()`, or an `embed_*` call triggers the load, but bare construction does not.
 `dimension` reads `model.get_sentence_embedding_dimension()` (raising `RuntimeError` if the model
-reports no dimension). `embed_texts([])` returns `[]` without loading anything; otherwise the
-synchronous encoding runs on a worker thread via `asyncio.to_thread`, so it does not block the
-event loop. `info()` reports `package="parsimony-core[standard]"`.
+reports no dimension). `embed_texts([])` returns `[]` without loading anything. `info()` reports
+`package="parsimony-core[catalog]"`.
 
 ```python
-import asyncio
 from parsimony.embedder import SentenceTransformerEmbedder
 
 emb = SentenceTransformerEmbedder()       # model=DEFAULT_MODEL, normalize=True, batch_size=64
@@ -142,14 +139,14 @@ print(emb.dimension)                      # 384 (loads the model on first access
 
 info = emb.info()
 print(info.model, info.dim, info.normalize, info.package)
-# sentence-transformers/all-MiniLM-L6-v2 384 True parsimony-core[standard]
+# sentence-transformers/all-MiniLM-L6-v2 384 True parsimony-core[catalog]
 
-vectors = asyncio.run(emb.embed_texts(["10 year euro area yield curve", "apple stock price"]))
+vectors = emb.embed_texts(["10 year euro area yield curve", "apple stock price"])
 print(len(vectors), len(vectors[0]))      # 2 384
 ```
 
-!!! warning "Needs the `standard` extra"
-    This example loads a real model. Install with `pip install 'parsimony-core[standard]'` and
+!!! warning "Needs the `catalog` extra"
+    This example loads a real model. Install with `pip install 'parsimony-core[catalog]'` and
     expect a one-time model download. The empty-input and structural-protocol examples above run
     on `parsimony-core` alone.
 
@@ -194,17 +191,17 @@ not `None`, otherwise the runtime's default is used.
     `transformers`. A missing dependency raises an `ImportError` naming `parsimony-core[standard-onnx]`.
 
 ```python
-import asyncio
 import math
 from pathlib import Path
-from parsimony.embedder import OnnxEmbedder, EmbeddingProvider
+
+from parsimony.embedder import EmbeddingProvider, OnnxEmbedder
 
 emb = OnnxEmbedder(cache_dir=Path("/tmp/onnx-cache"), quantize=True)
 # isinstance touches the `dimension` property, which on OnnxEmbedder forces the
 # cold export/quantize/load (see the warning above) — it is not a free check here.
 assert isinstance(emb, EmbeddingProvider)
 
-vecs = asyncio.run(emb.embed_texts(["5 year AAA spot rate", "apple stock price"]))
+vecs = emb.embed_texts(["5 year AAA spot rate", "apple stock price"])
 assert all(len(v) == 384 for v in vecs)
 for v in vecs:                                        # outputs are L2-normalized
     assert math.isclose(math.sqrt(sum(x * x for x in v)), 1.0, abs_tol=1e-3)
@@ -248,14 +245,13 @@ so the vectors round-trip cleanly with the inner-product FAISS index.
 
 `embed_texts` batches by `batch_size` and tags each call `task_type="RETRIEVAL_DOCUMENT"`;
 `embed_query` issues a single call tagged `task_type="RETRIEVAL_QUERY"`. The provider first calls
-`litellm.aembedding(..., dimensions=...)` and retries with `output_dimensionality=...` on
+`litellm.embedding(..., dimensions=...)` and retries with `output_dimensionality=...` on
 `TypeError`, covering providers that name the parameter differently. Responses are strictly
 validated: a missing `data` field, the wrong item count, a missing per-item `embedding`, or a
 per-item dimension that differs from the declared `dimension` each raise `ValueError`. Any failure
 from the underlying call is logged and re-raised as `RuntimeError`.
 
 ```python
-import asyncio
 from parsimony.embedder import LiteLLMEmbeddingProvider
 
 # model and dimension are declared, not introspected.
@@ -264,7 +260,7 @@ print(emb.dimension)         # 1536 (no remote call)
 print(emb.info().normalize)  # True (always)
 
 # Needs parsimony-core[litellm] plus provider creds in the environment (e.g. OPENAI_API_KEY).
-qvec = asyncio.run(emb.embed_query("euro area 10Y bond yield"))
+qvec = emb.embed_query("euro area 10Y bond yield")
 print(len(qvec))             # 1536, L2-normalized
 ```
 
@@ -292,28 +288,22 @@ A `VectorIndex` takes an embedder via `VectorIndex(embedder=...)`. When you leav
 index lazily constructs a default `SentenceTransformerEmbedder` (from the stored model identity on
 load, or the default MiniLM model otherwise). The same default is shared process-wide by the
 adaptive index policy, so a catalog built without an explicit embedder still gets one. Building or
-querying a `VectorIndex` requires the `standard` extra (FAISS plus the embedder's runtime).
+querying a `VectorIndex` requires the `catalog` extra (FAISS plus the embedder's runtime).
 
 ```python
-import asyncio
 from parsimony.catalog import Catalog, Entity, VectorIndex
 from parsimony.embedder import OnnxEmbedder
 
-
-async def main() -> None:
-    emb = OnnxEmbedder(quantize=True)
-    entities = [
-        Entity(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
-        Entity(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
-    ]
-    catalog = Catalog("test", indexes={"title": VectorIndex(embedder=emb)})
-    catalog.set_entities(entities)
-    await catalog.build()
-    hits, _ = await catalog.search("euro area 10Y bond yield", limit=1)
-    print(hits[0].code)   # YC_10Y
-
-
-asyncio.run(main())
+emb = OnnxEmbedder(quantize=True)
+entities = [
+    Entity(namespace="test", code="YC_10Y", title="10 year euro area yield curve spot rate"),
+    Entity(namespace="test", code="AAPL", title="Apple Inc. common stock close price"),
+]
+catalog = Catalog("test", indexes={"title": VectorIndex(embedder=emb)})
+catalog.set_entities(entities)
+catalog.build()
+hits, _ = catalog.search("euro area 10Y bond yield", limit=1)
+print(hits[0].code)   # YC_10Y
 ```
 
 !!! warning "Identity is validated on load"

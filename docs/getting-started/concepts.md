@@ -8,7 +8,7 @@ index. Once these pieces click, the rest of the docs are just detail.
 
 Parsimony has two pillars:
 
-- **Connectors** — small async callables plus metadata that fetch raw data.
+- **Connectors** — small synchronous callables plus metadata that fetch raw data.
 - **The [Catalog](../catalog/index.md)** — a portable, searchable index over normalized
   entity records, used to discover *what* you can fetch.
 
@@ -16,35 +16,33 @@ The core package (`parsimony-core`, version 0.7.0, Python `>=3.11`) ships the fr
 the catalog. It ships **no connectors** — every connector is published as its own
 `parsimony-<name>` plugin and discovered at runtime.
 
-## A connector is an async function plus metadata
+## A connector is a function plus metadata
 
-A connector is exactly what its name suggests: a small `async def` that fetches data,
+A connector is exactly what its name suggests: a small `def` that fetches data,
 decorated with metadata. The function's parameters *are* the connector's parameters — there
-is no separate request object. You turn an async function into a [`Connector`](../connectors/defining-connectors.md)
+is no separate request object. You turn a function into a [`Connector`](../connectors/defining-connectors.md)
 with the `@connector` decorator.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search demo series by keyword."""
     return pd.DataFrame({"code": ["a", "b"], "title": [f"about {query}", "other"]})
 
 
-result = asyncio.run(demo_search(query="gdp"))
+result = demo_search(query="gdp")
 print(result.provenance.source)  # -> demo_search
 print(result.provenance.params)  # -> {'query': 'gdp'}
 ```
 
 Three rules are worth internalizing now, because everything else follows from them:
 
-- **It must be `async`.** Decorating a plain `def` raises `TypeError`. Connector calls,
-  catalog `build`/`search`/`save`/`load`, and store methods are all coroutines — drive them
-  with `asyncio.run(...)` or `await` inside an async function.
+- **It must be synchronous (`def`, not `async def`).** Decorating a coroutine function raises
+  `TypeError`.
 - **A description is mandatory.** It defaults to the function's stripped docstring; if there
   is no docstring you must pass `description=`. An empty description raises `ValueError`. The
   description is what an LLM reads when deciding whether to call the connector.
@@ -65,10 +63,10 @@ into a [`Result` or `TabularResult`](../connectors/results.md) and attaches a
 [`Provenance`](../connectors/results.md) record describing the fetch:
 
 ```text
-await connector(**kwargs)
+connector(**kwargs)
         │
         ▼
-   your async fn ──returns──> raw DataFrame / Series / scalar / dict
+   your fn ──returns──> raw DataFrame / Series / scalar / dict
         │
         ▼
    framework wraps:
@@ -96,13 +94,12 @@ name. Bound parameters disappear from the connector's exposed call surface — a
 from its provenance and its LLM-facing cards.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 
 
 @connector(secrets=("api_key",))
-async def keyed(query: str, api_key: str) -> dict:
+def keyed(query: str, api_key: str) -> dict:
     """Connector with a declared secret parameter."""
     return {"q": query}
 
@@ -110,7 +107,7 @@ async def keyed(query: str, api_key: str) -> dict:
 bound = keyed.bind(api_key="sk-…")              # fix the secret
 print(list(bound.exposed_signature.parameters))  # -> ['query']
 
-result = asyncio.run(bound(query="gdp"))
+result = bound(query="gdp")
 print(result.provenance.params)                  # -> {'query': 'gdp'}  (api_key stripped)
 ```
 
@@ -148,18 +145,17 @@ against the declared schema at call time.
 
 A [`Connectors`](../connectors/calling-binding-composing.md) collection is an immutable,
 name-keyed registry. You build one from a list and invoke a member with the canonical idiom
-`await connectors[name](**kwargs)`. Collections compose with the `+` operator — that is how
+`connectors[name](**kwargs)`. Collections compose with the `+` operator — that is how
 you merge two bundles; there is no `.merge` method.
 
 ```python
-import asyncio
 from parsimony import Connectors
 
 bundle = Connectors([demo_search]) + Connectors([keyed])
 print(bundle.names())            # -> ['demo_search', 'keyed']  (sorted)
 print("demo_search" in bundle)   # -> True
 
-result = asyncio.run(bundle["demo_search"](query="cpi"))
+result = bundle["demo_search"](query="cpi")
 print(len(result.df))            # -> 2
 ```
 
@@ -211,39 +207,33 @@ Its lifecycle is a fixed sequence:
 ```text
 Catalog(name, indexes=…)        # construct
    └─ set_entities([Entity, …]) # load records   (marks the catalog dirty)
-        └─ await build()        # materialize the indexes
-             └─ await search(q, limit=…)   -> ([CatalogMatch, …], SearchDiagnostic)
-                  └─ await save(url)        # persist a snapshot (file:// or hf://)
+        └─ build()              # materialize the indexes
+             └─ search(q, limit=…)   -> ([CatalogMatch, …], SearchDiagnostic)
+                  └─ save(url)        # persist a snapshot (file:// or hf://)
 ```
 
 ```python
-import asyncio
 from parsimony import BM25Index, Catalog, Entity
 
-
-async def main():
-    catalog = Catalog("demo", indexes={"title": BM25Index()})
-    catalog.set_entities([
-        Entity(namespace="demo", code="alpha", title="Alpha series"),
-        Entity(namespace="demo", code="beta", title="Beta series"),
-    ])
-    await catalog.build()
-    hits, diag = await catalog.search("Alpha", limit=5)
-    print(diag.mode, hits[0].code, round(hits[0].score, 3))  # -> broad alpha …
-
-
-asyncio.run(main())
+catalog = Catalog("demo", indexes={"title": BM25Index()})
+catalog.set_entities([
+    Entity(namespace="demo", code="alpha", title="Alpha series"),
+    Entity(namespace="demo", code="beta", title="Beta series"),
+])
+catalog.build()
+hits, diag = catalog.search("Alpha", limit=5)
+print(diag.mode, hits[0].code, round(hits[0].score, 3))  # -> broad alpha …
 ```
 
-!!! note "This catalog example needs the `standard` extra"
-    `BM25Index` builds against `rank-bm25`, which ships in the optional `standard` extra
-    (`pip install "parsimony-core[standard]"`). Defining connectors and using a data store
+!!! note "This catalog example needs the `catalog` extra"
+    `BM25Index` builds against `rank-bm25`, which ships in the optional `catalog` extra
+    (`pip install "parsimony-core[catalog]"`). Defining connectors and using a data store
     above run with only `parsimony-core` installed; building or searching a catalog requires
-    `standard`. See [Installation](installation.md).
+    `catalog`. See [Installation](installation.md).
 
 The key invariant is the **build gate**: any mutation (`set_entities`, index changes,
 `delete_many`) marks the catalog dirty, and `search()` / `save()` raise a `ValueError` —
-whose message tells you to `await catalog.build()` — until you rebuild. Passing
+whose message tells you to call `catalog.build()` — until you rebuild. Passing
 `indexes=None` instead opts into the default index policy: at `build()`, BM25 indexes are
 created automatically for `code`, `title`, and every metadata key on the entries.
 
@@ -270,7 +260,6 @@ loader     ──DataFrame──> InMemoryDataStore.load_result ──> stored D
   of `total` / `loaded` / `skipped` / `errors`:
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import Column, ColumnRole, InMemoryDataStore, OutputConfig, loader
 
@@ -281,21 +270,17 @@ LOAD = OutputConfig(columns=[
 
 
 @loader(output=LOAD)
-async def load_demo(series_id: str) -> pd.DataFrame:
+def load_demo(series_id: str) -> pd.DataFrame:
     """Load observations for a demo series."""
     return pd.DataFrame({"date": ["2020", "2020"], "value": [1.0, 2.0]})
 
 
-async def main():
-    store = InMemoryDataStore()
-    table = await load_demo(series_id="x")
-    stats = await store.load_result(table)
-    print(stats.total, stats.loaded, stats.skipped, stats.errors)  # -> 1 1 0 0
-    rows = await store.get("demo", "2020")
-    print(list(rows.columns))  # -> ['value']  (KEY consumed for identity, DATA kept)
-
-
-asyncio.run(main())
+store = InMemoryDataStore()
+table = load_demo(series_id="x")
+stats = store.load_result(table)
+print(stats.total, stats.loaded, stats.skipped, stats.errors)  # -> 1 1 0 0
+rows = store.get("demo", "2020")
+print(list(rows.columns))  # -> ['value']  (KEY consumed for identity, DATA kept)
 ```
 
 !!! note "There is no `DataStore` protocol yet"

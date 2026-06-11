@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
+import threading
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated
 
 import pandas as pd
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from parsimony.catalog import Catalog, CatalogMatch
 from parsimony.catalog.source import lazy_catalog_dir
 from parsimony.connector import Connector, connector
-from parsimony.errors import CatalogNotFoundError, ConnectorError, EmptyDataError
+from parsimony.embedder import PARSIMONY_CATALOG_PACKAGE
+from parsimony.errors import CatalogNotFoundError, ConnectorError, EmptyDataError, InvalidParameterError, ProviderError
 from parsimony.result import Column, ColumnRole, OutputConfig
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,7 @@ DEFAULT_SEARCH_COLUMNS: tuple[Column, ...] = (
     Column(name="score", role=ColumnRole.DATA),
 )
 
-CatalogBuilder = Callable[[], Awaitable[Catalog]]
+CatalogBuilder = Callable[[], Catalog]
 
 
 def resolved_catalog_url(
@@ -55,6 +56,18 @@ def _to_catalog_not_found(exc: Exception, *, url: str) -> CatalogNotFoundError:
     return CatalogNotFoundError(f"Catalog bundle not present at {url}")
 
 
+def _raise_catalog_dependency_error(exc: ImportError, *, provider: str) -> None:
+    raise ProviderError(
+        provider,
+        status_code=503,
+        message=(
+            f"{provider}: catalog runtime is not installed — "
+            f"install with: pip install '{PARSIMONY_CATALOG_PACKAGE}'. "
+            f"DO NOT retry until the catalog extra is installed."
+        ),
+    ) from exc
+
+
 def _catalog_missing(exc: Exception) -> bool:
     if isinstance(exc, CatalogNotFoundError):
         return True
@@ -68,7 +81,7 @@ def _catalog_missing(exc: Exception) -> bool:
     return False
 
 
-async def load_or_build_catalog(
+def load_or_build_catalog(
     url: str,
     *,
     cache_path: Path | str,
@@ -78,7 +91,9 @@ async def load_or_build_catalog(
     cache = Path(cache_path)
     load_exc: Exception | None = None
     try:
-        return await Catalog.load(url)
+        return Catalog.load(url)
+    except ImportError as exc:
+        _raise_catalog_dependency_error(exc, provider="catalog")
     except Exception as exc:
         if not _catalog_missing(exc):
             raise
@@ -87,16 +102,18 @@ async def load_or_build_catalog(
     lazy_meta = cache / "meta.json"
     if lazy_meta.is_file():
         try:
-            return await Catalog.load(f"file://{cache}")
+            return Catalog.load(f"file://{cache}")
         except Exception as lazy_exc:
             logger.warning("Lazy catalog at %s unreadable (%s); rebuilding", cache, lazy_exc)
 
     if build is None:
+        if load_exc is None:
+            raise CatalogNotFoundError(f"Catalog bundle not present at {url}")
         raise _to_catalog_not_found(load_exc, url=url) from load_exc
 
     logger.info("Building catalog for %s into %s", url, cache)
-    catalog = await build()
-    await catalog.save(f"file://{cache}", builder="lazy")
+    catalog = build()
+    catalog.save(f"file://{cache}", builder="lazy")
     return catalog
 
 
@@ -108,25 +125,27 @@ class CatalogLRU:
             raise ValueError("catalog_lru_size must be >= 1")
         self._size = size
         self._cache: OrderedDict[str, Catalog] = OrderedDict()
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
 
-    async def get_or_load(
+    def get_or_load(
         self,
         url: str,
         *,
         cache_path: Path | str | None = None,
         build: CatalogBuilder | None = None,
     ) -> Catalog:
-        async with self._lock:
+        with self._lock:
             if url in self._cache:
                 self._cache.move_to_end(url)
                 return self._cache[url]
 
             if build is not None and cache_path is not None:
-                catalog = await load_or_build_catalog(url, cache_path=cache_path, build=build)
+                catalog = load_or_build_catalog(url, cache_path=cache_path, build=build)
             else:
                 try:
-                    catalog = await Catalog.load(url)
+                    catalog = Catalog.load(url)
+                except ImportError as exc:
+                    _raise_catalog_dependency_error(exc, provider="catalog")
                 except Exception as exc:
                     if _catalog_missing(exc):
                         raise _to_catalog_not_found(exc, url=url) from exc
@@ -160,17 +179,19 @@ def _matches_to_dataframe(
     matches: list[CatalogMatch],
     *,
     code_column: str = "code",
+    metadata_columns: Sequence[str] = (),
 ) -> pd.DataFrame:
-    return pd.DataFrame(
-        [
-            {
-                code_column: m.code,
-                "title": m.title,
-                "score": round(m.score, 6),
-            }
-            for m in matches
-        ]
-    )
+    rows: list[dict[str, object]] = []
+    for m in matches:
+        row: dict[str, object] = {
+            code_column: m.code,
+            "title": m.title,
+            "score": round(m.score, 6),
+        }
+        for col in metadata_columns:
+            row[col] = m.metadata.get(col)
+        rows.append(row)
+    return pd.DataFrame(rows)
 
 
 def make_local_search_connector(
@@ -185,6 +206,7 @@ def make_local_search_connector(
     catalog_subdirectory: str | None = None,
     output_columns: Sequence[Column] = DEFAULT_SEARCH_COLUMNS,
     code_column: str = "code",
+    metadata_columns: Sequence[str] = (),
     empty_message: str | None = None,
 ) -> Connector:
     """Factory for standard single-catalog search connectors."""
@@ -193,29 +215,32 @@ def make_local_search_connector(
     output = OutputConfig(columns=list(output_columns))
     _lru = CatalogLRU()
 
-    async def _load_catalog(params: CatalogSearchParams) -> Catalog:
+    def _load_catalog(params: CatalogSearchParams) -> Catalog:
         override = params.catalog_url
         root = resolved_catalog_url(resolved_env, default_url, override=override)
         url = root if catalog_subdirectory is None else f"{root.rstrip('/')}/{catalog_subdirectory}"
         cache_path = lazy_catalog_dir(provider, lazy_namespace)
-        return await _lru.get_or_load(
+        return _lru.get_or_load(
             url,
             cache_path=cache_path,
             build=build_catalog,
         )
 
-    async def _search(
+    def _search(
         query: str,
         limit: int = 10,
         catalog_url: str | None = None,
     ) -> pd.DataFrame:
-        params = CatalogSearchParams(query=query, limit=limit, catalog_url=catalog_url)
-        catalog = await _load_catalog(params)
-        matches, _ = await catalog.search(params.query, limit=params.limit)
+        try:
+            params = CatalogSearchParams(query=query, limit=limit, catalog_url=catalog_url)
+        except ValidationError as exc:
+            raise InvalidParameterError(provider=provider, message=str(exc)) from exc
+        catalog = _load_catalog(params)
+        matches, _ = catalog.search(params.query, limit=params.limit)
         if not matches:
             msg = empty_message or f"No catalog matches for query={params.query!r}."
             raise EmptyDataError(provider=provider, message=msg)
-        return _matches_to_dataframe(matches, code_column=code_column)
+        return _matches_to_dataframe(matches, code_column=code_column, metadata_columns=metadata_columns)
 
     _search.__doc__ = description
     _search.__name__ = f"{provider}_search"

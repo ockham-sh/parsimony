@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pandas as pd
 import pytest
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,13 +41,13 @@ def _make_fetch_df() -> pd.DataFrame:
 
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search for test series by keyword."""
     return _make_search_df(query)
 
 
 @connector(output=FETCH_OUTPUT)
-async def demo_fetch(series_id: str) -> pd.DataFrame:
+def demo_fetch(series_id: str) -> pd.DataFrame:
     """Fetch test time series observations."""
     return _make_fetch_df()
 
@@ -65,7 +63,7 @@ def _fake_connectors() -> Connectors:
 class TestConnectorBind:
     def test_bind_returns_connector_with_smaller_exposed_signature(self) -> None:
         @connector
-        async def needs_key(query: str, api_key: str) -> pd.DataFrame:
+        def needs_key(query: str, api_key: str) -> pd.DataFrame:
             """Needs key."""
             return _make_search_df(f"{query}:{api_key}")
 
@@ -73,13 +71,13 @@ class TestConnectorBind:
 
         assert isinstance(bound, Connector)
         assert list(bound.exposed_signature.parameters) == ["query"]
-        result = asyncio.run(bound(query="GDP"))
+        result = bound(query="GDP")
         assert len(result.data) == 2
         assert result.provenance.params == {"query": "GDP"}
 
     def test_bind_can_be_composed(self) -> None:
         @connector
-        async def needs_two(query: str, api_key: str, base_url: str) -> pd.DataFrame:
+        def needs_two(query: str, api_key: str, base_url: str) -> pd.DataFrame:
             """Needs two fixed values."""
             return _make_search_df(f"{query}:{api_key}:{base_url}")
 
@@ -88,7 +86,7 @@ class TestConnectorBind:
 
         fully_bound = partially_bound.bind(base_url="https://example.test")
         assert list(fully_bound.exposed_signature.parameters) == ["query"]
-        result = asyncio.run(fully_bound(query="GDP"))
+        result = fully_bound(query="GDP")
         assert len(result.data) == 2
         assert result.provenance.params == {"query": "GDP"}
 
@@ -103,7 +101,7 @@ class TestConnectorBind:
 
     def test_connectors_bind_applies_only_to_matching_connectors(self) -> None:
         @connector
-        async def keyed(query: str, api_key: str) -> pd.DataFrame:
+        def keyed(query: str, api_key: str) -> pd.DataFrame:
             """Keyed."""
             return _make_search_df(query)
 
@@ -115,28 +113,28 @@ class TestConnectorBind:
 class TestConnectorDecorator:
     def test_explicit_name_and_description(self) -> None:
         @connector(name="public_connector", description="Stable agent-facing description.")
-        async def _internal(query: str) -> pd.DataFrame:
+        def _internal(query: str) -> pd.DataFrame:
             """Implementation docstring; overridden by description= above."""
             return _make_search_df(query)
 
         assert _internal.name == "public_connector"
         assert _internal.description == "Stable agent-facing description."
-        result = asyncio.run(_internal(query="GDP"))
+        result = _internal(query="GDP")
         assert result.provenance.source == "public_connector"
 
     def test_missing_docstring_and_description_raises(self) -> None:
         with pytest.raises(ValueError, match="docstring"):
 
             @connector
-            async def _no_docs(query: str) -> pd.DataFrame:
+            def _no_docs(query: str) -> pd.DataFrame:
                 return _make_search_df(query)
 
-    def test_sync_function_rejected(self) -> None:
-        with pytest.raises(TypeError, match="must be async"):
+    def test_async_function_rejected(self) -> None:
+        with pytest.raises(TypeError, match="must be synchronous"):
 
             @connector
-            def _sync(query: str) -> pd.DataFrame:
-                """Sync functions are not connectors."""
+            async def _async_connector(query: str) -> pd.DataFrame:
+                """Async connectors are not supported."""
                 return _make_search_df(query)
 
 
@@ -146,7 +144,7 @@ class TestExposedSignature:
 
     def test_bind_removes_bound_parameters_from_exposed_signature(self) -> None:
         @connector
-        async def keyed(query: str, api_key: str) -> str:
+        def keyed(query: str, api_key: str) -> str:
             """Has a secret-shaped parameter."""
             return query
 
@@ -155,11 +153,11 @@ class TestExposedSignature:
 
     def test_pydantic_model_is_ordinary_parameter(self) -> None:
         @connector
-        async def model_param(payload: QueryModel) -> str:
+        def model_param(payload: QueryModel) -> str:
             """Accepts a model as one ordinary argument."""
             return payload.query
 
-        result = asyncio.run(model_param(payload=QueryModel(query="GDP")))
+        result = model_param(payload=QueryModel(query="GDP"))
         assert result.provenance.params == {"payload": QueryModel(query="GDP")}
 
 
@@ -174,7 +172,7 @@ ENUMERATE_OUTPUT = OutputConfig(
 class TestEnumerator:
     def test_enumerator_adds_tag(self) -> None:
         @enumerator(output=ENUMERATE_OUTPUT, tags=["demo"])
-        async def enumerate_demo() -> pd.DataFrame:
+        def enumerate_demo() -> pd.DataFrame:
             """Enumerate demo series."""
             return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
 
@@ -184,30 +182,28 @@ class TestEnumerator:
         with pytest.raises(ValueError, match="exactly one KEY"):
 
             @enumerator(output=OutputConfig(columns=[Column(name="title", role=ColumnRole.TITLE)]))
-            async def bad() -> pd.DataFrame:
+            def bad() -> pd.DataFrame:
                 """Missing KEY."""
                 return pd.DataFrame()
 
-    @pytest.mark.asyncio
-    async def test_enumerator_wraps_dataframe_as_tabular_result(self) -> None:
+    def test_enumerator_wraps_dataframe_as_tabular_result(self) -> None:
         @enumerator(output=ENUMERATE_OUTPUT, name="good_enumerator")
-        async def good_enumerator() -> pd.DataFrame:
+        def good_enumerator() -> pd.DataFrame:
             """Returns a catalog discovery frame."""
             return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
 
-        result = await good_enumerator()
+        result = good_enumerator()
         assert isinstance(result, TabularResult)
         assert list(result.data.columns) == ["code", "title"]
 
-    @pytest.mark.asyncio
-    async def test_enumerator_manual_result_raises_typeerror(self) -> None:
+    def test_enumerator_manual_result_raises_typeerror(self) -> None:
         @enumerator(output=ENUMERATE_OUTPUT, name="bad_enumerator")
-        async def bad_enumerator() -> pd.DataFrame:
+        def bad_enumerator() -> pd.DataFrame:
             """Returns Result instead of raw data."""
             return Result(data=pd.DataFrame({"code": ["A"], "title": ["X"]}))  # type: ignore[return-value]
 
         with pytest.raises(TypeError, match="must return raw data"):
-            await bad_enumerator()
+            bad_enumerator()
 
 
 class TestLoader:
@@ -262,7 +258,7 @@ class TestLoader:
 
     def test_loader_adds_tag(self) -> None:
         @loader(output=FETCH_OUTPUT, tags=["demo"])
-        async def load_demo(series_id: str) -> pd.DataFrame:
+        def load_demo(series_id: str) -> pd.DataFrame:
             """Load demo observations."""
             return _make_fetch_df()
 
@@ -276,49 +272,49 @@ class TestConnectorExecution:
         assert "query" in r
 
     def test_execute_via_collection(self) -> None:
-        result = asyncio.run(_fake_connectors()["demo_search"]("GDP"))
+        result = _fake_connectors()["demo_search"]("GDP")
         assert isinstance(result, Result)
         assert len(result.data) == 2
         assert result.provenance.params == {"query": "GDP"}
 
     def test_execute_fetch_with_output_schema(self) -> None:
-        result = asyncio.run(demo_fetch(series_id="GDPC1"))
+        result = demo_fetch(series_id="GDPC1")
         assert result.output_schema is not None
         assert list(result.data.columns) == ["date", "value"]
         assert result.provenance.params == {"series_id": "GDPC1"}
 
     def test_missing_required_argument_raises_type_error(self) -> None:
         with pytest.raises(TypeError, match="missing a required argument"):
-            asyncio.run(demo_search())
+            demo_search()
 
     def test_unexpected_argument_raises_type_error(self) -> None:
         with pytest.raises(TypeError, match="Invalid parameters"):
-            asyncio.run(demo_search(series_id="GDP"))
+            demo_search(series_id="GDP")
 
     def test_bound_secret_not_in_provenance_params(self) -> None:
         @connector(secrets=("api_key",))
-        async def keyed(query: str, api_key: str) -> str:
+        def keyed(query: str, api_key: str) -> str:
             """Has a declared secret parameter."""
             return query
 
         bound = keyed.bind(api_key="secret")
-        result = asyncio.run(bound(query="GDP"))
+        result = bound(query="GDP")
         assert result.provenance.params == {"query": "GDP"}
 
     def test_declared_secret_stripped_from_provenance_at_call_time(self) -> None:
         @connector(secrets=("api_key",))
-        async def keyed(query: str, api_key: str) -> str:
+        def keyed(query: str, api_key: str) -> str:
             """Has a declared secret parameter."""
             return query
 
-        result = asyncio.run(keyed(query="GDP", api_key="secret"))
+        result = keyed(query="GDP", api_key="secret")
         assert result.provenance.params == {"query": "GDP"}
 
     def test_secrets_unknown_parameter_raises_at_decoration(self) -> None:
         with pytest.raises(ValueError, match="unknown parameters"):
 
             @connector(secrets=("typo",))
-            async def bad(query: str, api_key: str) -> str:
+            def bad(query: str, api_key: str) -> str:
                 """Bad secret declaration."""
                 return query
 
@@ -349,27 +345,27 @@ class TestConnectorsCollection:
 
 class TestResultWrap:
     def test_wrap_sets_source_description_on_provenance(self) -> None:
-        result = asyncio.run(demo_search(query="GDP"))
+        result = demo_search(query="GDP")
         assert result.provenance.source == "demo_search"
         assert "Search for test series" in result.provenance.source_description
 
     def test_manual_result_raises_typeerror(self) -> None:
         @connector
-        async def manual_result(series_id: str) -> Result:
+        def manual_result(series_id: str) -> Result:
             """Real connector docstring."""
             return Result(data=_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
-            asyncio.run(manual_result(series_id="GDPC1"))
+            manual_result(series_id="GDPC1")
 
     def test_flat_params_recorded_in_provenance(self) -> None:
         @connector()
-        async def macro(country: str, indicator: str) -> pd.DataFrame:
+        def macro(country: str, indicator: str) -> pd.DataFrame:
             """Fetch macro indicator for a country."""
             _MacroParams(country=country, indicator=indicator)
             return pd.DataFrame({"country": [country], "indicator": [indicator]})
 
-        result = asyncio.run(macro(country="USA", indicator="inflation_consumer_prices_annual"))
+        result = macro(country="USA", indicator="inflation_consumer_prices_annual")
         assert result.provenance.params == {
             "country": "USA",
             "indicator": "inflation_consumer_prices_annual",
@@ -377,63 +373,63 @@ class TestResultWrap:
 
     def test_output_plus_result_dataframe_raises_typeerror(self) -> None:
         @connector(output=FETCH_OUTPUT)
-        async def bad_fetch(series_id: str) -> Result:
+        def bad_fetch(series_id: str) -> Result:
             """Tabular fetch that incorrectly wraps a DataFrame in Result."""
             return Result(data=_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
-            asyncio.run(bad_fetch(series_id="GDPC1"))
+            bad_fetch(series_id="GDPC1")
 
     def test_tabular_result_return_raises_typeerror(self) -> None:
         @connector
-        async def with_props(series_id: str) -> TabularResult:
+        def with_props(series_id: str) -> TabularResult:
             """Incorrectly returns TabularResult."""
             return TabularResult.from_dataframe(_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
-            asyncio.run(with_props(series_id="GDPC1"))
+            with_props(series_id="GDPC1")
 
     def test_build_table_result_return_raises_typeerror(self) -> None:
         @connector(output=FETCH_OUTPUT)
-        async def bad_table(series_id: str) -> TabularResult:
+        def bad_table(series_id: str) -> TabularResult:
             """Incorrectly returns a framework-built TabularResult."""
             return FETCH_OUTPUT.build_table_result(_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
-            asyncio.run(bad_table(series_id="GDPC1"))
+            bad_table(series_id="GDPC1")
 
     def test_raw_tuple_return_raises_typeerror(self) -> None:
         @connector(output=FETCH_OUTPUT)
-        async def with_meta(series_id: str) -> tuple[pd.DataFrame, dict[str, object]]:
+        def with_meta(series_id: str) -> tuple[pd.DataFrame, dict[str, object]]:
             """Incorrectly returns a (data, properties) tuple."""
             return _make_fetch_df(), {"source_url": f"https://example.test/{series_id}"}
 
         with pytest.raises(TypeError, match="must return raw data"):
-            asyncio.run(with_meta(series_id="GDPC1"))
+            with_meta(series_id="GDPC1")
 
 
 class TestCallback:
     def test_callback_fires_on_success(self) -> None:
         log: list[str] = []
         c = _fake_connectors().with_callback(lambda r: log.append(r.provenance.source))
-        asyncio.run(c["demo_search"](query="GDP"))
+        c["demo_search"](query="GDP")
         assert log == ["demo_search"]
 
     def test_callback_preserved_through_bind(self) -> None:
         log: list[str] = []
 
         @connector
-        async def keyed(query: str, api_key: str) -> pd.DataFrame:
+        def keyed(query: str, api_key: str) -> pd.DataFrame:
             """Keyed."""
             return _make_search_df(query)
 
         c = Connectors([keyed]).with_callback(lambda r: log.append(r.provenance.source)).bind(api_key="k")
-        asyncio.run(c["keyed"](query="GDP"))
+        c["keyed"](query="GDP")
         assert log == ["keyed"]
 
     def test_callback_exceptions_are_logged_not_raised(self) -> None:
         def boom(_result: Result) -> None:
             raise RuntimeError("callback broke")
 
-        result = asyncio.run(_fake_connectors().with_callback(boom)["demo_search"](query="GDP"))
+        result = _fake_connectors().with_callback(boom)["demo_search"](query="GDP")
         assert len(result.data) == 2

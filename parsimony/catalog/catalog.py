@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import shutil
 import tempfile
+import threading
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -98,7 +98,7 @@ class Catalog:
         self._entities: list[Entity] = []
         self._key_to_idx: dict[tuple[str, str], int] = {}
         self._dirty = True
-        self._lock = asyncio.Lock()
+        self._lock = threading.Lock()
         self._validate_indexes()
 
     @property
@@ -142,7 +142,7 @@ class Catalog:
     def _indexed_fields(self) -> list[str]:
         return sorted(self._indexes)
 
-    async def build(self) -> None:
+    def build(self) -> None:
         """Build configured indexes over the catalog's current entries."""
 
         if self._default_index_policy:
@@ -157,8 +157,8 @@ class Catalog:
                     f"No index configured for default_field {self.default_field!r}. Indexed fields: [{indexed}]"
                 ) from err
 
-        async with self._lock:
-            await self._rebuild_indices()
+        with self._lock:
+            self._rebuild_indices()
             self._dirty = False
 
     def set_entities(self, entries: list[Entity]) -> None:
@@ -193,7 +193,7 @@ class Catalog:
         self._validate_indexes()
         self._invalidate()
 
-    async def _execute_structured(
+    def _execute_structured(
         self,
         query: StructuredQuery,
         *,
@@ -211,7 +211,7 @@ class Catalog:
             idx = self.index_for(field)
             merged_clause_scores: dict[int, float] = {}
             for val in values:
-                scores = await idx.score_candidates(val, query_vectors=query_vectors)
+                scores = idx.score_candidates(val, query_vectors=query_vectors)
                 for row_id, score in scores.items():
                     if score <= 0.0:
                         continue
@@ -239,7 +239,7 @@ class Catalog:
         ]
         return ranking_from_scores(rows, limit=limit)
 
-    async def search(
+    def search(
         self,
         query: str,
         limit: int,
@@ -260,14 +260,14 @@ class Catalog:
                     f"Use 'field: value' syntax. Indexed fields: [{indexed}]"
                 )
             broad_index = self.index_for(broad_field)
-            query_vectors = await embed_query_vectors(query, [broad_index])
-            row_scores = await broad_index.score_candidates(query, query_vectors=query_vectors)
+            query_vectors = embed_query_vectors(query, [broad_index])
+            row_scores = broad_index.score_candidates(query, query_vectors=query_vectors)
             ranking = _ranking_from_row_scores(self._entities, row_scores, limit=limit)
             diagnostic = SearchDiagnostic(mode="broad")
         else:
             indexes = [self.index_for(field) for field, _ in parsed.clauses]
-            query_vectors = await embed_query_vectors(query, indexes)
-            ranking = await self._execute_structured(parsed, limit=limit, query_vectors=query_vectors)
+            query_vectors = embed_query_vectors(query, indexes)
+            ranking = self._execute_structured(parsed, limit=limit, query_vectors=query_vectors)
             diagnostic = SearchDiagnostic(mode="structured")
 
         if namespaces is not None:
@@ -275,12 +275,12 @@ class Catalog:
 
         return self._matches_from_ranking(ranking), diagnostic
 
-    async def get(self, namespace: str, code: str) -> Entity | None:
+    def get(self, namespace: str, code: str) -> Entity | None:
         idx = self._key_to_idx.get(entity_key(namespace, code))
         return self._entities[idx] if idx is not None else None
 
-    async def delete_many(self, keys: Iterable[tuple[str, str]]) -> int:
-        async with self._lock:
+    def delete_many(self, keys: Iterable[tuple[str, str]]) -> int:
+        with self._lock:
             targets: set[int] = set()
             for ns, code in keys:
                 idx = self._key_to_idx.get(entity_key(ns, code))
@@ -293,18 +293,18 @@ class Catalog:
             self._invalidate()
             return len(targets)
 
-    async def save(self, url: str | Path, *, builder: str | None = None) -> None:
+    def save(self, url: str | Path, *, builder: str | None = None) -> None:
         """Save a catalog snapshot to a URL or bare path."""
         self._ensure_built("saved")
         parsed = parse_catalog_url(str(url))
         if parsed.scheme == "file":
-            await _save_file(self, parsed.root, parsed.sub, builder=builder)
+            _save_file(self, parsed.root, parsed.sub, builder=builder)
         elif parsed.scheme == "hf":
-            await _save_hf(self, parsed.root, parsed.sub, builder=builder)
+            _save_hf(self, parsed.root, parsed.sub, builder=builder)
         else:
             raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")
 
-    async def _save_to_path(self, path: Path, *, builder: str | None = None) -> None:
+    def _save_to_path(self, path: Path, *, builder: str | None = None) -> None:
         """Atomically write a portable catalog snapshot to a local directory."""
         import os
         import uuid
@@ -316,9 +316,9 @@ class Catalog:
             shutil.rmtree(tmp)
         try:
             tmp.mkdir(parents=True)
-            await asyncio.to_thread(self._write_parquet, tmp / ENTRIES_FILENAME)
-            await asyncio.to_thread(self._write_indexes, tmp / INDEXES_DIRNAME)
-            await asyncio.to_thread(self._write_meta, tmp, builder)
+            self._write_parquet(tmp / ENTRIES_FILENAME)
+            self._write_indexes(tmp / INDEXES_DIRNAME)
+            self._write_meta(tmp, builder)
             if target.exists():
                 shutil.rmtree(target)
             tmp.rename(target)
@@ -328,17 +328,17 @@ class Catalog:
             raise
 
     @classmethod
-    async def load(cls, url: str | Path) -> Catalog:
+    def load(cls, url: str | Path) -> Catalog:
         """Load a built, searchable catalog snapshot from a URL or bare path.
 
         Supports local file paths (bare or file://) and remote Hugging Face
         dataset URLs (hf://). Caching loaded catalogs is the caller's
         responsibility.
         """
-        return await _dispatch_load(str(url))
+        return _dispatch_load(str(url))
 
     @classmethod
-    async def _load_from_path(cls, path: Path) -> Catalog:
+    def _load_from_path(cls, path: Path) -> Catalog:
         """Load a clean-slate catalog snapshot from a local directory."""
         src = Path(path)
         meta = read_meta(src)
@@ -351,10 +351,12 @@ class Catalog:
                 raise ValueError(
                     f"Catalog snapshot integrity check failed for {src}:\n"
                     f"  expected sha256: {meta.build.content_sha256}\n"
-                    f"  actual sha256:   {actual_sha}"
+                    f"  actual sha256:   {actual_sha}\n"
+                    f"  If this is a cached copy, clear it with "
+                    f"`parsimony cache clear --subdir catalogs --yes` and retry."
                 )
 
-        entries = await asyncio.to_thread(_read_parquet, src / ENTRIES_FILENAME)
+        entries = _read_parquet(src / ENTRIES_FILENAME)
         indexes = _load_indexes(src / INDEXES_DIRNAME, index_fields=meta.index_fields)
 
         catalog = cls(meta.name, indexes=indexes, default_field=meta.default_field)
@@ -369,9 +371,7 @@ class Catalog:
 
     def _ensure_built(self, action: str) -> None:
         if self._dirty:
-            raise ValueError(
-                f"Catalog entries or indexes changed — call await catalog.build() before it can be {action}"
-            )
+            raise ValueError(f"Catalog entries or indexes changed — call catalog.build() before it can be {action}")
 
     def _upsert_entities(self, entries: list[Entity]) -> None:
         for entry in entries:
@@ -382,11 +382,11 @@ class Catalog:
                 self._key_to_idx[key] = len(self._entities)
                 self._entities.append(entry)
 
-    async def _rebuild_indices(self) -> None:
+    def _rebuild_indices(self) -> None:
         vector_cache: dict[tuple[str, int, bool], dict[str, np.ndarray]] = {}
         for field, index in self._indexes.items():
             ctx = IndexBuildContext(field=field, vector_cache=vector_cache)
-            await index.build(self._entities, ctx=ctx)
+            index.build(self._entities, ctx=ctx)
 
     def _matches_from_ranking(self, ranking: Ranking) -> list[CatalogMatch]:
         matches: list[CatalogMatch] = []
@@ -472,66 +472,59 @@ def _load_indexes(
 # ---------------------------------------------------------------------------
 
 
-async def _load_file(root: str, sub: str) -> Catalog:
+def _load_file(root: str, sub: str) -> Catalog:
     path = Path(root) / sub if sub else Path(root)
     if not path.exists():
         raise FileNotFoundError(f"Catalog directory does not exist: {path}")
-    return await Catalog._load_from_path(path)
+    return Catalog._load_from_path(path)
 
 
-async def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
+def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
     target = Path(root) / sub if sub else Path(root)
-    await catalog._save_to_path(target, builder=builder)
+    catalog._save_to_path(target, builder=builder)
 
 
-async def _load_hf(root: str, sub: str) -> Catalog:
+def _load_hf(root: str, sub: str) -> Catalog:
     from huggingface_hub import snapshot_download
 
     from parsimony import cache
 
     cache_dir = cache.catalogs_dir()
     if sub:
-        local = await asyncio.to_thread(
-            lambda: Path(
-                snapshot_download(
-                    repo_id=root,
-                    repo_type=REPO_TYPE,
-                    cache_dir=cache_dir,
-                    allow_patterns=[f"{sub}/*"],
-                )
+        local = Path(
+            snapshot_download(
+                repo_id=root,
+                repo_type=REPO_TYPE,
+                cache_dir=cache_dir,
+                allow_patterns=[f"{sub}/*"],
             )
         )
-        return await Catalog._load_from_path(local / sub)
-    local = await asyncio.to_thread(
-        lambda: Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
-    )
-    return await Catalog._load_from_path(local)
+        return Catalog._load_from_path(local / sub)
+    local = Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
+    return Catalog._load_from_path(local)
 
 
-async def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
+def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
     from huggingface_hub import HfApi
 
     with tempfile.TemporaryDirectory() as tmpdir:
         staging = Path(tmpdir) / "snapshot"
-        await catalog._save_to_path(staging, builder=builder)
+        catalog._save_to_path(staging, builder=builder)
 
-        def _upload() -> None:
-            api = HfApi()
-            api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
-            api.upload_folder(
-                folder_path=str(staging),
-                repo_id=root,
-                repo_type=REPO_TYPE,
-                path_in_repo=sub or None,
-            )
-
-        await asyncio.to_thread(_upload)
+        api = HfApi()
+        api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
+        api.upload_folder(
+            folder_path=str(staging),
+            repo_id=root,
+            repo_type=REPO_TYPE,
+            path_in_repo=sub or None,
+        )
 
 
-async def _dispatch_load(url: str) -> Catalog:
+def _dispatch_load(url: str) -> Catalog:
     parsed = parse_catalog_url(url)
     if parsed.scheme == "file":
-        return await _load_file(parsed.root, parsed.sub)
+        return _load_file(parsed.root, parsed.sub)
     if parsed.scheme == "hf":
-        return await _load_hf(parsed.root, parsed.sub)
+        return _load_hf(parsed.root, parsed.sub)
     raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")

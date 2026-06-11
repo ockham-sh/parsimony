@@ -14,7 +14,7 @@ from parsimony.result import Result, TabularResult
 from parsimony.testing import ConformanceError, ProviderTestSuite
 
 
-async def _demo_fn() -> Result:
+def _demo_fn() -> Result:
     return TabularResult.from_dataframe(pd.DataFrame({"x": [1]}))
 
 

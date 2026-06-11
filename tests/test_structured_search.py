@@ -44,8 +44,7 @@ def test_parse_query_malformed() -> None:
         parse_query("REF_AREA: ", {"REF_AREA", "ICP_ITEM"})
 
 
-@pytest.mark.asyncio
-async def test_structured_search_execution() -> None:
+def test_structured_search_execution() -> None:
     entries = [
         Entity(namespace="ns", code="A", title="Title A", metadata={"REF_AREA": "Germany", "ICP_ITEM": "energy"}),
         Entity(namespace="ns", code="B", title="Title B", metadata={"REF_AREA": "Italy", "ICP_ITEM": "energy"}),
@@ -66,19 +65,19 @@ async def test_structured_search_execution() -> None:
         }
     )
     cat.set_entities(entries)
-    await cat.build()
+    cat.build()
 
     with pytest.raises(UnknownIndexedFieldError, match="UNKNOWN_FIELD"):
-        await cat.search("UNKNOWN_FIELD: Germany", limit=5)
+        cat.search("UNKNOWN_FIELD: Germany", limit=5)
 
-    res, _ = await cat.search("REF_AREA: Germany", limit=5)
+    res, _ = cat.search("REF_AREA: Germany", limit=5)
     assert {m.code for m in res} == {"A", "C"}
 
-    res_or, _ = await cat.search("REF_AREA: Germany, Italy", limit=5)
+    res_or, _ = cat.search("REF_AREA: Germany, Italy", limit=5)
     assert {m.code for m in res_or} == {"A", "B", "C"}
 
-    res_and, _ = await cat.search("REF_AREA: Germany && ICP_ITEM: energy", limit=5)
+    res_and, _ = cat.search("REF_AREA: Germany && ICP_ITEM: energy", limit=5)
     assert {m.code for m in res_and} == {"A"}
 
-    res_comb, _ = await cat.search("REF_AREA: Germany, France && ICP_ITEM: food", limit=5)
+    res_comb, _ = cat.search("REF_AREA: Germany, France && ICP_ITEM: food", limit=5)
     assert {m.code for m in res_comb} == {"C", "D"}

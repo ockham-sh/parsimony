@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from parsimony.entity import Entity, field_text, field_values, normalize_entity_code, normalize_namespace
+from parsimony.errors import ConnectorError, InvalidParameterError
 
 
 class SearchDiagnostic(BaseModel):
@@ -18,16 +19,25 @@ class SearchDiagnostic(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-class UnknownIndexedFieldError(ValueError):
+class UnknownIndexedFieldError(InvalidParameterError):
     """Structured query references a field with no configured index."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__("catalog", message)
 
-class BroadSearchUnavailableError(ValueError):
+
+class BroadSearchUnavailableError(InvalidParameterError):
     """Plain-text query requested but this catalog has no broad-search field."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__("catalog", message)
 
-class BroadSearchConfigError(ValueError):
+
+class BroadSearchConfigError(ConnectorError):
     """Catalog default_field is set but no index covers that field."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, provider="catalog")
 
 
 class CatalogMatch(BaseModel):

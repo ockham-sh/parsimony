@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 
 import pandas as pd
@@ -60,25 +59,24 @@ def test_discovery_indexes_switch_at_threshold() -> None:
     assert discovery_indexes(large)["title"].__class__.__name__ == "BM25Index"
 
 
-@pytest.mark.asyncio
-async def test_catalog_not_found_from_missing_file(tmp_path: Path) -> None:
+def test_catalog_not_found_from_missing_file(tmp_path: Path) -> None:
     from parsimony.catalog.search import load_or_build_catalog
 
     missing = tmp_path / "nope"
     with pytest.raises(CatalogNotFoundError, match="DO NOT retry"):
-        await load_or_build_catalog(f"file://{missing}", cache_path=missing / "cache", build=None)
+        load_or_build_catalog(f"file://{missing}", cache_path=missing / "cache", build=None)
 
 
-@pytest.mark.asyncio
-async def test_concurrent_save_uses_unique_temp_dirs(tmp_path: Path) -> None:
+def test_concurrent_save_uses_unique_temp_dirs(tmp_path: Path) -> None:
     entries = [Entity(namespace="demo", code="a", title="Alpha", metadata={})]
 
-    async def _save(name: str) -> None:
+    def _save(name: str) -> None:
         catalog = Catalog(name, indexes=discovery_indexes(entries))
         catalog.set_entities(entries)
-        await catalog.build()
-        await catalog.save(str(tmp_path / name))
+        catalog.build()
+        catalog.save(str(tmp_path / name))
 
-    await asyncio.gather(_save("one"), _save("two"))
+    _save("one")
+    _save("two")
     assert (tmp_path / "one").is_dir()
     assert (tmp_path / "two").is_dir()

@@ -187,6 +187,7 @@ def test_list_skips_conformance_without_strict_flag(
     payload = json.loads(captured.out)
 
     assert payload["plugins"][0]["conformance"] == "skipped"
+    assert payload["plugins"][0]["connector_count"] == 1
     assert exit_code == 0
 
 

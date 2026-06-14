@@ -4,6 +4,36 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.7.1]
+
+### Added
+
+- **`parsimony.Namespace` marker** — a typed marker for connector parameters whose legal
+  values come from a same-namespace catalog search, surfaced on connector cards as an
+  agent/human hint.
+- **Authoritative plugin contract** — `docs/contract.md` consolidates the distribution,
+  connector, credential, error, search, catalog, and conformance rules in one place.
+
+### Changed
+
+- **Actionable catalog `schema_version` mismatch** — loading a catalog with an unsupported
+  schema version now raises `Unsupported catalog schema_version N; expected 1` instead of a
+  cryptic Pydantic validation error.
+- **`parsimony list` shows connector counts by default** — the per-provider connector count
+  no longer requires `--strict`; full conformance checks still do.
+- **Embedder uses `get_embedding_dimension()`** with a fallback — silences the
+  `sentence-transformers` `FutureWarning` on newer versions.
+
+### Removed
+
+- **Dropped the back-compat policy aliases** `hybrid_field_index` and `macro_discovery_indexes`;
+  use the canonical `adaptive_field_index` and `discovery_indexes`.
+
+### Docs
+
+- Synced all connector-contract documentation to the synchronous calling surface
+  (connectors are `def`, not `async def`).
+
 ## [0.7.0]
 
 ### Breaking changes

@@ -28,7 +28,7 @@ def _make_connector(df: pd.DataFrame, dtype: str, col_name: str = "value") -> ob
     )
 
     @connector(output=output, description="test connector")
-    async def _inner() -> pd.DataFrame:
+    def _inner() -> pd.DataFrame:
         return df
 
     return _inner
@@ -39,14 +39,13 @@ def _make_connector(df: pd.DataFrame, dtype: str, col_name: str = "value") -> ob
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_timestamp_iso_strings_raise_parse_error() -> None:
+def test_timestamp_iso_strings_raise_parse_error() -> None:
     """Connector returning ISO date strings with dtype='timestamp' must raise ParseError."""
     df = pd.DataFrame({"ts": ["2024-01-01", "2024-06-15", "2024-12-31"]})
     conn = _make_connector(df, dtype="timestamp", col_name="ts")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn()
+        conn()
 
     assert "timestamp" in str(exc_info.value).lower()
     assert "ts" in str(exc_info.value)
@@ -59,14 +58,13 @@ async def test_timestamp_iso_strings_raise_parse_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_numeric_non_numeric_strings_raise_parse_error() -> None:
+def test_numeric_non_numeric_strings_raise_parse_error() -> None:
     """Connector returning non-numeric strings with dtype='numeric' must raise ParseError."""
     df = pd.DataFrame({"price": ["n/a", "N/A", "--"]})
     conn = _make_connector(df, dtype="numeric", col_name="price")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn()
+        conn()
 
     assert "numeric" in str(exc_info.value).lower()
     assert "price" in str(exc_info.value)
@@ -79,14 +77,13 @@ async def test_numeric_non_numeric_strings_raise_parse_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_unsupported_dtype_raises_parse_error() -> None:
+def test_unsupported_dtype_raises_parse_error() -> None:
     """Connector declaring an unknown dtype string must raise ParseError, not TypeError."""
     df = pd.DataFrame({"col": [1, 2, 3]})
     conn = _make_connector(df, dtype="not_a_real_dtype", col_name="col")
 
     with pytest.raises(ParseError) as exc_info:
-        await conn()
+        conn()
 
     assert "not_a_real_dtype" in str(exc_info.value)
 
@@ -96,20 +93,19 @@ async def test_unsupported_dtype_raises_parse_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_connector_valueerror_not_wrapped_as_parse_error() -> None:
+def test_connector_valueerror_not_wrapped_as_parse_error() -> None:
     """A ValueError from the connector function itself must propagate as-is, not as ParseError."""
 
     @connector(description="raises ValueError")
-    async def _bad() -> pd.DataFrame:
+    def _bad() -> pd.DataFrame:
         raise ValueError("bad input from connector logic")
 
     with pytest.raises(ValueError, match="bad input from connector logic"):
-        await _bad()
+        _bad()
 
     # Confirm it's NOT a ParseError (ParseError is a ConnectorError, not a ValueError)
     try:
-        await _bad()
+        _bad()
     except ParseError:
         pytest.fail("connector ValueError must not be wrapped as ParseError")
     except ValueError:
@@ -121,8 +117,7 @@ async def test_connector_valueerror_not_wrapped_as_parse_error() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_http_client_follows_redirects() -> None:
+def test_http_client_follows_redirects() -> None:
     """HttpClient must follow a 302 redirect to the final URL."""
     from parsimony.transport import HttpClient
 
@@ -142,15 +137,14 @@ async def test_http_client_follows_redirects() -> None:
     )
 
     client = HttpClient("http://example.com", _transport=transport)
-    response = await client.request("GET", "/original")
+    response = client.request("GET", "/original")
 
     assert response.status_code == 200
     assert len(response.history) > 0
     assert str(response.url) == "http://example.com/final"
 
 
-@pytest.mark.asyncio
-async def test_http_client_follow_redirects_default_true() -> None:
+def test_http_client_follow_redirects_default_true() -> None:
     """HttpClient.follow_redirects defaults to True."""
     from parsimony.transport import HttpClient
 
@@ -182,26 +176,24 @@ def test_rate_limit_error_valid_duration_does_not_raise() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_timestamp_epoch_integers_produce_datetime_column() -> None:
+def test_timestamp_epoch_integers_produce_datetime_column() -> None:
     """Connector returning unix epoch integers with dtype='timestamp' must produce a datetime column."""
     df = pd.DataFrame({"ts": [0, 86400, 1_700_000_000]})
     conn = _make_connector(df, dtype="timestamp", col_name="ts")
 
-    result = await conn()
+    result = conn()
 
     assert isinstance(result, Result)
     assert pd.api.types.is_datetime64_any_dtype(result.df["ts"])
     assert result.df["ts"].notna().all()
 
 
-@pytest.mark.asyncio
-async def test_numeric_strings_produce_float_column() -> None:
+def test_numeric_strings_produce_float_column() -> None:
     """Connector returning numeric strings with dtype='numeric' must produce a float column."""
     df = pd.DataFrame({"price": ["1.5", "3.14", "0.0"]})
     conn = _make_connector(df, dtype="numeric", col_name="price")
 
-    result = await conn()
+    result = conn()
 
     assert isinstance(result, Result)
     assert pd.api.types.is_float_dtype(result.df["price"])

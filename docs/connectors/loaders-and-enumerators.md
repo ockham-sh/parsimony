@@ -21,10 +21,9 @@ The split is structural, not advisory: an enumerator literally cannot declare a 
 
 ## Loaders
 
-`@loader` decorates an async function that fetches actual observations. The decorator is **keyword-only** and `output` is **required**:
+`@loader` decorates a function that fetches actual observations. The decorator is **keyword-only** and `output` is **required**:
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import loader
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -36,7 +35,7 @@ LOAD_OUTPUT = OutputConfig(columns=[
 ])
 
 @loader(output=LOAD_OUTPUT, tags=["demo"])
-async def load_observations(series_id: str) -> pd.DataFrame:
+def load_observations(series_id: str) -> pd.DataFrame:
     """Load observations for one or more demo series."""
     return pd.DataFrame({
         "series_code": ["unrate", "unrate", "gdpc1"],
@@ -44,7 +43,7 @@ async def load_observations(series_id: str) -> pd.DataFrame:
         "value": ["3.5", "3.6", "21000"],
     })
 
-result = asyncio.run(load_observations(series_id="batch"))
+result = load_observations(series_id="batch")
 assert load_observations.tags == ("loader", "demo")
 assert list(result.df.columns) == ["series_code", "date", "value"]
 ```
@@ -73,7 +72,7 @@ The KEY namespace is mandatory because the data store derives each entity's iden
 A loader's output is shaped precisely so [`InMemoryDataStore.load_result`](../catalog/data-store.md) can persist it. The store groups rows by the KEY value, derives the namespace from the KEY column's `namespace=`, and persists the DATA columns per entity:
 
 ```python
-import asyncio
+import pandas as pd
 from parsimony import loader
 from parsimony.result import Column, ColumnRole, OutputConfig
 from parsimony.stores import InMemoryDataStore
@@ -85,7 +84,7 @@ LOAD_OUTPUT = OutputConfig(columns=[
 ])
 
 @loader(output=LOAD_OUTPUT)
-async def load_observations(series_id: str) -> pd.DataFrame:
+def load_observations(series_id: str) -> pd.DataFrame:
     """Load observations for one or more demo series."""
     return pd.DataFrame({
         "series_code": ["unrate", "unrate", "gdpc1"],
@@ -93,25 +92,20 @@ async def load_observations(series_id: str) -> pd.DataFrame:
         "value": ["3.5", "3.6", "21000"],
     })
 
-async def main() -> None:
-    result = await load_observations(series_id="batch")
-    store = InMemoryDataStore()
-    stats = await store.load_result(result)
-    print(stats.model_dump())          # {'total': 2, 'loaded': 2, 'skipped': 0, 'errors': 0}
-    print(await store.get("demo_series", "unrate"))
-
-import pandas as pd
-asyncio.run(main())
+result = load_observations(series_id="batch")
+store = InMemoryDataStore()
+stats = store.load_result(result)
+print(stats.model_dump())          # {'total': 2, 'loaded': 2, 'skipped': 0, 'errors': 0}
+print(store.get("demo_series", "unrate"))
 ```
 
 Two distinct KEY values (`unrate`, `gdpc1`) become two stored entities. By default `load_result` skips entities already present; pass `force=True` to upsert them all. See [Data stores](../catalog/data-store.md) for `LoadResult`, `upsert`, `get`, `delete`, and `exists`.
 
 ## Enumerators
 
-`@enumerator` decorates an async function that **discovers** what entities exist — typically the metadata catalog a provider exposes (every series, its title, its frequency). It is the entity-discovery counterpart to a loader.
+`@enumerator` decorates a function that **discovers** what entities exist — typically the metadata catalog a provider exposes (every series, its title, its frequency). It is the entity-discovery counterpart to a loader.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import enumerator
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -123,7 +117,7 @@ ENUMERATE_OUTPUT = OutputConfig(columns=[
 ])
 
 @enumerator(output=ENUMERATE_OUTPUT, name="list_series")
-async def list_series(prefix: str = "") -> pd.DataFrame:
+def list_series(prefix: str = "") -> pd.DataFrame:
     """Discover demo series matching a prefix."""
     return pd.DataFrame({
         "code": ["unrate", "gdpc1"],
@@ -131,11 +125,11 @@ async def list_series(prefix: str = "") -> pd.DataFrame:
         "frequency": ["monthly", "quarterly"],
     })
 
-result = asyncio.run(list_series(prefix="g"))
+result = list_series(prefix="g")
 assert list(result.df.columns) == ["code", "title", "frequency"]
 ```
 
-`@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and stamps `fn.__parsimony_role__ = "enumerator"` on the wrapped function. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
+`@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and sets `role="enumerator"` on the returned :class:`~parsimony.connector.Connector`. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
 
 ### The enumerator output contract
 
@@ -158,13 +152,13 @@ Unlike a plain connector, an enumerator's wrapped function **must annotate** a `
 ```python
 # raises ValueError: "enumerator must annotate return type pd.DataFrame"
 @enumerator(output=ENUMERATE_OUTPUT)
-async def missing_annotation():
+def missing_annotation():
     ...
 
 # raises ValueError: "enumerator return must be pd.DataFrame"
 from parsimony.entity import Entity
 @enumerator(output=ENUMERATE_OUTPUT)
-async def returns_entities() -> list[Entity]:
+def returns_entities() -> list[Entity]:
     ...
 ```
 
@@ -177,7 +171,6 @@ The check has two stages. First, the annotation must mention `DataFrame` or `Ser
 The schema checks above run at decoration. There is one further check that runs **every call**: after the framework applies your schema, the resulting frame's columns must **exactly** match the declared schema columns (the `"*"` wildcard column, if present, is excluded from this check). A missing or extra declared column raises `ValueError`, which the connector surface re-raises as a typed [`ParseError`](errors.md):
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import enumerator
 from parsimony.errors import ParseError
@@ -189,12 +182,12 @@ OUT = OutputConfig(columns=[
 ])
 
 @enumerator(output=OUT, name="broken")
-async def broken() -> pd.DataFrame:
+def broken() -> pd.DataFrame:
     """Returns a frame missing the declared title column."""
     return pd.DataFrame({"code": ["a"]})   # 'title' is missing
 
 try:
-    asyncio.run(broken())
+    broken()
 except ParseError as exc:
     print(exc)   # references "Enumerator DataFrame missing declared columns: ['title']"
 ```
@@ -207,7 +200,6 @@ except ParseError as exc:
 An enumerator's output is shaped to become [`Entity`](../catalog/entities.md) records directly. The same `OutputConfig` you pass to the decorator can extract entities from the returned frame via [`build_entities`](../catalog/entities.md):
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import enumerator
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -219,7 +211,7 @@ ENUMERATE_OUTPUT = OutputConfig(columns=[
 ])
 
 @enumerator(output=ENUMERATE_OUTPUT, name="list_series")
-async def list_series() -> pd.DataFrame:
+def list_series() -> pd.DataFrame:
     """Discover demo series."""
     return pd.DataFrame({
         "code": ["unrate", "gdpc1"],
@@ -227,7 +219,7 @@ async def list_series() -> pd.DataFrame:
         "frequency": ["monthly", "quarterly"],
     })
 
-result = asyncio.run(list_series())
+result = list_series()
 entities = ENUMERATE_OUTPUT.build_entities(result.df)
 for e in entities:
     print(e.namespace, e.code, e.title, e.metadata)
@@ -242,7 +234,6 @@ for e in entities:
 Usually one enumerator covers one namespace, fixed by the KEY column's `namespace=`. When a single enumerator discovers entities across **several** namespaces, set the KEY namespace to the sentinel `"__row__"` and add an `entity_namespace` METADATA column carrying each row's namespace. This is enforced at decoration time:
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import enumerator
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -254,7 +245,7 @@ MULTI_NS = OutputConfig(columns=[
 ])
 
 @enumerator(output=MULTI_NS, name="discover_mixed")
-async def discover_mixed() -> pd.DataFrame:
+def discover_mixed() -> pd.DataFrame:
     """Discover entities across several namespaces."""
     return pd.DataFrame({
         "code": ["unrate", "aapl"],
@@ -262,7 +253,7 @@ async def discover_mixed() -> pd.DataFrame:
         "entity_namespace": ["fred_series", "stock_ticker"],
     })
 
-result = asyncio.run(discover_mixed())
+result = discover_mixed()
 for e in MULTI_NS.build_entities(result.df):
     print(e.namespace, e.code)
 # fred_series unrate
@@ -281,7 +272,7 @@ Knowing *when* each rule fires saves debugging time — most failures surface at
 | Enumerator return-type annotation | decoration | `ValueError` |
 | `OutputConfig` "≤1 KEY / ≤1 TITLE" base rule | `OutputConfig(...)` construction | `ValueError` |
 | `secrets=` names match real parameters | decoration | `ValueError` |
-| Function must be `async` | decoration | `TypeError` |
+| Function must be synchronous | decoration | `TypeError` |
 | Enumerator returned-frame exact column match | every call | `ValueError` → [`ParseError`](errors.md) |
 | Connector returned `Result`/`TabularResult`/tuple | every call | `TypeError` |
 

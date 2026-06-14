@@ -1,7 +1,7 @@
 """Custom connector: build your own data source and compose it with built-in connectors.
 
 Demonstrates:
-1. Defining a plain async Python function.
+1. Defining a plain synchronous Python function.
 2. Using the @connector decorator with an OutputConfig schema.
 3. Composing the custom connector into a Connectors bundle alongside FRED.
 
@@ -19,7 +19,6 @@ Run:
 
 from __future__ import annotations
 
-import asyncio
 import os
 
 import pandas as pd
@@ -37,7 +36,7 @@ CUSTOM_OUTPUT = OutputConfig(
 
 
 @connector(output=CUSTOM_OUTPUT, tags=["custom"])
-async def my_data_source(category: str) -> pd.DataFrame:
+def my_data_source(category: str) -> pd.DataFrame:
     """Return sample rows for a category (replace with a real HTTP call)."""
     return pd.DataFrame(
         {
@@ -48,7 +47,7 @@ async def my_data_source(category: str) -> pd.DataFrame:
     )
 
 
-async def main() -> None:
+def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Compose custom + built-in connectors into one bundle (the + operator).
@@ -59,11 +58,11 @@ async def main() -> None:
     print()
 
     # Call the custom connector through the bundle.
-    result = await bundle["my_data_source"](category="widgets")
+    result = bundle["my_data_source"](category="widgets")
     print("--- Custom connector result ---")
     print(result.df.to_string(index=False))
     print(f"Provenance source: {result.provenance.source}")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

@@ -55,7 +55,7 @@ from parsimony import Connectors, connector
 
 
 @connector()
-async def fred_fetch(series_id: str) -> dict:
+def fred_fetch(series_id: str) -> dict:
     """Fetch a single FRED economic series by its identifier."""
     # real plugins use parsimony.transport to call the upstream API
     return {"series_id": series_id, "value": 42}
@@ -132,19 +132,13 @@ both the missing names and the sorted set of available ones — so a typo or a f
 `pip install` fails loudly rather than silently producing an empty bundle.
 
 ```python
-import asyncio
-
 from parsimony import discover
 
 
-async def main() -> None:
-    connectors = discover.load("fred")  # LookupError if "fred" is not installed
-    print(connectors.names())           # connector names contributed by the provider
-    result = await connectors["fred_fetch"](series_id="GDP")
-    print(result.df)  # a tabular connector returns a TabularResult
-
-
-asyncio.run(main())
+connectors = discover.load("fred")  # LookupError if "fred" is not installed
+print(connectors.names())           # connector names contributed by the provider
+result = connectors["fred_fetch"](series_id="GDP")
+print(result.df)  # a tabular connector returns a TabularResult
 ```
 
 !!! note
@@ -156,7 +150,7 @@ asyncio.run(main())
 
 A loaded `Connectors` is a normal collection: index it by connector name with `[]`, check
 membership with `in`, list `.names()`, `bind` shared parameters across it, and call any
-connector with `await`. See
+connector. See
 [calling, binding, and composing](../connectors/calling-binding-composing.md) for the full
 surface.
 

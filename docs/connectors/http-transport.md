@@ -33,9 +33,9 @@ of `parsimony-core`, so everything on this page runs with only the core install
 
 ## `HttpClient`
 
-`HttpClient` is an async wrapper around `httpx.AsyncClient`. It holds the
+`HttpClient` is a wrapper around `httpx.Client`. It holds the
 provider's base URL, default headers and query params, a timeout, TLS settings,
-redirect policy, and a retry policy. Its one coroutine, `request()`, issues a
+redirect policy, and a retry policy. Its one method, `request()`, issues a
 single logical request and returns the **raw** `httpx.Response`.
 
 ```python
@@ -50,8 +50,8 @@ class HttpClient:
         query_params: dict[str, Any] | None = None,
         follow_redirects: bool = True,
         max_redirects: int = 5,
-        _transport: httpx.AsyncBaseTransport | None = None,
-        shared_client: httpx.AsyncClient | None = None,
+        _transport: httpx.BaseTransport | None = None,
+        shared_client: httpx.Client | None = None,
         retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
     ) -> None: ...
 ```
@@ -65,8 +65,8 @@ class HttpClient:
 | `query_params` | `None` | Default query params merged into every request (the API-key idiom). |
 | `follow_redirects` | `True` | Whether `httpx` follows redirects. |
 | `max_redirects` | `5` | Redirect chain cap. |
-| `_transport` | `None` | Inject an `httpx.AsyncBaseTransport` (e.g. `httpx.MockTransport`) for tests. |
-| `shared_client` | `None` | Reuse one pooled `httpx.AsyncClient` instead of opening a fresh one per request. |
+| `_transport` | `None` | Inject an `httpx.BaseTransport` (e.g. `httpx.MockTransport`) for tests. |
+| `shared_client` | `None` | Reuse one pooled `httpx.Client` instead of opening a fresh one per request. |
 | `retry_policy` | `DEFAULT_HTTP_RETRY_POLICY` | An `HttpRetryPolicy`, or `None` to disable retries. Validated on construction. |
 
 The `base_url` property returns the stored URL with its trailing slash already
@@ -87,7 +87,7 @@ win), emits a redacted structured log line, runs the retry loop, logs any
 redirect chain and the final response, and returns the response object.
 
 ```python
-async def request(
+def request(
     self,
     method: str,
     path: str,
@@ -97,33 +97,28 @@ async def request(
 ) -> httpx.Response: ...
 ```
 
-Because it is a coroutine, drive it from an `async def` under `asyncio.run`.
-The example below injects an `httpx.MockTransport` so it runs offline:
+Call it directly. The example below injects an `httpx.MockTransport` so it runs
+offline:
 
 ```python
-import asyncio
 import httpx
 from parsimony.transport import HttpClient, HttpRetryPolicy
 
 
-async def handler(request: httpx.Request) -> httpx.Response:
+def handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"ok": True}, request=request)
 
 
-async def main() -> int:
-    http = HttpClient(
-        "https://api.example.com",
-        timeout=5.0,
-        headers={"X-App": "demo"},
-        query_params={"apikey": "secret"},  # merged into every request
-        retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
-        _transport=httpx.MockTransport(handler),
-    )
-    response = await http.request("GET", "/status")
-    return response.status_code
-
-
-assert asyncio.run(main()) == 200
+http = HttpClient(
+    "https://api.example.com",
+    timeout=5.0,
+    headers={"X-App": "demo"},
+    query_params={"apikey": "secret"},  # merged into every request
+    retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
+    _transport=httpx.MockTransport(handler),
+)
+response = http.request("GET", "/status")
+assert response.status_code == 200
 ```
 
 !!! warning "`request()` never calls `raise_for_status()`"
@@ -135,12 +130,11 @@ assert asyncio.run(main()) == 200
 
 ### One client per request, by default
 
-By default each `request()` call opens a short-lived `httpx.AsyncClient` inside
-an `async with` block and closes it when the call returns. This deliberately
-avoids sharing TCP connections across distinct `asyncio.run()` event loops,
-which `httpx` does not support. The cost is that a tight fan-out loop pays for a
-fresh connection each time — use [`pooled_client`](#connection-pooling) to opt
-into pooling when one logical operation issues many requests.
+By default each `request()` call opens a short-lived `httpx.Client` inside
+a `with` block and closes it when the call returns. The cost is that a tight
+fan-out loop pays for a fresh connection each time — use
+[`pooled_client`](#connection-pooling) to opt into pooling when one logical
+operation issues many requests.
 
 ## Retries and backoff
 
@@ -363,43 +357,38 @@ secret leaks into the logs.
 ## Connection pooling
 
 For a single logical operation that issues many requests — an enumerator loop, a
-screener fan-out — open one underlying `httpx.AsyncClient` and reuse it.
-`pooled_client` is an async context manager that does this: it builds one client
+screener fan-out — open one underlying `httpx.Client` and reuse it.
+`pooled_client` is a context manager that does this: it builds one client
 from the source `HttpClient`'s configuration (base URL, headers, query params,
 timeout, TLS, transport) and yields a new `HttpClient` that routes every request
 through it.
 
 ```python
-import asyncio
 import httpx
 from parsimony.transport import HttpClient, pooled_client
 
 
-async def handler(request: httpx.Request) -> httpx.Response:
+def handler(request: httpx.Request) -> httpx.Response:
     return httpx.Response(200, json={"path": request.url.path}, request=request)
 
 
-async def main() -> list[int]:
-    http = HttpClient(
-        "https://api.example.com",
-        query_params={"apikey": "k"},
-        _transport=httpx.MockTransport(handler),
-    )
-    statuses: list[int] = []
-    async with pooled_client(http) as shared:  # one httpx.AsyncClient reused
-        for key in ("a", "b", "c"):
-            response = await shared.request("GET", f"/data/{key}")
-            statuses.append(response.status_code)
-    return statuses
-
-
-assert asyncio.run(main()) == [200, 200, 200]
+http = HttpClient(
+    "https://api.example.com",
+    query_params={"apikey": "k"},
+    _transport=httpx.MockTransport(handler),
+)
+statuses: list[int] = []
+with pooled_client(http) as shared:  # one httpx.Client reused
+    for key in ("a", "b", "c"):
+        response = shared.request("GET", f"/data/{key}")
+        statuses.append(response.status_code)
+assert statuses == [200, 200, 200]
 ```
 
-The yielded client shares one connection pool for the whole `async with` block.
-Do not hold onto it past the block, and do not use it across event loops. You can
-also create a pooled client directly with `client.with_shared_client(httpx_client)`,
-which returns a new `HttpClient` reusing the supplied `httpx.AsyncClient`.
+The yielded client shares one connection pool for the whole `with` block.
+Do not hold onto it past the block. You can also create a pooled client directly
+with `client.with_shared_client(httpx_client)`, which returns a new `HttpClient`
+reusing the supplied `httpx.Client`.
 
 ## Convenience constructors and `fetch_json`
 
@@ -442,7 +431,7 @@ at provider-setup time so it never appears on the connector's call surface. See
 ### `fetch_json`
 
 ```python
-async def fetch_json(
+def fetch_json(
     http: HttpClient,
     *,
     path: str,
@@ -463,35 +452,31 @@ async def fetch_json(
 5. returns `response.json()`.
 
 ```python
-import asyncio
 import httpx
 from parsimony.transport import HttpClient, HttpRetryPolicy
 from parsimony.transport.helpers import fetch_json
 
 
-async def handler(request: httpx.Request) -> httpx.Response:
+def handler(request: httpx.Request) -> httpx.Response:
     # `start=None` was dropped; `series_id` was sent.
     assert b"start" not in request.url.query
     assert b"series_id" in request.url.query
     return httpx.Response(200, json={"series_id": "UNRATE", "value": 3.9}, request=request)
 
 
-async def main() -> dict:
-    http = HttpClient(
-        "https://api.example.com/v1",
-        retry_policy=HttpRetryPolicy(max_attempts=1),
-        _transport=httpx.MockTransport(handler),
-    )
-    return await fetch_json(
-        http,
-        path="series",
-        params={"series_id": "UNRATE", "start": None},  # None is dropped
-        provider="example",
-        op_name="get_series",
-    )
-
-
-print(asyncio.run(main()))  # {'series_id': 'UNRATE', 'value': 3.9}
+http = HttpClient(
+    "https://api.example.com/v1",
+    retry_policy=HttpRetryPolicy(max_attempts=1),
+    _transport=httpx.MockTransport(handler),
+)
+result = fetch_json(
+    http,
+    path="series",
+    params={"series_id": "UNRATE", "start": None},  # None is dropped
+    provider="example",
+    op_name="get_series",
+)
+print(result)  # {'series_id': 'UNRATE', 'value': 3.9}
 ```
 
 In a real provider plugin you would build the client once with

@@ -22,7 +22,7 @@ from parsimony.ranking import ZScoreFusion
 class _StubEmbedder:
     DIM = 8
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         out: list[list[float]] = []
         for text in texts:
             digest = hashlib.sha256(text.encode("utf-8")).digest()
@@ -31,35 +31,31 @@ class _StubEmbedder:
             out.append([x / norm for x in raw])
         return out
 
-    async def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> list[float]:
         anchor = "GDP of Germany" if "Germany" in query else query
-        (vector,) = await self.embed_texts([anchor])
+        (vector,) = self.embed_texts([anchor])
         return vector
 
     def info(self) -> EmbedderInfo:
         return EmbedderInfo(model="stub/hash-sha256", dim=self.DIM, normalize=True, package="test-stub")
 
 
-@pytest.mark.asyncio
-async def test_hybrid_index_duplicate_component_kind() -> None:
+def test_hybrid_index_duplicate_component_kind() -> None:
     with pytest.raises(ValueError, match="duplicate component kind"):
         HybridIndex(components=[BM25Index(), BM25Index()])
 
 
-@pytest.mark.asyncio
-async def test_hybrid_index_requires_components() -> None:
+def test_hybrid_index_requires_components() -> None:
     with pytest.raises(ValueError, match="at least one component"):
         HybridIndex(components=[])
 
 
-@pytest.mark.asyncio
-async def test_hybrid_index_default_fusion() -> None:
+def test_hybrid_index_default_fusion() -> None:
     hybrid = HybridIndex(components=[BM25Index()])
     assert isinstance(hybrid._fusion, ZScoreFusion)
 
 
-@pytest.mark.asyncio
-async def test_hybrid_index_build_and_ranking() -> None:
+def test_hybrid_index_build_and_ranking() -> None:
     entries = [
         Entity(namespace="ns", code="A", title="GDP of Germany", metadata={}),
         Entity(namespace="ns", code="B", title="CPI of France", metadata={}),
@@ -72,16 +68,15 @@ async def test_hybrid_index_build_and_ranking() -> None:
         ]
     )
     ctx = IndexBuildContext(field="title", vector_cache={})
-    await hybrid.build(entries, ctx=ctx)
+    hybrid.build(entries, ctx=ctx)
 
-    query_vectors = await embed_query_vectors("Germany GDP", [hybrid])
-    ranking = await hybrid.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
+    query_vectors = embed_query_vectors("Germany GDP", [hybrid])
+    ranking = hybrid.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
     assert len(ranking.items) > 0
     assert ranking.items[0].code == "A"
 
 
-@pytest.mark.asyncio
-async def test_hybrid_index_save_and_load_roundtrip() -> None:
+def test_hybrid_index_save_and_load_roundtrip() -> None:
     entries = [
         Entity(namespace="ns", code="A", title="GDP of Germany", metadata={}),
         Entity(namespace="ns", code="B", title="CPI of France", metadata={}),
@@ -94,7 +89,7 @@ async def test_hybrid_index_save_and_load_roundtrip() -> None:
         ]
     )
     ctx = IndexBuildContext(field="title", vector_cache={})
-    await hybrid.build(entries, ctx=ctx)
+    hybrid.build(entries, ctx=ctx)
 
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "title"
@@ -108,7 +103,7 @@ async def test_hybrid_index_save_and_load_roundtrip() -> None:
                 component._embedder_info = stub.info()
         assert set(loaded._components) == {"bm25", "vector"}
 
-        query_vectors = await embed_query_vectors("Germany GDP", [loaded])
-        ranking = await loaded.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
+        query_vectors = embed_query_vectors("Germany GDP", [loaded])
+        ranking = loaded.ranking("Germany GDP", limit=5, entries=entries, query_vectors=query_vectors)
         assert len(ranking.items) > 0
         assert ranking.items[0].code == "A"

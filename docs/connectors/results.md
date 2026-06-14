@@ -25,18 +25,7 @@ from parsimony.result import Result, TabularResult, OutputConfig, Column, Column
 The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. Two members are worth knowing:
 
 - `text` (property) — returns `data` unchanged if it is already a `str`, otherwise `str(data)`.
-- `with_properties(**properties)` — returns a **new** `Result` with the keyword arguments merged into `provenance.properties`. It is immutable and cumulative; the original is untouched and chained calls accumulate keys. This is a serialization/test affordance, not a place for provider metadata.
-
-```python
-from parsimony.result import Result
-
-r = Result(data={"rate": 4.25})
-print(r.text)  # "{'rate': 4.25}"
-
-r2 = r.with_properties(stage="raw").with_properties(checked=True)
-print(r2.provenance.properties)  # {'stage': 'raw', 'checked': True}
-print(r.provenance.properties)   # {} — original unchanged
-```
+- `_with_properties(**properties)` — internal helper for serialization/tests; merges keyword arguments into `provenance.properties` on a **new** `Result`. Connector code should not call this.
 
 ## TabularResult
 
@@ -167,7 +156,7 @@ build_table_result(df: pd.DataFrame | pd.Series, *, merge_unmapped_as_data: bool
 This is the core transform. It walks the declared columns **in order** and, for each, matches a DataFrame column by `Column.name` (or claims all remaining columns for the `"*"` wildcard), copies the series, [coerces its dtype](#dtype-coercion), and renames it. The result:
 
 - A column is **consumed at most once**, so an explicit name always wins over a later `"*"` wildcard.
-- The renamed name is `mapped_name % params` when `mapped_name` is set (params is `{}` here, so a literal like `"value"` simply renames), otherwise the source name.
+- When `mapped_name` is set, the output column is renamed to that literal string; otherwise the source name is kept.
 - When `merge_unmapped_as_data=True` (the default), every still-unconsumed DataFrame column is appended as a fresh `DATA` `Column(dtype="auto")`.
 - The returned `TabularResult` carries a **resolved** `OutputConfig` whose `Column.name`s are the final output names (post-rename).
 
@@ -253,8 +242,7 @@ print(entities[0].metadata)                       # {'freq': 'monthly'}
 | `name` | `str` | required | matched against DataFrame columns; `"*"` is the wildcard |
 | `dtype` | `str` | `"auto"` | drives [coercion](#dtype-coercion) |
 | `role` | `ColumnRole` | `DATA` | accepts the JSON alias `kind` |
-| `mapped_name` | `str \| None` | `None` | printf-style rename template applied as `mapped_name % params` |
-| `param_key` | `str \| None` | `None` | free annotation |
+| `mapped_name` | `str \| None` | `None` | output column rename (literal string) |
 | `description` | `str \| None` | `None` | free annotation |
 | `exclude_from_llm_view` | `bool` | `False` | forbidden on `DATA` and `TITLE` columns |
 | `namespace` | `str \| None` | `None` | allowed **only** on `KEY` or `METADATA` columns |

@@ -24,15 +24,14 @@ class _SimpleEmbedder:
     def info(self) -> EmbedderInfo:
         return EmbedderInfo(model="simple", dim=self.DIM, normalize=True, package="test")
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         return [[1.0, 0.0, 0.0, 0.0] for _ in texts]
 
-    async def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> list[float]:
         return [1.0, 0.0, 0.0, 0.0]
 
 
-@pytest.mark.asyncio
-async def test_catalog_embedder_separation() -> None:
+def test_catalog_embedder_separation() -> None:
     with pytest.raises(TypeError):
         Catalog("test", embedder=_SimpleEmbedder())  # type: ignore[call-arg]
 
@@ -41,37 +40,35 @@ async def test_catalog_embedder_separation() -> None:
 
     cat = Catalog("test", indexes={"title": idx})
     cat.set_entities([Entity(namespace="ns", code="A", title="Testing")])
-    await cat.build()
+    cat.build()
 
 
-@pytest.mark.asyncio
-async def test_catalog_url_unified(tmp_path: Path) -> None:
+def test_catalog_url_unified(tmp_path: Path) -> None:
     cat = Catalog("test", indexes={"title": BM25Index()})
     cat.set_entities([Entity(namespace="ns", code="A", title="Hello World")])
-    await cat.build()
+    cat.build()
 
-    await cat.save(tmp_path / "cat_path")
+    cat.save(tmp_path / "cat_path")
     assert (tmp_path / "cat_path" / "meta.json").exists()
 
-    loaded1 = await Catalog.load(tmp_path / "cat_path")
+    loaded1 = Catalog.load(tmp_path / "cat_path")
     assert loaded1.name == "test"
 
     str_path = str(tmp_path / "cat_str")
-    await cat.save(str_path)
+    cat.save(str_path)
     assert (tmp_path / "cat_str" / "meta.json").exists()
 
-    loaded2 = await Catalog.load(str_path)
+    loaded2 = Catalog.load(str_path)
     assert loaded2.name == "test"
 
 
-@pytest.mark.asyncio
-async def test_snapshot_integrity(tmp_path: Path) -> None:
+def test_snapshot_integrity(tmp_path: Path) -> None:
     cat = Catalog("test", indexes={"title": BM25Index()})
     cat.set_entities([Entity(namespace="ns", code="A", title="Secure snapshot")])
-    await cat.build()
+    cat.build()
 
     save_path = tmp_path / "snapshot"
-    await cat.save(save_path)
+    cat.save(save_path)
 
     entries_file = save_path / "entries.parquet"
     assert entries_file.exists()
@@ -79,11 +76,10 @@ async def test_snapshot_integrity(tmp_path: Path) -> None:
     entries_file.write_bytes(entries_content + b"\x00corrupt\x00")
 
     with pytest.raises(ValueError, match="Catalog snapshot integrity check failed"):
-        await Catalog.load(save_path)
+        Catalog.load(save_path)
 
 
-@pytest.mark.asyncio
-async def test_bm25_self_contained(tmp_path: Path) -> None:
+def test_bm25_self_contained(tmp_path: Path) -> None:
     cat = Catalog("test", indexes={"title": BM25Index()})
     cat.set_entities(
         [
@@ -94,27 +90,26 @@ async def test_bm25_self_contained(tmp_path: Path) -> None:
             Entity(namespace="ns", code="E", title="And another one"),
         ]
     )
-    await cat.build()
+    cat.build()
 
     save_path = tmp_path / "bm25_snapshot"
-    await cat.save(save_path)
+    cat.save(save_path)
 
     values_file = save_path / "indexes" / "title" / VALUES_FILENAME
     assert values_file.exists()
 
-    loaded = await Catalog.load(save_path)
-    results, _ = await loaded.search("Unique token", limit=5)
+    loaded = Catalog.load(save_path)
+    results, _ = loaded.search("Unique token", limit=5)
     assert len(results) == 1
     assert results[0].code == "A"
 
 
-@pytest.mark.asyncio
-async def test_bm25_overlap_fallback_on_tiny_corpus() -> None:
+def test_bm25_overlap_fallback_on_tiny_corpus() -> None:
     """Dev-time BM25 catalogs with very few rows still return token-overlap hits."""
     cat = Catalog("test", indexes={"title": BM25Index()})
     cat.set_entities([Entity(namespace="ns", code="FXUSDCAD", title="USD/CAD")])
-    await cat.build()
+    cat.build()
 
-    results, _ = await cat.search("USD", limit=5)
+    results, _ = cat.search("USD", limit=5)
     assert len(results) == 1
     assert results[0].code == "FXUSDCAD"

@@ -20,20 +20,20 @@ def sample_entries() -> list[Entity]:
     ]
 
 
-async def test_load_or_build_uses_lazy_cache(tmp_path: Path, sample_entries: list[Entity]) -> None:
+def test_load_or_build_uses_lazy_cache(tmp_path: Path, sample_entries: list[Entity]) -> None:
     configured = tmp_path / "missing-configured"
     cache = tmp_path / "lazy-cache"
     build_calls = 0
 
-    async def build() -> Catalog:
+    def build() -> Catalog:
         nonlocal build_calls
         build_calls += 1
         catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
         catalog.set_entities(sample_entries)
-        await catalog.build()
+        catalog.build()
         return catalog
 
-    first = await load_or_build_catalog(
+    first = load_or_build_catalog(
         f"file://{configured}",
         cache_path=cache,
         build=build,
@@ -41,7 +41,7 @@ async def test_load_or_build_uses_lazy_cache(tmp_path: Path, sample_entries: lis
     assert build_calls == 1
     assert len(first) == 2
 
-    second = await load_or_build_catalog(
+    second = load_or_build_catalog(
         f"file://{configured}",
         cache_path=cache,
         build=build,
@@ -51,19 +51,19 @@ async def test_load_or_build_uses_lazy_cache(tmp_path: Path, sample_entries: lis
     assert (cache / "meta.json").is_file()
 
 
-async def test_catalog_lru_reuses_memory(tmp_path: Path, sample_entries: list[Entity]) -> None:
+def test_catalog_lru_reuses_memory(tmp_path: Path, sample_entries: list[Entity]) -> None:
     lru = CatalogLRU(size=2)
     url = f"file://{tmp_path / 'missing'}"
     cache = tmp_path / "lazy"
 
-    async def build() -> Catalog:
+    def build() -> Catalog:
         catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
         catalog.set_entities(sample_entries)
-        await catalog.build()
+        catalog.build()
         return catalog
 
-    first = await lru.get_or_load(url, cache_path=cache, build=build)
-    second = await lru.get_or_load(url, cache_path=cache, build=build)
+    first = lru.get_or_load(url, cache_path=cache, build=build)
+    second = lru.get_or_load(url, cache_path=cache, build=build)
     assert first is second
 
 

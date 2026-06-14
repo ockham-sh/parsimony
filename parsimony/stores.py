@@ -78,12 +78,12 @@ class InMemoryDataStore:
     def __init__(self) -> None:
         self._rows: dict[tuple[str, str], pd.DataFrame] = {}
 
-    async def upsert(self, namespace: str, code: str, df: pd.DataFrame) -> None:
+    def upsert(self, namespace: str, code: str, df: pd.DataFrame) -> None:
         """Insert or replace observation data for one entity."""
         k = entity_key(namespace, code)
         self._rows[k] = df.copy()
 
-    async def get(self, namespace: str, code: str) -> pd.DataFrame | None:
+    def get(self, namespace: str, code: str) -> pd.DataFrame | None:
         """Retrieve stored observations, or None if not loaded."""
         k = entity_key(namespace, code)
         stored = self._rows.get(k)
@@ -91,12 +91,12 @@ class InMemoryDataStore:
             return None
         return stored.copy()
 
-    async def delete(self, namespace: str, code: str) -> None:
+    def delete(self, namespace: str, code: str) -> None:
         """Remove stored observations for one entity."""
         k = entity_key(namespace, code)
         self._rows.pop(k, None)
 
-    async def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
         """Return the subset of (namespace, code) pairs that have stored data."""
         out: set[tuple[str, str]] = set()
         for ns, c in keys:
@@ -105,7 +105,7 @@ class InMemoryDataStore:
                 out.add(k)
         return out
 
-    async def load_result(
+    def load_result(
         self,
         table: TabularResult,
         *,
@@ -126,7 +126,7 @@ class InMemoryDataStore:
         if force:
             existing: set[tuple[str, str]] = set()
         else:
-            existing = await self.exists(keys)
+            existing = self.exists(keys)
 
         for ns, code, sub_df in rows:
             k = (normalize_namespace(ns), normalize_entity_code(code))
@@ -134,7 +134,7 @@ class InMemoryDataStore:
                 result.skipped += 1
                 continue
             try:
-                await self.upsert(ns, code, sub_df)
+                self.upsert(ns, code, sub_df)
                 result.loaded += 1
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 logger.warning("InMemoryDataStore upsert failed for (%s, %s): %s", ns, code, exc)

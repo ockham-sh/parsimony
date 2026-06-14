@@ -1,5 +1,3 @@
-import pytest
-
 from parsimony.catalog import BM25Index, Entity, VectorIndex
 from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
 from parsimony.embedder import EmbedderInfo
@@ -13,11 +11,11 @@ class _LiteralEmbedder:
     def info(self) -> EmbedderInfo:
         return EmbedderInfo(model="literal", dim=2, normalize=False, package="test")
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         self.embedded_text_batches.append(list(texts))
         return [self._vector(text) for text in texts]
 
-    async def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> list[float]:
         return self._vector(query)
 
     def _vector(self, text: str) -> list[float]:
@@ -46,15 +44,14 @@ class _FixedRanker:
         return Ranking((RankedItem(namespace="test", code=self.code, rank=0, score=1.0),))
 
 
-@pytest.mark.asyncio
-async def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
+def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
     entries = _entries()
     index = VectorIndex(embedder=_LiteralEmbedder())
     ctx = IndexBuildContext(field="label", vector_cache={})
-    await index.build(entries, ctx=ctx)
+    index.build(entries, ctx=ctx)
 
-    query_vectors = await embed_query_vectors("query", [index])
-    ranking = await index.ranking("query", limit=1, entries=entries, query_vectors=query_vectors)
+    query_vectors = embed_query_vectors("query", [index])
+    ranking = index.ranking("query", limit=1, entries=entries, query_vectors=query_vectors)
     items = sorted(ranking.items, key=lambda item: item.code)
 
     assert [item.code for item in items] == ["A", "B"]
@@ -62,8 +59,7 @@ async def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
     assert items[0].score == items[1].score
 
 
-@pytest.mark.asyncio
-async def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
+def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
     embedder = _LiteralEmbedder()
     index = VectorIndex(embedder=embedder)
     entries = [
@@ -72,13 +68,12 @@ async def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None
         Entity(namespace="test", code="C", title="c", metadata={"label": "rare gamma"}),
     ]
     ctx = IndexBuildContext(field="label", vector_cache={})
-    await index.build(entries, ctx=ctx)
+    index.build(entries, ctx=ctx)
 
     assert embedder.embedded_text_batches == [["alpha", "rare gamma"]]
 
 
-@pytest.mark.asyncio
-async def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
+def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
     entries = [
         Entity(
             namespace="test",
@@ -98,9 +93,9 @@ async def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
     ]
     index = BM25Index()
     ctx = IndexBuildContext(field="label", vector_cache={})
-    await index.build(entries, ctx=ctx)
+    index.build(entries, ctx=ctx)
 
-    ranking = await index.ranking("instantaneous forward rate one year", limit=1, entries=entries)
+    ranking = index.ranking("instantaneous forward rate one year", limit=1, entries=entries)
     items = sorted(ranking.items, key=lambda item: item.code)
 
     assert [item.code for item in items] == ["A", "B"]

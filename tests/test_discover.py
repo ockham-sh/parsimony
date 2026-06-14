@@ -21,7 +21,7 @@ class _TP(BaseModel):
 
 
 def _toy(name: str) -> Any:
-    async def _fn(x: str = "y") -> dict[str, Any]:
+    def _fn(x: str = "y") -> dict[str, Any]:
         _TP(x=x)
         return {"ok": True}
 
@@ -97,6 +97,22 @@ def test_load_all_forgiving_on_import_error(caplog: pytest.LogCaptureFixture) ->
     assert len(result) == 1
     assert result.names() == ["good_fetch"]
     assert any("broken" in r.message for r in caplog.records)
+
+
+def test_load_all_raises_when_every_provider_fails(caplog: pytest.LogCaptureFixture) -> None:
+    ep1 = _make_ep("broken_a", "parsimony_broken_a", "parsimony-broken-a", "0.1.0")
+    ep2 = _make_ep("broken_b", "parsimony_broken_b", "parsimony-broken-b", "0.1.0")
+
+    def _import_module(name: str) -> Any:
+        raise ImportError(f"no module named {name!r}")
+
+    with (
+        patch("parsimony.discover.importlib.metadata.entry_points", return_value=[ep1, ep2]),
+        patch("parsimony.discover.importlib.import_module", side_effect=_import_module),
+        caplog.at_level(logging.WARNING, logger="parsimony.discover"),
+        pytest.raises(RuntimeError, match="all 2 installed parsimony provider"),
+    ):
+        load_all()
 
 
 def test_load_contract_violation() -> None:

@@ -61,16 +61,10 @@ def discovery_indexes(
     return indexes
 
 
-# Backward-compatible aliases used by connector tooling during migration.
-hybrid_field_index = adaptive_field_index
-macro_discovery_indexes = discovery_indexes
-
 __all__ = [
     "HYBRID_BM25_WEIGHT",
     "HYBRID_UNIQUE_VALUE_LIMIT",
     "HYBRID_VECTOR_WEIGHT",
     "adaptive_field_index",
     "discovery_indexes",
-    "hybrid_field_index",
-    "macro_discovery_indexes",
 ]

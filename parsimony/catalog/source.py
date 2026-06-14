@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from typing import Any
 
 import pandas as pd
@@ -43,16 +43,16 @@ def entities_from_raw(
     return output.build_entities(df)
 
 
-async def entities_from_connector(
-    source: Connector | Callable[..., Awaitable[Any]],
+def entities_from_connector(
+    source: Connector | Callable[..., Any],
     output: OutputConfig,
     **kwargs: Any,
 ) -> list[Entity]:
     """Invoke *source* and convert its return value into catalog entries."""
     if isinstance(source, Connector):
-        result = await source(**kwargs)
+        result = source(**kwargs)
         return entities_from_raw(result, output)
-    raw = await source(**kwargs)
+    raw = source(**kwargs)
     return entities_from_raw(raw, output)
 
 

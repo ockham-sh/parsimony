@@ -192,7 +192,7 @@ def test_build_table_result_metadata_columns_are_schema_roles() -> None:
 
 def test_result_with_properties_is_cumulative() -> None:
     df = pd.DataFrame({"a": [1]})
-    r = TabularResult.from_dataframe(df).with_properties(a=1).with_properties(b=2)
+    r = TabularResult.from_dataframe(df)._with_properties(a=1)._with_properties(b=2)
     assert r.provenance.properties == {"a": 1, "b": 2}
 
 
@@ -245,8 +245,8 @@ def test_build_table_result_no_warning_when_all_match(caplog) -> None:
     assert not caplog.records
 
 
-def test_build_table_result_warns_on_unmatched_column(caplog) -> None:
-    """Partial match should log a WARNING naming the missing column and available columns."""
+def test_build_table_result_raises_on_unmatched_column() -> None:
+    """Partial match should fail fast naming the missing column and available columns."""
     raw = pd.DataFrame({"a": [1], "b": [2]})
     cfg = OutputConfig(
         columns=[
@@ -254,18 +254,12 @@ def test_build_table_result_warns_on_unmatched_column(caplog) -> None:
             Column(name="missing_col", role=ColumnRole.DATA),
         ]
     )
-    with caplog.at_level("WARNING", logger="parsimony.result"):
+    with pytest.raises(ValueError, match="missing_col"):
         cfg.build_table_result(raw)
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert warnings
-    msg = warnings[0].message
-    assert "missing_col" in msg
-    assert "a" in msg
-    assert "b" in msg
 
 
-def test_build_table_result_warns_on_multiple_unmatched_columns(caplog) -> None:
-    """Multiple unmatched columns should all appear in the warning message."""
+def test_build_table_result_raises_on_multiple_unmatched_columns() -> None:
+    """Multiple unmatched columns should all appear in the error message."""
     raw = pd.DataFrame({"a": [1]})
     cfg = OutputConfig(
         columns=[
@@ -274,13 +268,9 @@ def test_build_table_result_warns_on_multiple_unmatched_columns(caplog) -> None:
             Column(name="gone_y", role=ColumnRole.DATA),
         ]
     )
-    with caplog.at_level("WARNING", logger="parsimony.result"):
+    with pytest.raises(ValueError, match="gone_x") as exc_info:
         cfg.build_table_result(raw)
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert warnings
-    msg = warnings[0].message
-    assert "gone_x" in msg
-    assert "gone_y" in msg
+    assert "gone_y" in str(exc_info.value)
 
 
 def test_build_table_result_wildcard_not_reported_as_unmatched(caplog) -> None:
@@ -331,8 +321,8 @@ def test_validate_columns_excludes_wildcard() -> None:
     assert cfg.validate_columns(df) == []
 
 
-def test_build_table_result_warns_then_raises_on_total_mismatch(caplog) -> None:
-    """When all config columns are absent, warn AND raise ValueError."""
+def test_build_table_result_raises_on_total_mismatch() -> None:
+    """When all config columns are absent, raise ValueError."""
     raw = pd.DataFrame({"x": [1], "y": [2]})
     cfg = OutputConfig(
         columns=[
@@ -340,13 +330,6 @@ def test_build_table_result_warns_then_raises_on_total_mismatch(caplog) -> None:
             Column(name="absent_b", role=ColumnRole.DATA),
         ]
     )
-    with (
-        caplog.at_level("WARNING", logger="parsimony.result"),
-        pytest.raises(ValueError, match="matched no input columns"),
-    ):
+    with pytest.raises(ValueError, match="absent_a") as exc_info:
         cfg.build_table_result(raw)
-    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
-    assert warnings
-    msg = warnings[0].message
-    assert "absent_a" in msg
-    assert "absent_b" in msg
+    assert "absent_b" in str(exc_info.value)

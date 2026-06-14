@@ -1,10 +1,10 @@
 # Defining connectors
 
-The `@connector` decorator turns an `async def` into a frozen `Connector`: a small async
+The `@connector` decorator turns a `def` into a frozen `Connector`: a small
 callable plus the metadata Parsimony needs to call it, validate its output, render it for an
 LLM, and stamp its results with provenance. This page covers the decorator in depth — its two
 call forms, every keyword, the defaults it derives, the validation it runs at decoration time,
-and what happens to your return value when the connector is awaited.
+and what happens to your return value when the connector is called.
 
 All three names come from the package root:
 
@@ -21,18 +21,17 @@ page. This page is about the general `@connector`. See
 `@connector` is overloaded so it works bare or called.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search for test series by keyword."""
     return pd.DataFrame({"id": ["A", "B"], "title": [f"Series about {query}", "Other"]})
 
 # Called form, with keyword options:
 @connector(name="ecb_search", tags=["search"])
-async def search(query: str) -> pd.DataFrame:
+def search(query: str) -> pd.DataFrame:
     """Search ECB series by keyword."""
     return pd.DataFrame({"id": ["X"], "title": [query]})
 ```
@@ -46,16 +45,16 @@ The decorated object is a frozen dataclass, not your original function. Its para
 connector's call surface — there is no separate `params: SomeModel` wrapper, and the conformance
 suite forbids one. Pass flat, top-level scalar parameters.
 
-!!! note "Connectors are always `async`"
-    The wrapped function must be a coroutine function. A plain `def` raises
-    `TypeError("<name>: connector function must be async")` at decoration time. Calling a
-    connector is also async — see [Calling and awaiting](#calling-and-awaiting) below.
+!!! note "Connectors are always synchronous"
+    The wrapped function must be a plain function. An `async def` raises
+    `TypeError("<name>: connector function must be synchronous; ...")` at decoration time.
+    Calling a connector is also synchronous — see [Calling](#calling) below.
 
 ## Name and description
 
 ```python
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search for test series by keyword."""
     ...
 
@@ -77,7 +76,7 @@ connector, so write it as a precise capability statement.
 !!! warning "Empty description is a hard error"
     ```python
     @connector
-    async def no_doc(x: str) -> dict:  # no docstring, no description=
+    def no_doc(x: str) -> dict:  # no docstring, no description=
         return {}
     # ValueError: no_doc: add a docstring or pass description= (connector description is required)
     ```
@@ -100,7 +99,7 @@ their own sections below.
 
 ```python
 @connector(tags=["finance"], properties={"region": "us"})
-async def fetch(q: str) -> dict:
+def fetch(q: str) -> dict:
     """Fetch a finance value."""
     return {"q": q}
 
@@ -116,16 +115,15 @@ function's actual parameters — an unknown name raises
 `ValueError("secrets references unknown parameters: [...]")`.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 
 @connector(secrets=("api_key",))
-async def keyed(query: str, api_key: str) -> pd.DataFrame:
+def keyed(query: str, api_key: str) -> pd.DataFrame:
     """Fetch data using an API key."""
     return pd.DataFrame({"q": [query]})
 
-result = asyncio.run(keyed(query="GDP", api_key="sk-secret"))
+result = keyed(query="GDP", api_key="sk-secret")
 assert result.provenance.params == {"query": "GDP"}  # api_key stripped
 ```
 
@@ -157,7 +155,7 @@ OUT = OutputConfig(columns=[
 ])
 
 @connector(output=OUT)
-async def fred_fetch(series_id: Annotated[str, "ns:fred_series"]) -> pd.DataFrame:
+def fred_fetch(series_id: Annotated[str, "ns:fred_series"]) -> pd.DataFrame:
     """Fetch FRED time series observations by series_id."""
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0]})
 
@@ -169,24 +167,22 @@ A hint tells a downstream agent that `series_id` accepts codes drawn from the `f
 namespace — the same namespace a sibling [enumerator](loaders-and-enumerators.md) would populate
 in a [catalog](../catalog/index.md). An empty hint (`"ns:"`) is ignored.
 
-## Calling and awaiting
+## Calling
 
-A connector is a coroutine. Awaiting it binds your arguments against the *exposed* signature,
+Calling a connector binds your arguments against the *exposed* signature,
 applies defaults, calls your function, and wraps the raw return value into a
-[`Result`](results.md). Drive it with `asyncio.run` from synchronous code, or `await` it inside
-an async context.
+[`Result`](results.md).
 
 ```python
-import asyncio
 from parsimony import connector
 import pandas as pd
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search for test series by keyword."""
     return pd.DataFrame({"id": ["A", "B"], "title": [query, "Other"]})
 
-result = asyncio.run(demo_search(query="GDP"))
+result = demo_search(query="GDP")
 print(result.df)                      # the DataFrame you returned
 print(result.provenance.source)       # 'demo_search'
 print(result.provenance.params)       # {'query': 'GDP'}
@@ -215,11 +211,11 @@ DataFrame columns, not in a side-channel tuple.
 
 ```python
 @connector
-async def bad(q: str) -> tuple:
+def bad(q: str) -> tuple:
     """Returns a forbidden tuple."""
     return (pd.DataFrame({"a": [1]}), {"prop": 1})
 
-# asyncio.run(bad(q="x"))
+# bad(q="x")
 # TypeError: connector 'bad': must return raw data, not (data, properties) tuples; ...
 ```
 
@@ -237,7 +233,6 @@ not named in the schema is folded in as a `DATA` column. (An `@enumerator` is th
 enforces an exact column match instead.)
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -248,11 +243,11 @@ OUT = OutputConfig(columns=[
 ])
 
 @connector(output=OUT)
-async def fetch(series_id: str) -> pd.DataFrame:
+def fetch(series_id: str) -> pd.DataFrame:
     """Fetch demo observations."""
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0], "extra": ["z"]})
 
-result = asyncio.run(fetch(series_id="X"))
+result = fetch(series_id="X")
 assert [c.name for c in result.columns] == ["date", "value", "extra"]
 assert result.columns[2].role == ColumnRole.DATA      # 'extra' merged as DATA
 ```
@@ -266,7 +261,6 @@ all-non-numeric column declared `dtype="numeric"` — is re-raised as a typed
 type rather than a raw pandas/pydantic exception.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony import connector
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -278,12 +272,12 @@ OUT = OutputConfig(columns=[
 ])
 
 @connector(output=OUT)
-async def fetch(series_id: str) -> pd.DataFrame:
+def fetch(series_id: str) -> pd.DataFrame:
     """Fetch demo observations."""
     return pd.DataFrame({"date": ["2020-01-01"], "value": ["not-a-number"]})
 
 try:
-    asyncio.run(fetch(series_id="X"))
+    fetch(series_id="X")
 except ParseError as exc:
     print(exc.provider)   # 'fetch'
 ```
@@ -355,6 +349,6 @@ return new instances. Those, plus composing connectors into a collection, are co
 ## See also
 
 - [Loaders and enumerators](loaders-and-enumerators.md) — the two stricter connector verbs and their output contracts.
-- [Calling, binding, and composing](calling-binding-composing.md) — awaiting connectors, fixing parameters with `bind`, and `Connectors` collections.
+- [Calling, binding, and composing](calling-binding-composing.md) — calling connectors, fixing parameters with `bind`, and `Connectors` collections.
 - [Results and output schemas](results.md) — `OutputConfig`, `Column`, `ColumnRole`, `Provenance`, and dtype coercion.
 - [Errors](errors.md) — the typed exception taxonomy connectors raise and `ParseError` translation.

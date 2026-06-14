@@ -274,8 +274,6 @@ do not raise `ParseError` for schema-coercion failures yourself — the framewor
 does it for you, with `provider` set to the connector's name.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import Column, ColumnRole, OutputConfig, ParseError, connector
@@ -286,20 +284,16 @@ from parsimony import Column, ColumnRole, OutputConfig, ParseError, connector
         columns=[Column(name="value", dtype="numeric", role=ColumnRole.DATA)]
     )
 )
-async def broken() -> pd.DataFrame:
+def broken() -> pd.DataFrame:
     """Return values that cannot be coerced to numeric, forcing a ParseError."""
     return pd.DataFrame({"value": ["not", "a", "number"]})
 
 
-async def main() -> None:
-    try:
-        await broken()
-    except ParseError as exc:
-        print(exc.provider)        # broken — the connector's name
-        print(isinstance(exc, ParseError))  # True
-
-
-asyncio.run(main())
+try:
+    broken()
+except ParseError as exc:
+    print(exc.provider)        # broken — the connector's name
+    print(isinstance(exc, ParseError))  # True
 ```
 
 ### InvalidParameterError — bad call-time arguments

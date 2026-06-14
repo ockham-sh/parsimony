@@ -112,7 +112,9 @@ class SentenceTransformerEmbedder:
 
     @property
     def dimension(self) -> int:
-        dim = self._get_model().get_sentence_embedding_dimension()
+        model = self._get_model()
+        dim_fn = getattr(model, "get_embedding_dimension", model.get_sentence_embedding_dimension)
+        dim = dim_fn()
         if dim is None:  # pragma: no cover
             raise RuntimeError(
                 f"sentence-transformers model {self._model_name!r} did not report an embedding dimension"

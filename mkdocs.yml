@@ -57,6 +57,7 @@ nav:
       - Errors: connectors/errors.md
       - HTTP transport: connectors/http-transport.md
   - Plugins:
+      - Plugin contract: contract.md
       - Plugins and providers: plugins/index.md
       - Discovering providers: plugins/discovery.md
       - Authoring a provider: plugins/authoring.md

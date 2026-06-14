@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
 
 import pyarrow.parquet as pq
 from pydantic import BaseModel, Field
@@ -39,7 +38,7 @@ class BuildInfo(BaseModel):
 class CatalogMeta(BaseModel):
     """Catalog snapshot manifest."""
 
-    schema_version: Literal[1] = 1
+    schema_version: int = 1
     name: str
     namespaces: list[str]
     entry_count: int = Field(ge=0)

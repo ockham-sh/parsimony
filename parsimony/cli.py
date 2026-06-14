@@ -145,11 +145,18 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
         conformance = "skipped"
         detail: str | None = None
 
-        if strict:
+        try:
+            connectors = provider.load()
+            connector_count = len(connectors)
+        except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
+            if strict:
+                conformance = "fail"
+                detail = f"{type(exc).__name__}: {exc}"
+            connector_count = 0
+
+        if strict and conformance != "fail":
             try:
                 module = importlib.import_module(provider.module_path)
-                connectors = provider.load()
-                connector_count = len(connectors)
                 assert_plugin_valid(module)
                 conformance = "pass"
             except ConformanceError as exc:
@@ -189,7 +196,7 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
             [
                 r["name"],
                 r["version"] or "?",
-                str(r["connector_count"]) if r["connector_count"] else "?",
+                str(r["connector_count"]) if r["connector_count"] else "0",
                 r["conformance"],
             ]
         )

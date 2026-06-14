@@ -135,13 +135,13 @@ class _BundledParams(BaseModel):
 
 
 @connector()
-async def bundled(params: _BundledParams) -> pd.DataFrame:  # FAILS check_flat_public_params
+def bundled(params: _BundledParams) -> pd.DataFrame:  # FAILS check_flat_public_params
     """Toy connector with bundled params, for conformance demonstration only."""
     return pd.DataFrame({"country": [params.country]})
 
 
 @connector()
-async def flat(country: str) -> pd.DataFrame:  # PASSES — flat top-level parameter
+def flat(country: str) -> pd.DataFrame:  # PASSES — flat top-level parameter
     """Toy connector with a flat top-level parameter, the required shape."""
     return pd.DataFrame({"country": [country]})
 ```
@@ -249,7 +249,7 @@ When `entry_point_name` is set, `test_entry_point_resolves` enumerates installed
   different module than the one the suite is configured against.
 
 !!! tip "Test methods are plain functions"
-    The two test methods are ordinary `def` (not `async`) and need no fixtures or markers.
+    The two test methods are ordinary `def` and need no fixtures or markers.
     Subclassing `ProviderTestSuite` in a `test_*.py` module is enough for pytest to discover
     them. `pytest` itself is imported lazily inside the suite (for `pytest.skip`), so the
     procedural `assert_plugin_valid` path has no hard dependency on pytest.
@@ -288,13 +288,13 @@ ENUM_OUTPUT = OutputConfig(
 
 
 @connector(output=FETCH_OUTPUT, tags=["tool"])
-async def synth_fetch(key: str) -> pd.DataFrame:
+def synth_fetch(key: str) -> pd.DataFrame:
     """Fetch a synthetic observation series. Returns a small example table."""
     return pd.DataFrame([{"key": key, "title": key, "value": 1.0}])
 
 
 @enumerator(output=ENUM_OUTPUT, tags=["synth"])
-async def enumerate_synth(limit: int = 10) -> pd.DataFrame:
+def enumerate_synth(limit: int = 10) -> pd.DataFrame:
     """Enumerate up to ``limit`` synthetic catalog entries for discovery."""
     return pd.DataFrame([{"key": f"k{i}", "title": f"Item {i}"} for i in range(limit)])
 

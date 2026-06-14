@@ -21,14 +21,14 @@ pip install parsimony-core
 ```
 
 The base distribution pulls a deliberately small set of runtime dependencies — the mandatory
-kernel footprint for validation, data carriers, async HTTP, and cache-directory resolution:
+kernel footprint for validation, data carriers, HTTP, and cache-directory resolution:
 
 | Dependency | Role |
 | --- | --- |
 | `pydantic` (>=2.11.1, <3) | Schema validation for entities, output configs, and errors |
 | `pandas` (>=2.3.0, <3) | The DataFrame/Series carried by a `TabularResult` |
 | `pyarrow` (>=23.0.1) | Arrow / Parquet round-tripping of tabular results and snapshots |
-| `httpx` (>=0.28.1) | The async HTTP layer connector authors build on |
+| `httpx` (>=0.28.1) | The HTTP layer connector authors build on |
 | `platformdirs` (>=4.0.0, <5) | Resolves the on-disk [cache](../caching.md) root |
 
 That is everything `pip install parsimony-core` installs. It is enough to define and call fetch-only
@@ -91,7 +91,7 @@ need to list both extras.
 [lazy re-exports](../reference/api.md): they are resolved on first attribute access, not at
 import time. Importing the package, or even naming a catalog class, does **not** pull torch,
 FAISS, sentence-transformers, or litellm into memory. Those backends load only when a code path
-actually needs them (for example `await catalog.build()` on a `HybridIndex`).
+actually needs them (for example `catalog.build()` on a `HybridIndex`).
 
 If you call a catalog method without the `catalog` extra installed, the failure is an actionable
 `ConnectorError` pointing at `pip install 'parsimony-core[catalog]'`.

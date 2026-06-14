@@ -99,7 +99,7 @@ from parsimony import connector, Connectors
 
 
 @connector()
-async def demo_fetch(series_id: str) -> dict:
+def demo_fetch(series_id: str) -> dict:
     """Fetch a demo series by id."""
     return {"series_id": series_id}
 

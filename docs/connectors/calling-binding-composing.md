@@ -1,38 +1,32 @@
 # Calling, binding, and composing
 
-A connector is an async callable plus metadata, so you invoke it with `await`,
-and the framework hands back a [`Result`](results.md). Binding fixes parameters
+A connector is a callable plus metadata, so you invoke it and the framework
+hands back a [`Result`](results.md). Binding fixes parameters
 ahead of time — the idiom for injecting secrets and base URLs without leaking
 them — and the immutable `Connectors` collection lets you merge, filter, and
 search connector bundles. This page covers all three.
 
 ## Calling a connector
 
-Every connector is a coroutine. Call it with keyword (or positional) arguments
-and `await` the result; the framework wraps the connector's raw return value in
-a [`Result` or `TabularResult`](results.md) with framework-built
-[`Provenance`](results.md).
+Call a connector with keyword (or positional) arguments; the framework wraps
+the connector's raw return value in a [`Result` or `TabularResult`](results.md)
+with framework-built [`Provenance`](results.md).
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony.connector import connector
 
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search demo series by keyword."""
     return pd.DataFrame({"id": ["A", "B"], "title": [f"Series about {query}", "Another"]})
 
 
-async def main() -> None:
-    result = await demo_search(query="GDP")
-    print(result.df)                      # the returned DataFrame (no output= schema here)
-    print(result.provenance.source)       # "demo_search"
-    print(result.provenance.params)       # {"query": "GDP"}
-
-
-asyncio.run(main())
+result = demo_search(query="GDP")
+print(result.df)                      # the returned DataFrame (no output= schema here)
+print(result.provenance.source)       # "demo_search"
+print(result.provenance.params)       # {"query": "GDP"}
 ```
 
 Arguments are bound against the connector's **exposed signature** (see
@@ -66,18 +60,15 @@ print(list(demo_search.exposed_signature.parameters))   # ['query']
 
 ### Calling without wrapping: `call_raw`
 
-`await connector.call_raw(**kwargs)` invokes the underlying function and returns
+`connector.call_raw(**kwargs)` invokes the underlying function and returns
 its **raw** value — no `Result`, no `Provenance`, no callbacks. Note that
 `call_raw` does not bind against the exposed signature or apply defaults; you
 pass the full merged argument set yourself. Use it when you want the data only,
 for example inside another connector or a test.
 
 ```python
-async def main() -> None:
-    raw = await demo_search.call_raw(query="CPI")
-    assert isinstance(raw, pd.DataFrame)
-
-asyncio.run(main())
+raw = demo_search.call_raw(query="CPI")
+assert isinstance(raw, pd.DataFrame)
 ```
 
 ## Binding parameters
@@ -90,14 +81,13 @@ configuration that the caller — or an LLM driving the connector — should nev
 see or have to supply.
 
 ```python
-import asyncio
 import os
 import pandas as pd
 from parsimony.connector import connector
 
 
 @connector(secrets=("api_key",))
-async def fetch_series(series_id: str, api_key: str, base_url: str = "https://api.example.com") -> pd.DataFrame:
+def fetch_series(series_id: str, api_key: str, base_url: str = "https://api.example.com") -> pd.DataFrame:
     """Fetch a series by id from the example provider."""
     return pd.DataFrame({"series": [series_id]})
 
@@ -107,12 +97,8 @@ ready = fetch_series.bind(api_key=os.environ.get("EXAMPLE_API_KEY", "demo-key"))
 
 print(list(ready.exposed_signature.parameters))   # ['series_id', 'base_url']
 
-
-async def main() -> None:
-    result = await ready(series_id="GDP")
-    print(result.provenance.params)               # {'series_id': 'GDP', 'base_url': '...'} — no api_key
-
-asyncio.run(main())
+result = ready(series_id="GDP")
+print(result.provenance.params)               # {'series_id': 'GDP', 'base_url': '...'} — no api_key
 ```
 
 !!! note "`secrets=` and binding are independent"
@@ -148,9 +134,8 @@ place — it always returns a fresh instance.
 
 `Connector.with_callback(callback)` returns a new connector with an **observer**
 appended. After a successful fetch, every registered callback is invoked with
-the produced `Result`. A callback is any `(result) -> None | Awaitable`; both
-synchronous and `async` callbacks are supported, and awaitable returns are
-awaited. The type alias is `ResultCallback`.
+the produced `Result`. A callback is any `(result) -> None`. The type alias is
+`ResultCallback`.
 
 !!! warning "Import `ResultCallback` from the submodule"
     `ResultCallback` is **not** exported from the top-level `parsimony`
@@ -165,12 +150,11 @@ callback is logged (via `logger.exception`) and **swallowed** — the `Result` i
 still returned intact.
 
 ```python
-import asyncio
 from parsimony.connector import connector
 
 
 @connector
-async def ping() -> dict:
+def ping() -> dict:
     """Return a tiny payload."""
     return {"ok": True}
 
@@ -185,11 +169,8 @@ def record(result) -> None:
 observed = ping.with_callback(record)
 
 
-async def main() -> None:
-    await observed()
-    print(seen)        # ['ping']
-
-asyncio.run(main())
+observed()
+print(seen)        # ['ping']
 ```
 
 !!! tip "Use observers for telemetry, not for persistence you depend on"
@@ -218,21 +199,17 @@ print("ping" in bundle)      # True
 
 ### Calling by name
 
-The canonical execution idiom is `await connectors[name](**kwargs)`. Lookup is
+The canonical execution idiom is `connectors[name](**kwargs)`. Lookup is
 by connector **name** (a string), not by position.
 
 ```python
-import asyncio
 from parsimony.connector import Connectors
 
 bundle = Connectors([demo_search, ping])
 
 
-async def main() -> None:
-    result = await bundle["demo_search"](query="GDP")
-    print(len(result.df))
-
-asyncio.run(main())
+result = bundle["demo_search"](query="GDP")
+print(len(result.df))
 ```
 
 !!! warning "Indexing is by name, not by integer"

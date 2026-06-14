@@ -24,9 +24,9 @@ grouped below by concern; the grouping is editorial — at runtime they are a fl
 
 | Name | Kind | Import |
 |---|---|---|
-| `Connector` | class — frozen async callable + metadata | `from parsimony import Connector` |
+| `Connector` | class — frozen callable + metadata | `from parsimony import Connector` |
 | `Connectors` | class — immutable connector collection | `from parsimony import Connectors` |
-| `connector` | decorator — turn an `async def` into a `Connector` | `from parsimony import connector` |
+| `connector` | decorator — turn a `def` into a `Connector` | `from parsimony import connector` |
 | `loader` | decorator — connector verb that feeds a data store | `from parsimony import loader` |
 | `enumerator` | decorator — connector verb that feeds a catalog | `from parsimony import enumerator` |
 
@@ -230,7 +230,7 @@ extras (`standard`, `standard-onnx`, `litellm`) are needed only at use, not at i
 
 | Name | Kind |
 |---|---|
-| `EmbeddingProvider` | protocol — `dimension`, async `embed_texts`/`embed_query`, `info()` |
+| `EmbeddingProvider` | protocol — `dimension`, `embed_texts`/`embed_query`, `info()` |
 | `EmbedderInfo` | model — the `(model, dim, normalize)` identity key (Pydantic) |
 | `SentenceTransformerEmbedder` | class — default embedder (`[catalog]`) |
 | `OnnxEmbedder` | class — int8-quantized ONNX embedder (`[standard-onnx]`) |
@@ -245,18 +245,18 @@ See [Embedders](../catalog/embedders.md).
 
 ### `parsimony.transport` and `parsimony.transport.helpers`
 
-The async HTTP layer connector authors build on.
+The HTTP layer connector authors build on.
 
 `parsimony.transport`:
 
 | Name | Kind |
 |---|---|
-| `HttpClient` | class — async client with base URL, default headers/params, redacted logging |
+| `HttpClient` | class — client with base URL, default headers/params, redacted logging |
 | `HttpRetryPolicy` | dataclass — transient-retry policy |
 | `DEFAULT_HTTP_RETRY_POLICY` | constant — the default `HttpRetryPolicy()` |
 | `map_http_error` / `map_timeout_error` | function — map `httpx` errors to typed errors |
 | `parse_retry_after` | function — extract retry-after seconds from a 429 response |
-| `pooled_client` | async context manager — yields a connection-pooled `HttpClient` |
+| `pooled_client` | context manager — yields a connection-pooled `HttpClient` |
 | `redact_url` / `redact_params_for_logging` / `redact_sensitive_text` | function — secret redaction |
 
 `parsimony.transport.helpers`:

@@ -87,7 +87,7 @@ declaring it is optional but recommended.
 
 Inside the connector module, use the standard decorators from `parsimony.connector` and
 the schema types from `parsimony.result`. There is no plugin-specific base class to
-subclass — a connector is an `async def` plus metadata.
+subclass — a connector is a `def` plus metadata.
 
 ```python
 import pandas as pd
@@ -98,7 +98,7 @@ from parsimony.result import Column, ColumnRole, OutputConfig
 
 Three rules govern every connector you write:
 
-- **Functions must be `async`.** A plain `def` raises `TypeError` at decoration time.
+- **Functions must be synchronous.** An `async def` raises `TypeError` at decoration time.
 - **Parameters are the call surface.** Expose flat, top-level scalar parameters — never a
   single bundled `params: SomeModel` object. The conformance suite forbids the bundled
   idiom (the check fires on any public parameter literally named `params` annotated as a
@@ -154,8 +154,8 @@ from parsimony.transport.helpers import fetch_json, make_api_key_client
 # default API-key query param is "apikey"; default helper timeout is 15s
 client = make_api_key_client("https://api.example.com", api_key="...", api_key_param="apikey")
 
-async def _fetch(series_id: str) -> dict:
-    return await fetch_json(
+def _fetch(series_id: str) -> dict:
+    return fetch_json(
         client,
         path="series",
         params={"id": series_id},     # None-valued params are dropped
@@ -168,7 +168,7 @@ async def _fetch(series_id: str) -> dict:
 client without a default API key. `HttpClient.request` returns the raw response and does
 **not** call `raise_for_status` — `fetch_json` does that for you and translates failures.
 For enumerator loops and fan-out fetches, reuse one pooled connection via the
-`pooled_client` async context manager. The full transport surface is documented under
+`pooled_client` context manager. The full transport surface is documented under
 [HTTP transport](../connectors/http-transport.md).
 
 ## Raising typed errors
@@ -181,11 +181,11 @@ upstream HTTP failures to the right type.
 ```python
 from parsimony.errors import EmptyDataError, UnauthorizedError
 
-async def _fetch(series_id: str, *, api_key: str) -> pd.DataFrame:
+def _fetch(series_id: str, *, api_key: str) -> pd.DataFrame:
     if not api_key:
         # the env_var argument tells the agent which variable to set
         raise UnauthorizedError("acme", env_var="ACME_API_KEY")
-    rows = await _query(series_id, api_key)
+    rows = _query(series_id, api_key)
     if not rows:
         raise EmptyDataError("acme", query_params={"series_id": series_id})
     return pd.DataFrame(rows)
@@ -248,7 +248,7 @@ ENUM_OUTPUT = OutputConfig(
 
 
 @connector(output=FETCH_OUTPUT, tags=["acme", "tool"], secrets=("api_key",))
-async def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
+def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch a series of observations for the given series_id from the ACME API."""
     return pd.DataFrame(
         {
@@ -260,7 +260,7 @@ async def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
 
 
 @enumerator(output=ENUM_OUTPUT, tags=["acme"])
-async def acme_enumerate(limit: int = 10) -> pd.DataFrame:
+def acme_enumerate(limit: int = 10) -> pd.DataFrame:
     """Enumerate up to ``limit`` catalog entries available from the ACME provider."""
     return pd.DataFrame([{"code": f"s{i}", "title": f"Series {i}"} for i in range(limit)])
 
@@ -300,4 +300,4 @@ page covers the five checks, `ConformanceError`'s structured fields, and how
 - [Discovering installed providers](discovery.md) — how consumers find and load your plugin
 - [Defining connectors](../connectors/defining-connectors.md) — the `@connector` decorator in depth
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — the two stricter verbs
-- [HTTP transport](../connectors/http-transport.md) — the async HTTP layer to build on
+- [HTTP transport](../connectors/http-transport.md) — the HTTP layer to build on

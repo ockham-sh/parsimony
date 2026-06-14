@@ -371,9 +371,9 @@ print(sorted(discovery_indexes(entries, include_description=False)))  # ['code',
 
 !!! tip "Policy constants"
     The policy thresholds are public: `HYBRID_UNIQUE_VALUE_LIMIT` (`1000`),
-    `HYBRID_BM25_WEIGHT` (`0.5`), and `HYBRID_VECTOR_WEIGHT` (`1.0`). `adaptive_field_index`
-    and `discovery_indexes` are also re-exported under the legacy aliases `hybrid_field_index`
-    and `macro_discovery_indexes`; prefer the primary names.
+    `HYBRID_BM25_WEIGHT` (`0.5`), and `HYBRID_VECTOR_WEIGHT` (`1.0`).
+    `adaptive_field_index` and `discovery_indexes` are the canonical names for
+    per-field hybrid/BM25 selection and default discovery index bundles.
 
 ## Low-level helpers (`parsimony.indexes`)
 

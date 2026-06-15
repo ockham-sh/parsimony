@@ -114,45 +114,51 @@ class _PluginRow(TypedDict):
     connector_count: int
     conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
-    secrets: list[str]  # union of declared secret param names (strict mode only)
+    # Declared credential parameter NAMES (strict mode only) are intentionally not
+    # a field here; they ride in a side map so no row field carries secret-derived
+    # data. The names themselves are public (each connector exposes them in its
+    # signature and docstring) — they are parameter names like "api_key", never values.
 
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
-    rows = _collect_rows(strict=strict)
+    rows, secrets_by_name = _collect_rows(strict=strict)
     if json_output:
         payload: dict[str, Any] = {
-            "plugins": [dict(r) for r in rows],
+            "plugins": [{**dict(r), "secrets": secrets_by_name.get(r["name"], [])} for r in rows],
         }
         print(json.dumps(payload, indent=2))
     else:
-        _render_table(rows, sys.stdout)
+        _render_table(rows, secrets_by_name, sys.stdout)
     if strict and any(r["conformance"] == "fail" for r in rows):
         return 1
     return 0
 
 
-def _collect_rows(*, strict: bool) -> list[_PluginRow]:
+def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], dict[str, list[str]]]:
     """Walk ``iter_providers`` metadata-only.
 
     Only imports each plugin when ``strict`` is requested because conformance
-    needs the module.
+    needs the module. Returns the rows plus a side map of plugin name to its
+    declared credential parameter names, kept out of the rows so no row field
+    carries secret-derived data.
     """
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
     rows: list[_PluginRow] = []
+    secrets_by_name: dict[str, list[str]] = {}
 
     for provider in iter_providers():
         module: ModuleType | None = None
         connector_count = 0
         conformance = "skipped"
         detail: str | None = None
-        secrets: list[str] = []
 
         try:
             connectors = provider.load()
             connector_count = len(connectors)
             if strict:
-                secrets = sorted({s for c in connectors for s in c.secrets})
+                # Declared credential parameter NAMES (e.g. "api_key"), not values.
+                secrets_by_name[provider.name] = sorted({s for c in connectors for s in c.secrets})
         except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
             if strict:
                 conformance = "fail"
@@ -180,13 +186,12 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
                 "connector_count": connector_count,
                 "conformance": conformance,
                 "conformance_detail": detail,
-                "secrets": secrets,
             }
         )
-    return rows
+    return rows, secrets_by_name
 
 
-def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
+def _render_table(rows: list[_PluginRow], secrets_by_name: dict[str, list[str]], stream: TextIO) -> None:
     if not rows:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
@@ -199,11 +204,13 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
     body: list[list[str]] = [header]
     for r in rows:
         # Secrets are only inspected in --strict mode; "?" marks "not inspected",
-        # "-" marks "inspected, declares none".
+        # "-" marks "inspected, declares none". These are public parameter names
+        # (e.g. "api_key"), not values.
+        names = secrets_by_name.get(r["name"], [])
         if r["conformance"] == "skipped":
             secrets_cell = "?"
-        elif r["secrets"]:
-            secrets_cell = ", ".join(r["secrets"])
+        elif names:
+            secrets_cell = ", ".join(names)
         else:
             secrets_cell = "-"
         body.append(

@@ -75,6 +75,25 @@ class TestParseCatalogURL:
         with pytest.raises(ValueError, match="<org>/<repo>"):
             parse_catalog_url("hf:///repo")
 
+    def test_hf_url_no_revision_is_none(self) -> None:
+        assert parse_catalog_url("hf://org/repo").revision is None
+
+    def test_hf_url_with_revision(self) -> None:
+        parsed = parse_catalog_url("hf://org/repo@v1.2.0")
+        assert parsed.root == "org/repo"
+        assert parsed.sub == ""
+        assert parsed.revision == "v1.2.0"
+
+    def test_hf_url_with_revision_and_sub(self) -> None:
+        parsed = parse_catalog_url("hf://org/repo@abc123/nested/bundle")
+        assert parsed.root == "org/repo"
+        assert parsed.sub == "nested/bundle"
+        assert parsed.revision == "abc123"
+
+    def test_hf_url_empty_revision_after_at_raises(self) -> None:
+        with pytest.raises(ValueError, match="<revision>"):
+            parse_catalog_url("hf://org/repo@")
+
     def test_no_scheme_parses_as_file(self) -> None:
         parsed = parse_catalog_url("/tmp/repo")
         assert parsed.scheme == "file"
@@ -187,9 +206,10 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
     ``_load_hf`` with ``root='org/repo'`` and ``sub='bundle'``."""
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str) -> Any:
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
         captured["root"] = root
         captured["sub"] = sub
+        captured["revision"] = revision
         return object()  # Catalog isn't actually constructed here.
 
     from parsimony.catalog import catalog as catalog_module
@@ -198,15 +218,16 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
 
     Catalog.load("hf://org/repo/bundle")
 
-    assert captured == {"root": "org/repo", "sub": "bundle"}
+    assert captured == {"root": "org/repo", "sub": "bundle", "revision": None}
 
 
 def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str) -> Any:
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
         captured["root"] = root
         captured["sub"] = sub
+        captured["revision"] = revision
         return object()
 
     from parsimony.catalog import catalog as catalog_module
@@ -215,7 +236,27 @@ def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Catalog.load("hf://org/repo")
 
-    assert captured == {"root": "org/repo", "sub": ""}
+    assert captured == {"root": "org/repo", "sub": "", "revision": None}
+
+
+def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pinned ``hf://org/repo@<rev>`` URL must reach ``_load_hf`` with the
+    revision so the remote load is reproducible and tamper-resistant."""
+    captured: dict[str, Any] = {}
+
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
+        captured["root"] = root
+        captured["sub"] = sub
+        captured["revision"] = revision
+        return object()
+
+    from parsimony.catalog import catalog as catalog_module
+
+    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
+
+    Catalog.load("hf://org/repo@deadbeef/bundle")
+
+    assert captured == {"root": "org/repo", "sub": "bundle", "revision": "deadbeef"}
 
 
 def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:

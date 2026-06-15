@@ -6,13 +6,55 @@ from typing import Annotated
 
 import pandas as pd
 
-from parsimony.connector import Connectors, connector
+from parsimony.connector import Connectors, _returns_clause, connector
 from parsimony.result import Column, ColumnRole, OutputConfig
 
 FETCH_OUTPUT = OutputConfig(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
         Column(name="value", role=ColumnRole.DATA),
+    ]
+)
+
+KEY_NO_NS_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="sym", role=ColumnRole.KEY),
+        Column(name="price", role=ColumnRole.DATA),
+    ]
+)
+
+TITLE_META_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="title", role=ColumnRole.TITLE),
+        Column(name="unit", role=ColumnRole.METADATA, namespace="unit"),
+        Column(name="description", role=ColumnRole.METADATA),
+    ]
+)
+
+EXCLUDED_KEY_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
+        Column(name="value", role=ColumnRole.DATA),
+    ]
+)
+
+ALL_EXCLUDED_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
+    ]
+)
+
+ORDER_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="alpha", role=ColumnRole.KEY, namespace="ns_a"),
+        Column(name="beta", role=ColumnRole.DATA),
+        Column(name="gamma", role=ColumnRole.METADATA),
+    ]
+)
+
+WILDCARD_OUTPUT = OutputConfig(
+    columns=[
+        Column(name="*", role=ColumnRole.DATA),
     ]
 )
 
@@ -52,6 +94,36 @@ def long_desc_connector(query: str) -> str:
 @connector(tags=["enumerator"], properties={"provider": "ecb"})
 def ecb_search(query: str) -> pd.DataFrame:
     """Search ECB datasets for economic indicators."""
+    return pd.DataFrame()
+
+
+@connector(output=KEY_NO_NS_OUTPUT)
+def quote_fetch(symbol: str) -> pd.DataFrame:
+    """Fetch a quote."""
+    return pd.DataFrame({"sym": ["X"], "price": [1.0]})
+
+
+@connector(output=TITLE_META_OUTPUT)
+def title_meta_fetch(query: str) -> pd.DataFrame:
+    """Fetch with a title and metadata columns."""
+    return pd.DataFrame()
+
+
+@connector(output=EXCLUDED_KEY_OUTPUT)
+def excluded_key_fetch(query: str) -> pd.DataFrame:
+    """Fetch with an excluded key column."""
+    return pd.DataFrame()
+
+
+@connector(output=ORDER_OUTPUT)
+def ordered_fetch(query: str) -> pd.DataFrame:
+    """Fetch with multiple ordered columns."""
+    return pd.DataFrame()
+
+
+@connector(output=WILDCARD_OUTPUT)
+def wildcard_fetch(query: str) -> pd.DataFrame:
+    """Fetch with a wildcard data column."""
     return pd.DataFrame()
 
 
@@ -107,6 +179,43 @@ class TestConnectorToLlm:
         text = fred_fetch.bind(api_key="secret").to_llm()
         assert "series_id" in text
         assert "api_key" not in text
+
+
+class TestConnectorToLlmReturns:
+    def test_returns_line_annotates_role_and_namespace(self) -> None:
+        text = fred_fetch.bind(api_key="secret").to_llm()
+        assert "Returns: date (KEY ns:fred_series), value (DATA)." in text
+
+    def test_returns_key_without_namespace(self) -> None:
+        text = quote_fetch.to_llm()
+        assert "sym (KEY)" in text
+        assert "sym (KEY ns" not in text
+
+    def test_returns_title_and_metadata_roles(self) -> None:
+        text = title_meta_fetch.to_llm()
+        assert "title (TITLE)" in text
+        assert "unit (METADATA ns:unit)" in text
+        assert "description (METADATA)" in text
+
+    def test_returns_omits_excluded_columns(self) -> None:
+        text = excluded_key_fetch.to_llm()
+        assert "internal_id" not in text
+        assert "value (DATA)" in text
+
+    def test_no_returns_line_when_output_config_none(self) -> None:
+        assert "Returns:" not in bare_connector.to_llm()
+
+    def test_returns_preserves_declaration_order(self) -> None:
+        text = ordered_fetch.to_llm()
+        assert "Returns: alpha (KEY ns:ns_a), beta (DATA), gamma (METADATA)." in text
+
+    def test_returns_wildcard_column(self) -> None:
+        text = wildcard_fetch.to_llm()
+        assert "* (DATA)" in text
+
+    def test_returns_clause_helper_pure(self) -> None:
+        assert _returns_clause(FETCH_OUTPUT) == " Returns: date (KEY ns:fred_series), value (DATA)."
+        assert _returns_clause(ALL_EXCLUDED_OUTPUT) == ""
 
 
 class TestConnectorsDescribeToLlm:

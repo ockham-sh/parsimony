@@ -6,9 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Governed `to_llm()` result views.** `Result.to_llm()` renders a compact, depth-limited
+  structural preview of an opaque payload; `TabularResult.to_llm()` overrides it with a governed,
+  schema-aware view (shape, per-column dtype + role + namespace, head/tail sample) honoring
+  `exclude_from_llm_view`. `Column.llm_annotation()` is the single owner of role/namespace rendering,
+  shared by the connector card's `Returns:` line and the result preview.
+- **`fetch_csv` / `fetch_text` transport helpers** join `fetch_json` atop a shared `_get`: same
+  typed-error mapping and secret redaction, parsing the body into a `DataFrame` / `str`. A body that
+  cannot be parsed in the requested shape surfaces as a typed `ParseError` (CSV: `EmptyDataError` on
+  an empty body), never a raw `json`/`pandas` exception.
+- **`map_transport_error`** maps a non-timeout `httpx.TransportError` (connection refused, DNS,
+  protocol error) to `ProviderError(status_code=503)`, embedding only the exception type name; the
+  fetch helpers catch it so no raw `httpx` exception escapes.
+- **Pinned `hf://` snapshots.** `hf://<org>/<repo>@<revision>` pins a catalog load to a Hugging Face
+  git revision for a reproducible, tamper-resistant remote load.
+- **`parsimony list --strict` lists declared secrets.** A `SECRETS` column shows the union of each
+  plugin's credential parameter names (`?` when not inspected, `-` when none declared).
+
+### Changed
+
+- The connector card's `Returns:` line now annotates each LLM-visible column with its role and
+  namespace (`name (ROLE ns:x)`) and omits `exclude_from_llm_view` columns.
+- `Connectors.bind(**kwargs)` now raises `TypeError` when a keyword matches no connector in the
+  collection (previously a silent no-op warning), so a typo'd credential name fails loudly —
+  matching the per-connector `Connector.bind` contract.
+
+### Removed
+
+- **Dropped the unused post-fetch callback surface** (`ResultCallback`, `Connector.with_callback`,
+  `Connectors.with_callback`). No consumer existed, and an observer that swallows exceptions is the
+  wrong layer for persistence.
+
 ### Fixed
 
+- **`HybridIndex` applies its configured fusion.** `score_candidates` previously ranked by the max
+  raw component score and discarded the fused scores, so `ZScoreFusion` / `MinMaxScoreFusion` / `RRF`
+  weights had no effect on fuzzy queries. The configured fusion now drives the ranking; exact-match
+  sentinels are kept verbatim; centred (z-score) scores are shifted into the positive range so
+  below-mean candidates are not silently dropped.
 - Redact the `registrationkey` query parameter in transport logs (previously emitted in cleartext).
+- Snapshot save coerces non-JSON-native catalog metadata (datetime, Decimal) to its string form
+  (`json.dumps(default=str)`) instead of crashing the whole save.
 
 ## [0.7.0] - 2026-05-28
 ## [0.7.1]

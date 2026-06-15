@@ -389,9 +389,17 @@ exception and stripped of URLs and secrets.
 | `429`                    | `RateLimitError` (with `retry_after` parsed from the response) |
 | any other status         | `ProviderError(status_code=...)`                       |
 | connection timeout       | `ProviderError(status_code=408)`                       |
+| other transport failure (connection refused, DNS, protocol error) | `ProviderError(status_code=503)` |
 
 The retry-after parser clamps its result into `(0, 86400]` precisely so it never
 trips `RateLimitError`'s epoch guard — the two are coupled by design.
+
+The `fetch_json` / `fetch_csv` / `fetch_text` helpers route every request through
+one path that maps all three `httpx` failure modes — a non-2xx status, a timeout,
+and any other transport error — to the typed taxonomy above, so a raw `httpx`
+exception never escapes a fetch helper. `map_transport_error` is the catch-all for
+the last bucket (a request that never produced a response); it embeds only the
+exception *type name*, never its string, which can carry the URL and its secrets.
 
 ## Catalog-side errors
 

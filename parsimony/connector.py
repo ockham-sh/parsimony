@@ -12,14 +12,12 @@ from __future__ import annotations
 __all__ = [
     "Connector",
     "Connectors",
-    "ResultCallback",
     "connector",
     "enumerator",
     "loader",
 ]
 
 import inspect
-import logging
 import types as _types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -33,33 +31,6 @@ from pydantic import BaseModel
 from parsimony.errors import ParseError
 from parsimony.namespace import Namespace
 from parsimony.result import ColumnRole, OutputConfig, Provenance, Result, TabularResult
-
-logger = logging.getLogger(__name__)
-
-ResultCallback = Callable[[Result], None]
-"""Post-fetch **observer**: ``(result) -> None``.
-
-**Observer semantics — exceptions are logged and swallowed.** The connector
-has already produced a valid :class:`Result`; a downstream side-effect
-failure (telemetry, audit log, notification, agent summary) must not
-corrupt the caller's view. If you need fail-closed persistence (e.g. the
-caller must not see a successful :class:`Result` when a write fails), call
-the persistence function directly from the connector or wrap the call
-site — do not rely on a post-hook.
-"""
-
-
-def _invoke_result_callbacks(
-    callbacks: tuple[ResultCallback, ...],
-    result: Result,
-) -> None:
-    for cb in callbacks:
-        try:
-            cb(result)
-        except Exception:
-            # Observer semantics — see ResultCallback docstring.
-            logger.exception("Result observer %r failed; data was fetched successfully", cb)
-
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -250,7 +221,6 @@ class Connector:
     bound_arguments: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), repr=False)
     secrets: tuple[str, ...] = ()
     role: str | None = None
-    _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
 
     @property
     def exposed_signature(self) -> inspect.Signature:
@@ -261,10 +231,6 @@ class Connector:
     def param_schema(self) -> Mapping[str, Any]:
         """JSON Schema for the connector's exposed parameters (MCP / tool adapters)."""
         return MappingProxyType(_param_schema_from_connector(self))
-
-    def with_callback(self, callback: ResultCallback) -> Connector:
-        """Return a new :class:`Connector` with *callback* appended to its post-fetch hooks."""
-        return replace(self, _callbacks=(*self._callbacks, callback))
 
     def bind(self, **kwargs: Any) -> Connector:
         """Return a new connector with parameters fixed by name."""
@@ -341,8 +307,6 @@ class Connector:
             result = self._wrap_result(raw, call_params)
         except ValueError as exc:
             raise ParseError(self.name, str(exc)) from exc
-        if self._callbacks:
-            _invoke_result_callbacks(self._callbacks, result)
         return result
 
     def describe(self) -> str:
@@ -400,6 +364,21 @@ def describe_connector(c: Connector) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _returns_clause(output: OutputConfig) -> str:
+    """Trailing ``Returns: ...`` fragment for a connector's static output schema.
+
+    Emits one ``name (ROLE)`` token per LLM-visible column, with ``ns:<namespace>``
+    appended for KEY/METADATA columns that declare one. Columns marked
+    ``exclude_from_llm_view`` are omitted; declaration order is preserved (the
+    card sits in the prompt-cached prefix, so output must stay deterministic).
+    Returns an empty string when no column is visible.
+    """
+    tokens = [f"{col.name} {col.llm_annotation()}" for col in output.columns if not col.exclude_from_llm_view]
+    if not tokens:
+        return ""
+    return f" Returns: {', '.join(tokens)}."
+
+
 def llm_card(c: Connector) -> str:
     """Compact token-efficient description of *c* for LLM system prompts."""
     lines: list[str] = []
@@ -408,9 +387,7 @@ def llm_card(c: Connector) -> str:
 
     desc = " ".join(c.description.split())
     if c.output_config is not None:
-        data_cols = [col.name for col in c.output_config.columns]
-        if data_cols:
-            desc += f" Returns: {', '.join(data_cols)}."
+        desc += _returns_clause(c.output_config)
     lines.append(desc)
 
     for fname, typ, required in _exposed_param_rows(c):
@@ -653,19 +630,14 @@ class Connectors:
         if dupes:
             raise ValueError(f"Duplicate connector names: {sorted(dupes)}")
 
-    def with_callback(self, callback: ResultCallback) -> Connectors:
-        """Return a new collection where every connector has *callback* appended."""
-        return Connectors([c.with_callback(callback) for c in self._items])
-
     def bind(self, **kwargs: Any) -> Connectors:
         """Bind matching parameters across every connector in the collection."""
         if kwargs:
             all_params = {p for c in self._items for p in c.exposed_signature.parameters}
-            unmatched = [k for k in kwargs if k not in all_params]
+            unmatched = sorted(k for k in kwargs if k not in all_params)
             if unmatched:
-                logging.getLogger(__name__).warning(
-                    "bind() keys matched no connector parameters: %s",
-                    sorted(unmatched),
+                raise TypeError(
+                    f"bind() received arguments matching no connector: {unmatched}; connectors: {self.names()}"
                 )
         out: list[Connector] = []
         for c in self._items:

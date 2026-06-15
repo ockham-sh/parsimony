@@ -202,6 +202,28 @@ def map_timeout_error(exc: httpx.TimeoutException, *, provider: str, op_name: st
     ) from exc
 
 
+def map_transport_error(exc: httpx.TransportError, *, provider: str, op_name: str) -> NoReturn:
+    """Translate a non-timeout :class:`httpx.TransportError` into a typed error.
+
+    Covers the transport failures that never produced a response at all —
+    connection refused, DNS failure, a read/write error, or a protocol error
+    (``ConnectError``, ``NetworkError``, ``RemoteProtocolError``, …). Timeouts
+    are handled separately by :func:`map_timeout_error`; this is the catch-all
+    that keeps a raw ``httpx`` exception from escaping a fetch helper.
+
+    Raises :class:`~parsimony.errors.ProviderError` with ``status_code=503``
+    ("the provider could not be reached" — transient, treat like a 5xx). Only
+    the exception *type name* is embedded, never its string, which can carry the
+    request URL and its secrets. The original exception is chained for the
+    traceback.
+    """
+    raise ProviderError(
+        provider=provider,
+        status_code=503,
+        message=f"{provider} could not be reached on endpoint '{op_name}' ({type(exc).__name__})",
+    ) from exc
+
+
 @dataclass(frozen=True)
 class HttpRetryPolicy:
     """Transient retry policy for :class:`HttpClient`."""
@@ -457,6 +479,7 @@ __all__ = [
     "HttpRetryPolicy",
     "map_http_error",
     "map_timeout_error",
+    "map_transport_error",
     "parse_retry_after",
     "pooled_client",
     "redact_params_for_logging",

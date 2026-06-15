@@ -104,9 +104,9 @@ What this means in practice:
   default `addopts`, any plain `pytest` run fails if line coverage over the `parsimony` package
   drops below 80% — there is no way to run the suite without the gate.
 - **`asyncio_mode = "auto"`** lets you write `async def test_*` functions directly; no
-  `@pytest.mark.asyncio` decorator is needed. This matters because most of the public surface —
-  connector calls, `Catalog.build`/`search`/`save`/`load`, embedder methods, `DataStore`
-  methods, and `HttpClient.request` — is asynchronous.
+  `@pytest.mark.asyncio` decorator is needed. The public surface — connector calls,
+  `Catalog.build`/`search`/`save`/`load`, embedder methods, `DataStore` methods, and
+  `HttpClient.request` — is synchronous, so you rarely need this.
 - **`pythonpath = ["."]`** and `--import-mode=importlib` let tests import `parsimony` from the
   working tree without an installed package on the path.
 

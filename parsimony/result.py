@@ -7,12 +7,15 @@ __all__ = [
     "ColumnRole",
     "OutputConfig",
     "Provenance",
+    "REDACTED",
     "Result",
+    "SECRET_NAME_PATTERN",
     "TabularResult",
 ]
 
 import json
 import logging
+import re
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -26,9 +29,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
+SECRET_NAME_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)")
+
 # Oversized values are replaced with a structured marker rather than a
 # prefix — a prefix can leak the head of an unredacted secret.
 _PROVENANCE_FIELD_BUDGET = 2000
+
+REDACTED = "«redacted»"
 
 #: Key under which Result embeds its schema+provenance payload in Arrow table metadata.
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
@@ -55,7 +62,6 @@ class Column(BaseModel):
         validation_alias=AliasChoices("role", "kind"),
     )
     mapped_name: str | None = None
-    param_key: str | None = None
     description: str | None = None
     exclude_from_llm_view: bool = False
     #: Catalog namespace for KEY entity codes or METADATA value universes.
@@ -125,6 +131,8 @@ class Provenance(BaseModel):
     def safe_dump(self) -> dict[str, Any]:
         """Wire-safe JSON projection with oversize field truncation."""
         raw = self.model_dump(mode="json")
+        if raw.get("params"):
+            raw["params"] = {k: (REDACTED if SECRET_NAME_PATTERN.search(k) else v) for k, v in raw["params"].items()}
         for key in ("params", "properties"):
             if key in raw and raw[key]:
                 blob = json.dumps(raw[key], default=str)
@@ -152,7 +160,7 @@ class Result(BaseModel):
     data: Any
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
 
-    def with_properties(self, **properties: Any) -> Result:
+    def _with_properties(self, **properties: Any) -> Result:
         """Merge extras into ``provenance.properties`` (serialization/tests only)."""
         merged = {**self.provenance.properties, **properties}
         new_prov = self.provenance.model_copy(update={"properties": merged})
@@ -179,7 +187,7 @@ class TabularResult(Result):
             raise ValueError("Returned an empty DataFrame.")
         return cls(data=frame)
 
-    def with_properties(self, **properties: Any) -> TabularResult:
+    def _with_properties(self, **properties: Any) -> TabularResult:
         merged = {**self.provenance.properties, **properties}
         new_prov = self.provenance.model_copy(update={"properties": merged})
         return self.model_copy(update={"provenance": new_prov})
@@ -314,7 +322,7 @@ class OutputConfig(BaseModel):
                             f"column '{column.name}': all values are NaN after 'numeric' coercion — "
                             "expected numeric input"
                         )
-                new_name = column.mapped_name % params if column.mapped_name else match_name
+                new_name = column.mapped_name if column.mapped_name else match_name
                 series.name = new_name
                 processed_series.append((column, series))
 
@@ -343,10 +351,8 @@ class OutputConfig(BaseModel):
         declared = {c.name for c in self.columns if c.name != "*"}
         unmatched = sorted(declared - consumed)
         if unmatched:
-            logger.warning(
-                "OutputConfig columns not found in DataFrame: %s. Available columns: %s",
-                unmatched,
-                sorted(frame.columns),
+            raise ValueError(
+                f"OutputConfig columns not found in DataFrame: {unmatched}. Available columns: {sorted(frame.columns)}"
             )
 
         if not columns_info:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
@@ -57,7 +56,7 @@ class IndexBuildContext:
     field: str
     vector_cache: dict[tuple[str, int, bool], dict[str, np.ndarray]]
 
-    async def embed_texts(self, embedder: EmbeddingProvider, texts: list[str]) -> list[np.ndarray]:
+    def embed_texts(self, embedder: EmbeddingProvider, texts: list[str]) -> list[np.ndarray]:
         if not texts:
             return []
         info = embedder.info()
@@ -68,7 +67,7 @@ class IndexBuildContext:
             batch = 256
             for start in range(0, len(missing), batch):
                 chunk = missing[start : start + batch]
-                vectors = await embedder.embed_texts(chunk)
+                vectors = embedder.embed_texts(chunk)
                 for text, vector in zip(chunk, vectors, strict=True):
                     bucket[text] = np.asarray(vector, dtype=np.float32)
         return [bucket[text] for text in texts]
@@ -167,11 +166,11 @@ class CatalogIndex(Protocol):
 
     kind: str
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
         """Build the index from entries for ``ctx.field``."""
         ...
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
@@ -196,7 +195,7 @@ class BM25Index:
         self._tokens: list[list[str]] = []
         self._bm25: BM25Okapi | None = None
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
         self._postings = _ValuePostings.build(entries, ctx.field)
         self._tokens = [tokenize(text) for text in self._postings.values]
         if not self._tokens:
@@ -206,7 +205,7 @@ class BM25Index:
 
         self._bm25 = BM25Okapi(self._tokens)
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
@@ -216,8 +215,8 @@ class BM25Index:
         value_scores = self._score_values(query)
         return self._postings.expand(value_scores)
 
-    async def ranking(self, query: str, *, limit: int, entries: list[Entity]) -> Ranking:
-        row_scores = await self.score_candidates(query)
+    def ranking(self, query: str, *, limit: int, entries: list[Entity]) -> Ranking:
+        row_scores = self.score_candidates(query)
         return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def _score_values(self, query: str) -> dict[int, float]:
@@ -287,18 +286,18 @@ class VectorIndex:
             self._embedder_info = embedder.info()
         return self._embedder_info
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
         self._postings = _ValuePostings.build(entries, ctx.field)
         if not self._postings.values:
             self._faiss = None
             return
         embedder = self._require_embedder()
         info = self.embedder_info
-        vectors = await ctx.embed_texts(embedder, self._postings.values)
+        vectors = ctx.embed_texts(embedder, self._postings.values)
         matrix = np.vstack(vectors).astype(np.float32, copy=False)
         self._faiss = build_faiss(matrix, dim=info.dim, normalize=info.normalize)
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
@@ -307,7 +306,7 @@ class VectorIndex:
         value_scores = self._score_values(query, query_vectors=query_vectors)
         return self._postings.expand(value_scores)
 
-    async def ranking(
+    def ranking(
         self,
         query: str,
         *,
@@ -315,7 +314,7 @@ class VectorIndex:
         entries: list[Entity],
         query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
     ) -> Ranking:
-        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        row_scores = self.score_candidates(query, query_vectors=query_vectors)
         return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def _score_values(
@@ -417,10 +416,11 @@ class HybridIndex:
         self._components = kinds
         self._fusion = fusion if fusion is not None else ZScoreFusion()
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
-        await asyncio.gather(*(component.build(entries, ctx=ctx) for component in self._components.values()))
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+        for component in self._components.values():
+            component.build(entries, ctx=ctx)
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
@@ -451,7 +451,7 @@ class HybridIndex:
             raise TypeError(f"Unsupported hybrid component for postings: {type(reference)!r}")
         return reference._postings.expand(fused_scores)
 
-    async def ranking(
+    def ranking(
         self,
         query: str,
         *,
@@ -459,7 +459,7 @@ class HybridIndex:
         entries: list[Entity],
         query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
     ) -> Ranking:
-        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        row_scores = self.score_candidates(query, query_vectors=query_vectors)
         return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def save(self, path: Path) -> None:
@@ -533,19 +533,19 @@ class DisMaxIndex:
         self._per_field = per_field
         self._component_kind = next(iter(kinds))
 
-    async def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
+    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
         for inner_field, inner_idx in self._per_field.items():
             inner_ctx = replace(ctx, field=inner_field)
-            await inner_idx.build(entries, ctx=inner_ctx)
+            inner_idx.build(entries, ctx=inner_ctx)
 
-    async def score_candidates(
+    def score_candidates(
         self,
         query: str,
         *,
         query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
     ) -> dict[int, float]:
         per_field_scores = [
-            await idx.score_candidates(query, query_vectors=query_vectors) for idx in self._per_field.values()
+            idx.score_candidates(query, query_vectors=query_vectors) for idx in self._per_field.values()
         ]
         if not per_field_scores:
             return {}
@@ -558,7 +558,7 @@ class DisMaxIndex:
             out[row_id] = best + self._tie_breaker * rest
         return out
 
-    async def ranking(
+    def ranking(
         self,
         query: str,
         *,
@@ -566,7 +566,7 @@ class DisMaxIndex:
         entries: list[Entity],
         query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
     ) -> Ranking:
-        row_scores = await self.score_candidates(query, query_vectors=query_vectors)
+        row_scores = self.score_candidates(query, query_vectors=query_vectors)
         return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def save(self, path: Path) -> None:
@@ -628,7 +628,7 @@ def collect_vector_indexes(index: CatalogIndex) -> list[VectorIndex]:
     return []
 
 
-async def embed_query_vectors(
+def embed_query_vectors(
     query: str,
     indexes: Iterable[CatalogIndex],
 ) -> dict[tuple[str, int, bool], list[float]]:
@@ -642,7 +642,7 @@ async def embed_query_vectors(
             if key not in vectors and key not in pending:
                 pending[key] = vector_index._require_embedder()
     for key, embedder in pending.items():
-        batch = await embedder.embed_texts([query])
+        batch = embedder.embed_texts([query])
         vectors[key] = list(batch[0])
     return vectors
 

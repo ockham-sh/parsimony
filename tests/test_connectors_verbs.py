@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 import pytest
@@ -11,7 +10,7 @@ from parsimony.connector import Connector, Connectors, connector
 
 
 def _public(name: str, **kwargs: Any) -> Connector:
-    async def _fn(x: str = "y") -> dict[str, Any]:
+    def _fn(x: str = "y") -> dict[str, Any]:
         return {"ok": True, "x": x}
 
     _fn.__doc__ = f"Public connector {name}."
@@ -20,7 +19,7 @@ def _public(name: str, **kwargs: Any) -> Connector:
 
 
 def _keyed(name: str) -> Connector:
-    async def _fn(x: str, api_key: str) -> dict[str, Any]:
+    def _fn(x: str, api_key: str) -> dict[str, Any]:
         return {"ok": True, "x": x, "key": api_key}
 
     _fn.__doc__ = f"Keyed connector {name}."
@@ -54,7 +53,7 @@ def test_bind_applies_matching_arguments_across_collection() -> None:
 
     assert list(bound["keyed_fetch"].exposed_signature.parameters) == ["x"]
     assert list(bound["public_fetch"].exposed_signature.parameters) == ["x"]
-    result = asyncio.run(bound["keyed_fetch"](x="hello"))
+    result = bound["keyed_fetch"](x="hello")
     assert result.data == {"ok": True, "x": "hello", "key": "secret"}
     assert result.provenance.params == {"x": "hello"}
 

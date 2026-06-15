@@ -18,7 +18,7 @@ from parsimony.catalog import BM25Index, Catalog, Entity
     The catalog runtime is lazy. `import parsimony` and constructing a `Catalog` pull in no
     heavy dependencies. The actual index backends do: `BM25Index` needs `rank-bm25`, and the
     vector/hybrid backends need FAISS and an embedder. Install the canonical catalog stack with
-    the `standard` extra: `pip install "parsimony-core[standard]"`. See
+    the `catalog` extra: `pip install "parsimony-core[catalog]"`. See
     [Installation](../getting-started/installation.md).
 
 ## The lifecycle
@@ -33,13 +33,13 @@ Catalog(name, indexes=...)          construct (starts "dirty")
 set_entities([...])                 load / replace entities  ── marks dirty
         │
         ▼
-await catalog.build()               materialize indexes      ── clears dirty
+catalog.build()               materialize indexes      ── clears dirty
         │
-        ├──► await catalog.search("query", limit=5)   →  (list[CatalogMatch], SearchDiagnostic)
+        ├──► catalog.search("query", limit=5)   →  (list[CatalogMatch], SearchDiagnostic)
         │
-        └──► await catalog.save("file:///path")        →  snapshot directory
+        └──► catalog.save("file:///path")        →  snapshot directory
                                                             │
-                              await Catalog.load("file:///path")  ──►  built, searchable
+                              Catalog.load("file:///path")  ──►  built, searchable
 ```
 
 ### The build gate
@@ -49,15 +49,15 @@ A freshly constructed catalog is *dirty*. So is one whose entities or indexes yo
 whose message tells you what to do:
 
 ```text
-Catalog entries or indexes changed — call await catalog.build() before it can be searched
+Catalog entries or indexes changed — call catalog.build() before it can be searched
 ```
 
 The mutating methods that mark a catalog dirty are `set_entities`, `set_index`, `set_indexes`,
 `update_indexes`, and `delete_many`. `get()` does not require a build and never raises this
-error. Re-run `await catalog.build()` after any mutation.
+error. Re-run `catalog.build()` after any mutation.
 
 !!! warning "Build before you search or save"
-    Forgetting to `await catalog.build()` is the most common foot-gun. The error is an ordinary
+    Forgetting to `catalog.build()` is the most common foot-gun. The error is an ordinary
     `ValueError`, not a custom catalog exception, so do not try to catch a special type — fix the
     call order instead. The exact same gate guards `save()` (the message ends in "before it can
     be saved").
@@ -66,35 +66,28 @@ error. Re-run `await catalog.build()` after any mutation.
 
 This example constructs a catalog with a single BM25 index over the `title` field, loads two
 entities, builds, and runs a plain-text (broad) search. Building a `BM25Index` requires the
-`standard` extra (`rank-bm25`), so install it first: `pip install "parsimony-core[standard]"`.
+`catalog` extra (`rank-bm25`), so install it first: `pip install "parsimony-core[catalog]"`.
 
 ```python
-import asyncio
-
 from parsimony.catalog import BM25Index, Catalog, Entity
 
+catalog = Catalog("artifact", indexes={"title": BM25Index()})
+catalog.set_entities(
+    [
+        Entity(namespace="series", code="A", title="alpha growth index"),
+        Entity(namespace="series", code="B", title="beta consumer prices"),
+    ]
+)
+catalog.build()
 
-async def main() -> None:
-    catalog = Catalog("artifact", indexes={"title": BM25Index()})
-    catalog.set_entities(
-        [
-            Entity(namespace="series", code="A", title="alpha growth index"),
-            Entity(namespace="series", code="B", title="beta consumer prices"),
-        ]
-    )
-    await catalog.build()
-
-    matches, diagnostic = await catalog.search("alpha", limit=5)
-    print(diagnostic.mode)          # -> broad
-    top = matches[0]
-    print(top.namespace, top.code)  # -> series A
-    print(top.title, round(top.score, 3))
-
-
-asyncio.run(main())
+matches, diagnostic = catalog.search("alpha", limit=5)
+print(diagnostic.mode)          # -> broad
+top = matches[0]
+print(top.namespace, top.code)  # -> series A
+print(top.title, round(top.score, 3))
 ```
 
-`search()` is async and returns a tuple: a list of [`CatalogMatch`](search.md) records ordered by
+`search()` returns a tuple: a list of [`CatalogMatch`](search.md) records ordered by
 descending score, and a `SearchDiagnostic` describing how the query was executed.
 
 ## Constructing a catalog
@@ -132,21 +125,14 @@ the loaded entities. This is the zero-configuration path — you get a searchabl
 field without naming any index.
 
 ```python
-import asyncio
-
 from parsimony.catalog import Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog("demo")  # indexes=None -> default policy
-    catalog.set_entities(
-        [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
-    )
-    await catalog.build()
-    print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
-
-
-asyncio.run(main())
+catalog = Catalog("demo")  # indexes=None -> default policy
+catalog.set_entities(
+    [Entity(namespace="demo", code="a", title="alpha", metadata={"region": "eu"})]
+)
+catalog.build()
+print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 ```
 
 **Explicit indexes**. Pass a dict to take full control. No indexes are ever added silently, and
@@ -164,7 +150,7 @@ are separated by `&&` and AND-intersected; within a clause, comma-separated valu
 Every referenced field must have an index, or the parse raises `UnknownIndexedFieldError`.
 
 ```python
-matches, diagnostic = await catalog.search("title: alpha && region: eu, us", limit=5)
+matches, diagnostic = catalog.search("title: alpha && region: eu, us", limit=5)
 print(diagnostic.mode)  # -> structured
 ```
 
@@ -172,7 +158,7 @@ Any query that does not start with a `FIELD:` token is a **broad** query, scored
 `default_field`. If no broad field is configured, `search()` raises `BroadSearchUnavailableError`.
 
 ```python
-matches, diagnostic = await catalog.search("alpha growth", limit=5)
+matches, diagnostic = catalog.search("alpha growth", limit=5)
 print(diagnostic.mode)  # -> broad
 ```
 
@@ -189,7 +175,7 @@ both dispatch on a URL scheme:
 | Scheme | Example | Notes |
 | --- | --- | --- |
 | `file://` (or a bare path) | `file:///srv/catalogs/fred` | Local directory snapshot. Works with only `parsimony-core` plus the index backends used. |
-| `hf://` | `hf://acme/economic-catalog` | Hugging Face dataset. Lazily imports `huggingface_hub`; needs the `standard` extra. |
+| `hf://` | `hf://acme/economic-catalog` | Hugging Face dataset. Lazily imports `huggingface_hub`; needs the `catalog` extra. |
 
 Any other scheme raises `ValueError`. A snapshot is a directory of `entries.parquet`
 (zstd-compressed), an `indexes/<field>/` subtree, and a `meta.json` manifest. Writes are atomic
@@ -197,23 +183,18 @@ Any other scheme raises `ValueError`. A snapshot is a directory of `entries.parq
 integrity digest and rejects any `schema_version` other than `1`.
 
 ```python
-import asyncio
 from pathlib import Path
 
 from parsimony.catalog import BM25Index, Catalog, Entity
 
+tmp = Path("/tmp/cat-demo")
+catalog = Catalog("solo", indexes={"title": BM25Index()})
+catalog.set_entities([Entity(namespace="solo", code="A", title="alpha")])
+catalog.build()
 
-async def main(tmp: Path) -> None:
-    catalog = Catalog("solo", indexes={"title": BM25Index()})
-    catalog.set_entities([Entity(namespace="solo", code="A", title="alpha")])
-    await catalog.build()
-
-    await catalog.save(f"file://{tmp}/snapshot", builder="nightly-job")
-    loaded = await Catalog.load(f"file://{tmp}/snapshot")
-    print(len(loaded), loaded.entities[0].code)  # -> 1 A
-
-
-asyncio.run(main(Path("/tmp/cat-demo")))
+catalog.save(f"file://{tmp}/snapshot", builder="nightly-job")
+loaded = Catalog.load(f"file://{tmp}/snapshot")
+print(len(loaded), loaded.entities[0].code)  # -> 1 A
 ```
 
 !!! note "Loaded catalogs keep exactly what was serialized"

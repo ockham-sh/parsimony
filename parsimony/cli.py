@@ -44,7 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="List discovered plugins and their connectors.",
         description=(
             "Inspects the 'parsimony.providers' entry-point group. Shows each "
-            "plugin's connectors and env-var status. "
+            "plugin's name, version, connector count, and conformance status. "
             "With --strict, runs the conformance suite against each plugin "
             "and exits non-zero on any failure."
         ),
@@ -62,8 +62,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Manage the global parsimony cache. The root resolves through "
             "PARSIMONY_CACHE_DIR (defaulting to "
-            "platformdirs.user_cache_dir('parsimony')) and contains three "
-            "named subdirectories: catalogs, models, connectors."
+            "platformdirs.user_cache_dir('parsimony')) and contains four "
+            "named subdirectories: catalogs, models, connectors, staging."
         ),
     )
     cc_sub = cc.add_subparsers(dest="cache_action", required=True)
@@ -79,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cc_clear.add_argument(
         "--subdir",
         metavar="NAME",
-        help="Clear only this subdir (catalogs, models, connectors).",
+        help="Clear only this subdir (catalogs, models, connectors, staging).",
     )
     cc_clear.add_argument(
         "--yes",
@@ -145,11 +145,18 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
         conformance = "skipped"
         detail: str | None = None
 
-        if strict:
+        try:
+            connectors = provider.load()
+            connector_count = len(connectors)
+        except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
+            if strict:
+                conformance = "fail"
+                detail = f"{type(exc).__name__}: {exc}"
+            connector_count = 0
+
+        if strict and conformance != "fail":
             try:
                 module = importlib.import_module(provider.module_path)
-                connectors = provider.load()
-                connector_count = len(connectors)
                 assert_plugin_valid(module)
                 conformance = "pass"
             except ConformanceError as exc:
@@ -189,7 +196,7 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
             [
                 r["name"],
                 r["version"] or "?",
-                str(r["connector_count"]) if r["connector_count"] else "?",
+                str(r["connector_count"]) if r["connector_count"] else "0",
                 r["conformance"],
             ]
         )

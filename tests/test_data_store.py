@@ -18,7 +18,7 @@ LOAD_SCHEMA = OutputConfig(
 
 
 @loader(output=LOAD_SCHEMA)
-async def demo_loader(q: str = "x") -> pd.DataFrame:
+def demo_loader(q: str = "x") -> pd.DataFrame:
     """Load test observations."""
     return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
 
@@ -72,77 +72,72 @@ def test_data_from_result_requires_key_namespace() -> None:
         _data_from_result(table)
 
 
-@pytest.mark.asyncio
-async def test_load_result_skips_existing_keys() -> None:
+def test_load_result_skips_existing_keys() -> None:
     store = InMemoryDataStore()
-    await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
+    store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = TabularResult(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
-    r = await store.load_result(table, force=False)
+    r = store.load_result(table, force=False)
     assert r.total == 2
     assert r.loaded == 1
     assert r.skipped == 1
-    b = await store.get("test_ns", "B")
+    b = store.get("test_ns", "B")
     assert b is not None and b["obs"].iloc[0] == 2.0
-    a = await store.get("test_ns", "A")
+    a = store.get("test_ns", "A")
     assert a is not None and a["obs"].iloc[0] == 0.0
 
 
-@pytest.mark.asyncio
-async def test_load_result_force_upserts_existing() -> None:
+def test_load_result_force_upserts_existing() -> None:
     store = InMemoryDataStore()
-    await store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
+    store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = TabularResult(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
     )
-    r = await store.load_result(table, force=True)
+    r = store.load_result(table, force=True)
     assert r.total == 1
     assert r.loaded == 1
     assert r.skipped == 0
-    a = await store.get("test_ns", "A")
+    a = store.get("test_ns", "A")
     assert a is not None and a["obs"].iloc[0] == 9.0
 
 
-@pytest.mark.asyncio
-async def test_load_result_directly() -> None:
+def test_load_result_directly() -> None:
     """Userland pattern: call store.load_result(result) after the connector returns."""
     store = InMemoryDataStore()
-    result = await demo_loader(q="x")
-    await store.load_result(result)
-    df = await store.get("test_ns", "A")
+    result = demo_loader(q="x")
+    store.load_result(result)
+    df = store.get("test_ns", "A")
     assert df is not None
     assert list(df.columns) == ["obs"]
     assert df["obs"].iloc[0] == 1.0
 
 
-@pytest.mark.asyncio
-async def test_load_result_via_connectors() -> None:
+def test_load_result_via_connectors() -> None:
     store = InMemoryDataStore()
     c = Connectors([demo_loader])
-    result = await c["demo_loader"](q="x")
-    await store.load_result(result)
-    df = await store.get("test_ns", "A")
+    result = c["demo_loader"](q="x")
+    store.load_result(result)
+    df = store.get("test_ns", "A")
     assert df is not None
 
 
-@pytest.mark.asyncio
-async def test_data_store_crud() -> None:
+def test_data_store_crud() -> None:
     store = InMemoryDataStore()
     df = pd.DataFrame({"x": [1, 2]})
-    await store.upsert("ns", "c1", df)
-    assert await store.exists([("ns", "c1")]) == {("ns", "c1")}
-    got = await store.get("ns", "c1")
+    store.upsert("ns", "c1", df)
+    assert store.exists([("ns", "c1")]) == {("ns", "c1")}
+    got = store.get("ns", "c1")
     assert got is not None
     pd.testing.assert_frame_equal(got.reset_index(drop=True), df.reset_index(drop=True))
-    await store.delete("ns", "c1")
-    assert await store.get("ns", "c1") is None
+    store.delete("ns", "c1")
+    assert store.get("ns", "c1") is None
 
 
 def test_load_result_model() -> None:

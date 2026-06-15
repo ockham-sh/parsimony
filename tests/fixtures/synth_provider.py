@@ -20,7 +20,7 @@ from parsimony.result import Column, ColumnRole, OutputConfig
 
 SYNTH_FETCH_OUTPUT = OutputConfig(
     columns=[
-        Column(name="key", role=ColumnRole.KEY, param_key="key", namespace="synth"),
+        Column(name="key", role=ColumnRole.KEY, namespace="synth"),
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="date", dtype="datetime", role=ColumnRole.DATA),
         Column(name="value", dtype="numeric", role=ColumnRole.DATA),
@@ -36,7 +36,7 @@ SYNTH_ENUMERATE_OUTPUT = OutputConfig(
 
 
 @connector(output=SYNTH_FETCH_OUTPUT, tags=["synth", "tool"])
-async def synth_fetch(key: str) -> pd.DataFrame:
+def synth_fetch(key: str) -> pd.DataFrame:
     """Fetch a synthetic observation series. Returns a two-row example table."""
     return pd.DataFrame(
         [
@@ -47,7 +47,7 @@ async def synth_fetch(key: str) -> pd.DataFrame:
 
 
 @enumerator(output=SYNTH_ENUMERATE_OUTPUT, tags=["synth"])
-async def enumerate_synth(limit: int = 10) -> pd.DataFrame:
+def enumerate_synth(limit: int = 10) -> pd.DataFrame:
     """Enumerate up to ``limit`` synthetic catalog entries."""
     return pd.DataFrame([{"key": f"k{i}", "title": f"Item {i}"} for i in range(limit)])
 

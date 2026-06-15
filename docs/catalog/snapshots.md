@@ -9,27 +9,21 @@ Snapshots live behind a small URL scheme: a local `file://` path or a Hugging Fa
 
 ## Saving a catalog
 
-`Catalog.save` is a coroutine. The catalog must be built first — saving a dirty catalog
-raises a plain `ValueError`, the same gate that guards [search](search.md).
+`Catalog.save` writes a snapshot to disk. The catalog must be built first — saving a dirty
+catalog raises a plain `ValueError`, the same gate that guards [search](search.md).
 
 ```python
-import asyncio
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-
-async def main():
-    catalog = Catalog("solo", indexes={"title": BM25Index()}, default_field="title")
-    catalog.set_entities(
-        [
-            Entity(namespace="solo", code="A", title="alpha title"),
-            Entity(namespace="solo", code="B", title="beta title"),
-        ]
-    )
-    await catalog.build()
-    await catalog.save("file:///tmp/parsimony/snapshot", builder="my-job")
-
-
-asyncio.run(main())
+catalog = Catalog("solo", indexes={"title": BM25Index()}, default_field="title")
+catalog.set_entities(
+    [
+        Entity(namespace="solo", code="A", title="alpha title"),
+        Entity(namespace="solo", code="B", title="beta title"),
+    ]
+)
+catalog.build()
+catalog.save("file:///tmp/parsimony/snapshot", builder="my-job")
 ```
 
 The optional `builder` keyword is a free-form identifier of the script or job that produced
@@ -39,31 +33,25 @@ the snapshot. It is recorded in the manifest's `build.builder` field and is othe
     `save()` calls the same dirty-state check as `search()`. After any mutation
     (`set_entities`, `set_index`, `set_indexes`, `update_indexes`, `delete_many`) the catalog
     is marked dirty and `save()` raises `ValueError("Catalog entries or indexes changed — call
-    await catalog.build() before it can be saved")` until you re-run `await catalog.build()`.
+    catalog.build() before it can be saved")` until you re-run `catalog.build()`.
 
 !!! note "BM25 / vector backends are an optional extra"
-    The `BM25Index` example above builds and searches only with the `standard` extra installed
+    The `BM25Index` example above builds and searches only with the `catalog` extra installed
     (it pulls in `rank-bm25`). The snapshot machinery itself — atomic writes, the manifest, the
     integrity digest, URL dispatch — is pure `parsimony-core`. See
     [Installation](../getting-started/installation.md) for the extras matrix.
 
 ## Loading a catalog
 
-`Catalog.load` is an `async` classmethod. It returns a non-dirty, immediately searchable
-catalog — there is no `build()` call needed after a load.
+`Catalog.load` is a classmethod. It returns a non-dirty, immediately searchable catalog —
+there is no `build()` call needed after a load.
 
 ```python
-import asyncio
 from parsimony.catalog import Catalog
 
-
-async def main():
-    catalog = await Catalog.load("file:///tmp/parsimony/snapshot")
-    hits, diag = await catalog.search("alpha", limit=5)
-    print(diag.mode, [m.code for m in hits])
-
-
-asyncio.run(main())
+catalog = Catalog.load("file:///tmp/parsimony/snapshot")
+hits, diag = catalog.search("alpha", limit=5)
+print(diag.mode, [m.code for m in hits])
 ```
 
 A loaded catalog is reconstructed exactly from what was serialized: its `default_field` and
@@ -219,28 +207,26 @@ When a catalog might be remote, missing, or cheap to rebuild, `load_or_build_cat
 it through a three-step fallback. Import it from `parsimony.catalog.search`.
 
 ```python
-import asyncio
 from pathlib import Path
+
 from parsimony.catalog import BM25Index, Catalog, Entity
 from parsimony.catalog.search import load_or_build_catalog
 
 
-async def main(tmp: Path):
-    async def build():
-        c = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
-        c.set_entities([Entity(namespace="demo", code="a", title="alpha widget")])
-        await c.build()
-        return c
-
-    cache = tmp / "lazy-cache"
-    # url is absent -> build() runs and the result is saved to the lazy cache
-    cat = await load_or_build_catalog(f"file://{tmp}/missing", cache_path=cache, build=build)
-    # second call hits the lazy cache; build() does not run again
-    again = await load_or_build_catalog(f"file://{tmp}/missing", cache_path=cache, build=build)
-    print(len(again), (cache / "meta.json").is_file())  # -> 1 True
+def build() -> Catalog:
+    c = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
+    c.set_entities([Entity(namespace="demo", code="a", title="alpha widget")])
+    c.build()
+    return c
 
 
-asyncio.run(main(Path("/tmp/parsimony")))
+tmp = Path("/tmp/parsimony")
+cache = tmp / "lazy-cache"
+# url is absent -> build() runs and the result is saved to the lazy cache
+cat = load_or_build_catalog(f"file://{tmp}/missing", cache_path=cache, build=build)
+# second call hits the lazy cache; build() does not run again
+again = load_or_build_catalog(f"file://{tmp}/missing", cache_path=cache, build=build)
+print(len(again), (cache / "meta.json").is_file())  # -> 1 True
 ```
 
 The resolution order is:
@@ -265,22 +251,16 @@ Hugging Face's `RepositoryNotFoundError`, or a `ConnectorError` whose message sa
 
 `CatalogLRU` keeps already-loaded `Catalog` instances in memory, keyed by URL, so repeat
 lookups for the same snapshot reuse one object instead of re-reading from disk. It is bounded
-(default size 4, must be `>= 1`) and `asyncio.Lock`-guarded.
+(default size 4, must be `>= 1`) and `threading.Lock`-guarded.
 
 ```python
-import asyncio
 from parsimony.catalog.search import CatalogLRU
 
-
-async def main():
-    lru = CatalogLRU(size=2)
-    a = await lru.get_or_load("file:///tmp/parsimony/snapshot")
-    b = await lru.get_or_load("file:///tmp/parsimony/snapshot")
-    assert a is b  # same in-memory instance
-    lru.clear()
-
-
-asyncio.run(main())
+lru = CatalogLRU(size=2)
+a = lru.get_or_load("file:///tmp/parsimony/snapshot")
+b = lru.get_or_load("file:///tmp/parsimony/snapshot")
+assert a is b  # same in-memory instance
+lru.clear()
 ```
 
 When both `cache_path` and `build` are passed, `get_or_load` delegates to

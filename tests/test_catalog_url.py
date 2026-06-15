@@ -103,7 +103,7 @@ class _StubEmbedder:
     def info(self) -> EmbedderInfo:
         return EmbedderInfo(model="stub", dim=self.DIM, normalize=False, package="test")
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         # Map each text to a unique unit-ish vector keyed off its hash.
         vectors: list[list[float]] = []
         for text in texts:
@@ -113,8 +113,8 @@ class _StubEmbedder:
             vectors.append(vec.tolist())
         return vectors
 
-    async def embed_query(self, query: str) -> list[float]:
-        (vector,) = await self.embed_texts([query])
+    def embed_query(self, query: str) -> list[float]:
+        (vector,) = self.embed_texts([query])
         return vector
 
 
@@ -122,34 +122,31 @@ def _entry(namespace: str, code: str, title: str) -> Entity:
     return Entity(namespace=namespace, code=code, title=title)
 
 
-@pytest.mark.asyncio
-async def test_file_roundtrip_no_sub(tmp_path: Path) -> None:
+def test_file_roundtrip_no_sub(tmp_path: Path) -> None:
     catalog = Catalog(name="solo", indexes={"title": VectorIndex(embedder=_StubEmbedder())})
     catalog.set_entities([_entry("solo", "A", "alpha")])
-    await catalog.build()
-    await catalog.save(f"file://{tmp_path}/snapshot")
+    catalog.build()
+    catalog.save(f"file://{tmp_path}/snapshot")
     assert (tmp_path / "snapshot" / "indexes" / "title" / "vectors.faiss").exists()
-    loaded = await Catalog.load(f"file://{tmp_path}/snapshot")
+    loaded = Catalog.load(f"file://{tmp_path}/snapshot")
     assert len(loaded) == 1
     assert loaded.entities[0].code == "A"
 
 
-@pytest.mark.asyncio
-async def test_file_url_pointing_at_subdir_loads_directly(tmp_path: Path) -> None:
+def test_file_url_pointing_at_subdir_loads_directly(tmp_path: Path) -> None:
     """For file://, multi-bundle layouts work via the path itself —
     no special sub semantics, the URL points straight at the bundle."""
     bundle = tmp_path / "multi" / "bundle_a"
     catalog = Catalog(name="bundle_a")
     catalog.set_entities([_entry("bundle_a", "X", "x-title")])
-    await catalog.build()
-    await catalog.save(f"file://{bundle}")
+    catalog.build()
+    catalog.save(f"file://{bundle}")
     assert (bundle / "meta.json").exists()
-    loaded = await Catalog.load(f"file://{bundle}")
+    loaded = Catalog.load(f"file://{bundle}")
     assert loaded.entities[0].code == "X"
 
 
-@pytest.mark.asyncio
-async def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) -> None:
+def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) -> None:
     catalog = Catalog(
         name="ranked",
         indexes={
@@ -165,20 +162,19 @@ async def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) ->
             Entity(namespace="ranked", code="C", title="gamma", metadata={"description": "gamma"}),
         ]
     )
-    await catalog.build()
-    await catalog.save(f"file://{tmp_path}/snapshot")
+    catalog.build()
+    catalog.save(f"file://{tmp_path}/snapshot")
 
-    loaded = await Catalog.load(f"file://{tmp_path}/snapshot")
+    loaded = Catalog.load(f"file://{tmp_path}/snapshot")
     assert loaded.default_field == "description"
-    hits, _ = await loaded.search("alpha", limit=1)
+    hits, _ = loaded.search("alpha", limit=1)
 
     assert hits[0].code == "B"
 
 
-@pytest.mark.asyncio
-async def test_file_missing_path_raises(tmp_path: Path) -> None:
+def test_file_missing_path_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
-        await Catalog.load(f"file://{tmp_path}/does-not-exist")
+        Catalog.load(f"file://{tmp_path}/does-not-exist")
 
 
 # ---------------------------------------------------------------------------
@@ -186,13 +182,12 @@ async def test_file_missing_path_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     """``Catalog.load("hf://org/repo/bundle")`` must reach
     ``_load_hf`` with ``root='org/repo'`` and ``sub='bundle'``."""
     captured: dict[str, Any] = {}
 
-    async def _spy_load_hf(root: str, sub: str) -> Any:
+    def _spy_load_hf(root: str, sub: str) -> Any:
         captured["root"] = root
         captured["sub"] = sub
         return object()  # Catalog isn't actually constructed here.
@@ -201,16 +196,15 @@ async def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
 
-    await Catalog.load("hf://org/repo/bundle")
+    Catalog.load("hf://org/repo/bundle")
 
     assert captured == {"root": "org/repo", "sub": "bundle"}
 
 
-@pytest.mark.asyncio
-async def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    async def _spy_load_hf(root: str, sub: str) -> Any:
+    def _spy_load_hf(root: str, sub: str) -> Any:
         captured["root"] = root
         captured["sub"] = sub
         return object()
@@ -219,16 +213,15 @@ async def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
 
-    await Catalog.load("hf://org/repo")
+    Catalog.load("hf://org/repo")
 
     assert captured == {"root": "org/repo", "sub": ""}
 
 
-@pytest.mark.asyncio
-async def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    async def _spy_save_hf(catalog: Any, root: str, sub: str, *, builder: str | None = None) -> None:
+    def _spy_save_hf(catalog: Any, root: str, sub: str, *, builder: str | None = None) -> None:
         captured["root"] = root
         captured["sub"] = sub
 
@@ -238,7 +231,7 @@ async def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch)
 
     catalog = Catalog(name="x")
     catalog.set_entities([_entry("x", "A", "alpha")])
-    await catalog.build()
-    await catalog.save("hf://org/repo/bundle")
+    catalog.build()
+    catalog.save("hf://org/repo/bundle")
 
     assert captured == {"root": "org/repo", "sub": "bundle"}

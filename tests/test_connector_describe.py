@@ -18,13 +18,13 @@ FETCH_OUTPUT = OutputConfig(
 
 
 @connector(tags=["search", "fred"], properties={"provider": "fred", "tier": "free"})
-async def fred_search(query: str) -> pd.DataFrame:
+def fred_search(query: str) -> pd.DataFrame:
     """Search for FRED economic time series by keyword."""
     return pd.DataFrame({"code": ["A"], "title": ["GDP"]})
 
 
 @connector(output=FETCH_OUTPUT, tags=["loader", "fred"], properties={"provider": "fred", "tier": "premium"})
-async def fred_fetch(
+def fred_fetch(
     series_id: Annotated[str, "ns:fred_series"],
     start_date: str | None = None,
     api_key: str = "",
@@ -34,7 +34,7 @@ async def fred_fetch(
 
 
 @connector
-async def bare_connector(value: str) -> pd.DataFrame:
+def bare_connector(value: str) -> pd.DataFrame:
     """A minimal connector with no tags, output, or properties."""
     return pd.DataFrame()
 
@@ -44,13 +44,13 @@ async def bare_connector(value: str) -> pd.DataFrame:
         "A connector with a very long description that exceeds eighty characters easily because it explains behavior."
     )
 )
-async def long_desc_connector(query: str) -> str:
+def long_desc_connector(query: str) -> str:
     """Ignored docstring."""
     return query
 
 
 @connector(tags=["enumerator"], properties={"provider": "ecb"})
-async def ecb_search(query: str) -> pd.DataFrame:
+def ecb_search(query: str) -> pd.DataFrame:
     """Search ECB datasets for economic indicators."""
     return pd.DataFrame()
 

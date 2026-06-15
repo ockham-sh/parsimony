@@ -2,31 +2,49 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
 
+from parsimony.errors import ParseError, UnauthorizedError
 from parsimony.transport import HttpClient, map_http_error, map_timeout_error
 
 
-async def fetch_json(
+def require_key(arg: str, *, env_var: str, provider: str) -> str:
+    """Resolve an API key from *arg* or *env_var*, or raise :class:`UnauthorizedError`.
+
+    Connector packages use this for the common ``api_key or os.environ[...]``
+    pattern without duplicating the fail-fast logic in every provider.
+    """
+    key = arg or os.environ.get(env_var, "")
+    if not key:
+        raise UnauthorizedError(provider, env_var=env_var)
+    return key
+
+
+def fetch_json(
     http: HttpClient,
     *,
     path: str,
     params: dict[str, Any] | None = None,
     provider: str,
     op_name: str,
+    env_var: str | None = None,
 ) -> Any:
     """GET *path*, map httpx errors to kernel types, return parsed JSON."""
     filtered = {k: v for k, v in (params or {}).items() if v is not None}
     try:
-        response = await http.request("GET", f"/{path.lstrip('/')}", params=filtered or None)
+        response = http.request("GET", f"/{path.lstrip('/')}", params=filtered or None)
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
-        map_http_error(exc, provider=provider, op_name=op_name)
+        map_http_error(exc, provider=provider, op_name=op_name, env_var=env_var)
     except httpx.TimeoutException as exc:
         map_timeout_error(exc, provider=provider, op_name=op_name)
-    return response.json()
+    try:
+        return response.json()
+    except ValueError as exc:
+        raise ParseError(provider=provider) from exc
 
 
 def make_http_client(

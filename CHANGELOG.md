@@ -11,6 +11,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Redact the `registrationkey` query parameter in transport logs (previously emitted in cleartext).
 
 ## [0.7.0] - 2026-05-28
+## [0.7.1]
+
+### Added
+
+- **`parsimony.Namespace` marker** — a typed marker for connector parameters whose legal
+  values come from a same-namespace catalog search, surfaced on connector cards as an
+  agent/human hint.
+- **Authoritative plugin contract** — `docs/contract.md` consolidates the distribution,
+  connector, credential, error, search, catalog, and conformance rules in one place.
+
+### Changed
+
+- **Actionable catalog `schema_version` mismatch** — loading a catalog with an unsupported
+  schema version now raises `Unsupported catalog schema_version N; expected 1` instead of a
+  cryptic Pydantic validation error.
+- **`parsimony list` shows connector counts by default** — the per-provider connector count
+  no longer requires `--strict`; full conformance checks still do.
+- **Embedder uses `get_embedding_dimension()`** with a fallback — silences the
+  `sentence-transformers` `FutureWarning` on newer versions.
+
+### Removed
+
+- **Dropped the back-compat policy aliases** `hybrid_field_index` and `macro_discovery_indexes`;
+  use the canonical `adaptive_field_index` and `discovery_indexes`.
+
+### Docs
+
+- Synced all connector-contract documentation to the synchronous calling surface
+  (connectors are `def`, not `async def`).
+
+## [0.7.0]
+
+### Breaking changes
+
+- **Renamed `[standard]` extra to `[catalog]`** — the cohesive catalog runtime extra is now
+  `parsimony-core[catalog]`. `standard-onnx` still depends on it.
+- **Removed the unused `[s3]` extra** — `s3://` catalog URLs were never wired.
+- **Catalog query errors are `ConnectorError` subclasses** — `UnknownIndexedFieldError`,
+  `BroadSearchUnavailableError`, and `BroadSearchConfigError` now participate in the typed error
+  taxonomy.
+- **`OutputConfig.build_table_result` fails on missing declared columns** instead of logging a
+  warning.
+- **HTTP client no longer retries 429** — rate limits surface immediately for agent-facing handling.
+- **`discover.load_all()` raises `RuntimeError` when every installed provider fails to load.**
+
+### Added
+
+- **Actionable catalog dependency errors** — missing `parsimony-core[catalog]` raises a
+  `ProviderError` with an install hint instead of a raw `ImportError`.
+- **`map_http_error` / `fetch_json` accept optional `env_var`** for `UnauthorizedError` hints.
+- **`Connectors.bind` warns on zero-match keys.**
+
+### Changed
+
+- **Response HTTP logging redacts URLs** like the request path already did.
+- **`fetch_json` maps non-JSON 200 responses to `ParseError`.**
+- **Catalog integrity failures include a cache-clear hint.**
+
+## [0.6.0]
 
 ### Breaking changes
 

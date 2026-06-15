@@ -7,7 +7,7 @@ implementations (or write their own conforming class) and pass it to
 
 * :class:`SentenceTransformerEmbedder` — local model
   (``sentence-transformers/all-MiniLM-L6-v2`` by default, 384-dim, 6 layers).
-  Requires ``parsimony-core[standard]``.
+  Requires ``parsimony-core[catalog]``.
 * :class:`OnnxEmbedder` — same model via ONNX Runtime with dynamic int8
   quantization. 2-3× faster than the PyTorch path on x86 CPUs with AVX2 /
   AVX_VNNI; ~4× smaller on disk. Requires ``parsimony-core[standard-onnx]``.
@@ -22,7 +22,6 @@ memory.
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 import math
@@ -38,7 +37,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-PARSIMONY_STANDARD_PACKAGE = "parsimony-core[standard]"
+PARSIMONY_CATALOG_PACKAGE = "parsimony-core[catalog]"
 PARSIMONY_STANDARD_ONNX_PACKAGE = "parsimony-core[standard-onnx]"
 PARSIMONY_LITELLM_PACKAGE = "parsimony-core[litellm]"
 
@@ -57,7 +56,7 @@ class EmbedderInfo(BaseModel):
         description=(
             "Optional install hint surfaced in error messages when a catalog "
             "is loaded without the dependencies needed to instantiate its "
-            "embedder (e.g. ``parsimony-core[standard]``). Not used for resolution."
+            "embedder (e.g. ``parsimony-core[catalog]``). Not used for resolution."
         ),
     )
 
@@ -69,11 +68,11 @@ class EmbeddingProvider(Protocol):
     @property
     def dimension(self) -> int: ...
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embeddings for corpus documents (indexing)."""
         ...
 
-    async def embed_query(self, query: str) -> list[float]:
+    def embed_query(self, query: str) -> list[float]:
         """Single embedding optimized for retrieval queries."""
         ...
 
@@ -113,7 +112,9 @@ class SentenceTransformerEmbedder:
 
     @property
     def dimension(self) -> int:
-        dim = self._get_model().get_sentence_embedding_dimension()
+        model = self._get_model()
+        dim_fn = getattr(model, "get_embedding_dimension", model.get_sentence_embedding_dimension)
+        dim = dim_fn()
         if dim is None:  # pragma: no cover
             raise RuntimeError(
                 f"sentence-transformers model {self._model_name!r} did not report an embedding dimension"
@@ -125,17 +126,16 @@ class SentenceTransformerEmbedder:
             model=self._model_name,
             dim=self.dimension,
             normalize=self._normalize,
-            package=PARSIMONY_STANDARD_PACKAGE,
+            package=PARSIMONY_CATALOG_PACKAGE,
         )
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        return await asyncio.to_thread(self._encode, texts)
+        return self._encode(texts)
 
-    async def embed_query(self, query: str) -> list[float]:
-        result = await asyncio.to_thread(self._encode, [query])
-        return result[0]
+    def embed_query(self, query: str) -> list[float]:
+        return self._encode([query])[0]
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         model = self._get_model()
@@ -162,7 +162,13 @@ class SentenceTransformerEmbedder:
         if self._model is None:
             from sentence_transformers import SentenceTransformer
 
-            self._model = SentenceTransformer(self._model_name, device=self._device)
+            # local_files_only=True prevents HuggingFace Hub update checks that can
+            # block on CLOSE-WAIT sockets in long-running parent processes.
+            # Falls back to network download when the model is not cached.
+            try:
+                self._model = SentenceTransformer(self._model_name, device=self._device, local_files_only=True)
+            except Exception:
+                self._model = SentenceTransformer(self._model_name, device=self._device)
         return self._model
 
 
@@ -240,14 +246,13 @@ class OnnxEmbedder:
             package=PARSIMONY_STANDARD_ONNX_PACKAGE,
         )
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        return await asyncio.to_thread(self._encode_all, texts)
+        return self._encode_all(texts)
 
-    async def embed_query(self, query: str) -> list[float]:
-        result = await asyncio.to_thread(self._encode_all, [query])
-        return result[0]
+    def embed_query(self, query: str) -> list[float]:
+        return self._encode_all([query])[0]
 
     # ------------------------------------------------------------------
     # internals
@@ -458,23 +463,23 @@ class LiteLLMEmbeddingProvider:
             package=PARSIMONY_LITELLM_PACKAGE,
         )
 
-    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
         out: list[list[float]] = []
         for start in range(0, len(texts), self._batch_size):
             chunk = texts[start : start + self._batch_size]
-            response = await self._embed(chunk, task_type="RETRIEVAL_DOCUMENT")
+            response = self._embed(chunk, task_type="RETRIEVAL_DOCUMENT")
             vectors = _validate_litellm_response(response, len(chunk), self._dimension)
             out.extend(_l2_normalize(v) for v in vectors)
         return out
 
-    async def embed_query(self, query: str) -> list[float]:
-        response = await self._embed([query], task_type="RETRIEVAL_QUERY")
+    def embed_query(self, query: str) -> list[float]:
+        response = self._embed([query], task_type="RETRIEVAL_QUERY")
         vectors = _validate_litellm_response(response, 1, self._dimension)
         return _l2_normalize(vectors[0])
 
-    async def _embed(self, input_texts: list[str], *, task_type: str) -> Any:
+    def _embed(self, input_texts: list[str], *, task_type: str) -> Any:
         try:
             import litellm
         except ImportError as exc:
@@ -486,9 +491,9 @@ class LiteLLMEmbeddingProvider:
         t0 = time.monotonic()
         try:
             try:
-                response = await litellm.aembedding(**kwargs, dimensions=self._dimension)
+                response = litellm.embedding(**kwargs, dimensions=self._dimension)
             except TypeError:
-                response = await litellm.aembedding(**kwargs, output_dimensionality=self._dimension)
+                response = litellm.embedding(**kwargs, output_dimensionality=self._dimension)
         except Exception as exc:
             logger.error(
                 "Embedding call failed: model=%s, batch_size=%d, error=%s",

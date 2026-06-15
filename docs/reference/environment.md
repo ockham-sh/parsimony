@@ -114,7 +114,7 @@ print(IVF_THRESHOLD)  # 1000000
 !!! note "Only the FAISS build path uses it"
     This variable affects `build_faiss`, which backs `VectorIndex` (and the vector half of a
     `HybridIndex`). It is therefore only relevant when you build vector-backed catalog indexes,
-    which require the `standard` extra (`pip install "parsimony-core[standard]"`). BM25-only
+    which require the `catalog` extra (`pip install "parsimony-core[catalog]"`). BM25-only
     catalogs never touch FAISS and so never consult this threshold. See
     [Indexes](../catalog/indexes.md).
 

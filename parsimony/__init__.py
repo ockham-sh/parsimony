@@ -5,7 +5,7 @@ sentence-transformers / huggingface-hub stack) load lazily on first access
 via :pep:`562` so that ``import parsimony`` stays cheap.
 
 * :class:`Connectors` is an immutable collection of :class:`Connector` objects;
-  callers use ``await connectors[name](**kwargs)``. The callable signature is
+  callers use ``connectors[name](**kwargs)``. The callable signature is
   the connector's parameter surface.
 * :class:`Catalog` is the canonical implementation (Parquet rows + HybridIndex
   over FAISS vectors and BM25 keywords with ZScoreFusion) and is loaded lazily.
@@ -61,6 +61,7 @@ from parsimony.errors import (
     RateLimitError,
     UnauthorizedError,
 )
+from parsimony.namespace import Namespace
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
 try:
@@ -72,6 +73,7 @@ except PackageNotFoundError:
 __all__ = [
     "Connector",
     "Connectors",
+    "Namespace",
     "connector",
     "enumerator",
     "loader",

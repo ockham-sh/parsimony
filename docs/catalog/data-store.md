@@ -27,17 +27,15 @@ from parsimony.stores import InMemoryDataStore, LoadResult
 ## The CRUD surface
 
 `InMemoryDataStore` wraps a process-local dict mapping each canonical
-`(namespace, code)` key to a pandas DataFrame. Every method is a coroutine — even
-though the in-memory backend performs no real I/O — so the interface already
-matches a future I/O-backed store. You must `await` each call.
+`(namespace, code)` key to a pandas DataFrame.
 
 | Method | Signature | Behavior |
 | --- | --- | --- |
-| `upsert` | `async upsert(namespace, code, df) -> None` | Insert or replace one entity's observations. Stores `df.copy()`. |
-| `get` | `async get(namespace, code) -> pd.DataFrame \| None` | Return a copy of the stored frame, or `None` if the key is absent. |
-| `delete` | `async delete(namespace, code) -> None` | Idempotently remove an entity. No error if the key is absent. |
-| `exists` | `async exists(keys) -> set[tuple[str, str]]` | Given a list of `(namespace, code)` pairs, return the canonicalized subset that is present. |
-| `load_result` | `async load_result(table, *, force=False) -> LoadResult` | Extract `DATA` columns from a `TabularResult` and persist each entity. |
+| `upsert` | `upsert(namespace, code, df) -> None` | Insert or replace one entity's observations. Stores `df.copy()`. |
+| `get` | `get(namespace, code) -> pd.DataFrame \| None` | Return a copy of the stored frame, or `None` if the key is absent. |
+| `delete` | `delete(namespace, code) -> None` | Idempotently remove an entity. No error if the key is absent. |
+| `exists` | `exists(keys) -> set[tuple[str, str]]` | Given a list of `(namespace, code)` pairs, return the canonicalized subset that is present. |
+| `load_result` | `load_result(table, *, force=False) -> LoadResult` | Extract `DATA` columns from a `TabularResult` and persist each entity. |
 
 Every method routes its key through `entity_key(namespace, code)`, which
 normalizes the namespace to lowercase snake_case (`^[a-z][a-z0-9_]*$`) and strips
@@ -46,32 +44,25 @@ time — keys never silently miss. See [Entities](entities.md) for the
 normalization rules.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import InMemoryDataStore
 
+store = InMemoryDataStore()
+df = pd.DataFrame({"value": [1, 2]})
 
-async def main() -> None:
-    store = InMemoryDataStore()
-    df = pd.DataFrame({"value": [1, 2]})
+store.upsert("fred", "gdp", df)
+assert store.exists([("fred", "gdp")]) == {("fred", "gdp")}
 
-    await store.upsert("fred", "gdp", df)
-    assert await store.exists([("fred", "gdp")]) == {("fred", "gdp")}
+# get() returns a defensive copy: mutating it does not touch the store.
+got = store.get("fred", "gdp")
+assert got is not None
+got.loc[0, "value"] = 999
+again = store.get("fred", "gdp")
+assert again is not None and again["value"].iloc[0] == 1
 
-    # get() returns a defensive copy: mutating it does not touch the store.
-    got = await store.get("fred", "gdp")
-    assert got is not None
-    got.loc[0, "value"] = 999
-    again = await store.get("fred", "gdp")
-    assert again is not None and again["value"].iloc[0] == 1
-
-    await store.delete("fred", "gdp")
-    assert await store.get("fred", "gdp") is None
-
-
-asyncio.run(main())
+store.delete("fred", "gdp")
+assert store.get("fred", "gdp") is None
 ```
 
 !!! tip "Copy semantics"
@@ -94,8 +85,6 @@ one DataFrame per distinct entity. The `KEY` column is consumed for identity;
 frame.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import InMemoryDataStore
@@ -108,31 +97,26 @@ SCHEMA = OutputConfig(
     ]
 )
 
+store = InMemoryDataStore()
+table = TabularResult(
+    data=pd.DataFrame(
+        {
+            "series_id": ["GDP", "GDP", "CPI"],
+            "value": [1.0, 2.0, 3.0],
+            "note": ["a", "b", "c"],  # unmapped extra column
+        }
+    ),
+    provenance=Provenance(source="fred", source_description="FRED"),
+    output_schema=SCHEMA,
+)
 
-async def main() -> None:
-    store = InMemoryDataStore()
-    table = TabularResult(
-        data=pd.DataFrame(
-            {
-                "series_id": ["GDP", "GDP", "CPI"],
-                "value": [1.0, 2.0, 3.0],
-                "note": ["a", "b", "c"],  # unmapped extra column
-            }
-        ),
-        provenance=Provenance(source="fred", source_description="FRED"),
-        output_schema=SCHEMA,
-    )
+stats = store.load_result(table)
+assert (stats.total, stats.loaded, stats.skipped, stats.errors) == (2, 2, 0, 0)
 
-    stats = await store.load_result(table)
-    assert (stats.total, stats.loaded, stats.skipped, stats.errors) == (2, 2, 0, 0)
-
-    gdp = await store.get("fred", "GDP")
-    assert gdp is not None
-    assert list(gdp.columns) == ["value"]  # KEY consumed, extra dropped
-    assert len(gdp) == 2  # two rows for GDP collapsed into one frame
-
-
-asyncio.run(main())
+gdp = store.get("fred", "GDP")
+assert gdp is not None
+assert list(gdp.columns) == ["value"]  # KEY consumed, extra dropped
+assert len(gdp) == 2  # two rows for GDP collapsed into one frame
 ```
 
 The two `GDP` rows collapse into a single two-row frame under code `GDP`, while
@@ -164,8 +148,6 @@ the rest. With `force=True` it treats nothing as pre-existing and upserts every
 extracted entity unconditionally.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import InMemoryDataStore
@@ -178,28 +160,23 @@ SCHEMA = OutputConfig(
     ]
 )
 
+store = InMemoryDataStore()
+store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
 
-async def main() -> None:
-    store = InMemoryDataStore()
-    await store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
+table = TabularResult(
+    data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
+    provenance=Provenance(source="fred", source_description="FRED"),
+    output_schema=SCHEMA,
+)
 
-    table = TabularResult(
-        data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
-        provenance=Provenance(source="fred", source_description="FRED"),
-        output_schema=SCHEMA,
-    )
+first = store.load_result(table, force=False)
+assert (first.loaded, first.skipped) == (0, 1)  # GDP already present
 
-    first = await store.load_result(table, force=False)
-    assert (first.loaded, first.skipped) == (0, 1)  # GDP already present
+second = store.load_result(table, force=True)
+assert (second.loaded, second.skipped) == (1, 0)  # overwritten
 
-    second = await store.load_result(table, force=True)
-    assert (second.loaded, second.skipped) == (1, 0)  # overwritten
-
-    gdp = await store.get("fred", "GDP")
-    assert gdp is not None and gdp["value"].iloc[0] == 9.0
-
-
-asyncio.run(main())
+gdp = store.get("fred", "GDP")
+assert gdp is not None and gdp["value"].iloc[0] == 9.0
 ```
 
 !!! tip "Idempotent backfills"
@@ -217,8 +194,6 @@ construction — exactly one namespaced `KEY` column and at least one `DATA` col
 and no `TITLE`/`METADATA` columns.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import InMemoryDataStore
@@ -234,22 +209,18 @@ LOAD_SCHEMA = OutputConfig(
 
 
 @loader(output=LOAD_SCHEMA)
-async def gdp_observations(series_id: str = "GDP") -> pd.DataFrame:
+def gdp_observations(series_id: str = "GDP") -> pd.DataFrame:
     """Return observation values for a FRED series."""
     return pd.DataFrame({"series_id": [series_id, series_id], "value": [1.0, 2.0]})
 
 
-async def main() -> None:
-    store = InMemoryDataStore()
-    result = await gdp_observations(series_id="GDP")  # a TabularResult
-    stats = await store.load_result(result)
-    assert stats.loaded == 1
+store = InMemoryDataStore()
+result = gdp_observations(series_id="GDP")  # a TabularResult
+stats = store.load_result(result)
+assert stats.loaded == 1
 
-    df = await store.get("fred", "GDP")
-    assert df is not None and list(df.columns) == ["value"] and len(df) == 2
-
-
-asyncio.run(main())
+df = store.get("fred", "GDP")
+assert df is not None and list(df.columns) == ["value"] and len(df) == 2
 ```
 
 ## Extraction errors vs. per-entity errors
@@ -270,33 +241,26 @@ it is never counted in `errors`. The table's schema must be well-formed:
 | A declared `DATA` column missing from the data | `ValueError` |
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import InMemoryDataStore
 from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
 
-
-async def main() -> None:
-    store = InMemoryDataStore()
-    table = TabularResult(
-        data=pd.DataFrame({"series_id": ["GDP"], "value": [1.0]}),
-        provenance=Provenance(source="x", source_description="x"),
-        output_schema=OutputConfig(
-            columns=[
-                Column(name="series_id", role=ColumnRole.KEY),  # no namespace
-                Column(name="value", role=ColumnRole.DATA),
-            ]
-        ),
-    )
-    try:
-        await store.load_result(table)
-    except ValueError as exc:
-        assert "namespace" in str(exc)
-
-
-asyncio.run(main())
+store = InMemoryDataStore()
+table = TabularResult(
+    data=pd.DataFrame({"series_id": ["GDP"], "value": [1.0]}),
+    provenance=Provenance(source="x", source_description="x"),
+    output_schema=OutputConfig(
+        columns=[
+            Column(name="series_id", role=ColumnRole.KEY),  # no namespace
+            Column(name="value", role=ColumnRole.DATA),
+        ]
+    ),
+)
+try:
+    store.load_result(table)
+except ValueError as exc:
+    assert "namespace" in str(exc)
 ```
 
 **Per-entity upsert failures** are different. Once extraction succeeds,
@@ -309,8 +273,8 @@ continues with the remaining entities. A single bad entity does not abort a load
     `InMemoryDataStore` keeps all state in an in-memory dict; it is lost when the
     process exits and is not shared across processes. There is no lock, so
     concurrent `upsert` calls (including those inside two overlapping
-    `load_result` runs) targeting the same key race on a plain dict. Drive a single
-    store from one task, or serialize access yourself.
+    `load_result` runs) targeting the same key race on a plain dict. Serialize
+    access yourself if multiple threads share one store.
 
 ## See also
 

@@ -240,16 +240,15 @@ def test_map_timeout_error_message_includes_provider_and_op() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
-async def test_pooled_client_yields_client_reusing_single_async_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    created: list[httpx.AsyncClient] = []
-    original_init = httpx.AsyncClient.__init__
+def test_pooled_client_yields_client_reusing_single_sync_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    created: list[httpx.Client] = []
+    original_init = httpx.Client.__init__
 
-    def tracking_init(self: httpx.AsyncClient, *args: object, **kwargs: object) -> None:
+    def tracking_init(self: httpx.Client, *args: object, **kwargs: object) -> None:
         original_init(self, *args, **kwargs)
         created.append(self)
 
-    monkeypatch.setattr(httpx.AsyncClient, "__init__", tracking_init)
+    monkeypatch.setattr(httpx.Client, "__init__", tracking_init)
 
     http = HttpClient(
         "https://api.example.com",
@@ -258,7 +257,7 @@ async def test_pooled_client_yields_client_reusing_single_async_client(monkeypat
         query_params={"apikey": "secret"},
     )
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ok": True})
 
     transport = httpx.MockTransport(handler)
@@ -270,9 +269,9 @@ async def test_pooled_client_yields_client_reusing_single_async_client(monkeypat
         _transport=transport,
     )
 
-    async with pooled_client(pooled) as shared:
-        r1 = await shared.request("GET", "/a")
-        r2 = await shared.request("GET", "/b")
+    with pooled_client(pooled) as shared:
+        r1 = shared.request("GET", "/a")
+        r2 = shared.request("GET", "/b")
 
     assert r1.status_code == 200
     assert r2.status_code == 200
@@ -281,11 +280,10 @@ async def test_pooled_client_yields_client_reusing_single_async_client(monkeypat
     assert http.base_url == "https://api.example.com"
 
 
-@pytest.mark.asyncio
-async def test_http_client_retries_transient_status_then_succeeds() -> None:
+def test_http_client_retries_transient_status_then_succeeds() -> None:
     calls = {"n": 0}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         if calls["n"] == 1:
             return httpx.Response(503, request=request)
@@ -296,16 +294,15 @@ async def test_http_client_retries_transient_status_then_succeeds() -> None:
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = await http.request("GET", "/status")
+    response = http.request("GET", "/status")
     assert response.status_code == 200
     assert calls["n"] == 2
 
 
-@pytest.mark.asyncio
-async def test_http_client_does_not_retry_terminal_4xx() -> None:
+def test_http_client_does_not_retry_terminal_4xx() -> None:
     calls = {"n": 0}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         return httpx.Response(404, request=request)
 
@@ -314,16 +311,15 @@ async def test_http_client_does_not_retry_terminal_4xx() -> None:
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = await http.request("GET", "/missing")
+    response = http.request("GET", "/missing")
     assert response.status_code == 404
     assert calls["n"] == 1
 
 
-@pytest.mark.asyncio
-async def test_http_client_retries_transient_exception_then_succeeds() -> None:
+def test_http_client_retries_transient_exception_then_succeeds() -> None:
     calls = {"n": 0}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         if calls["n"] == 1:
             raise httpx.ConnectError("connect failed", request=request)
@@ -334,42 +330,33 @@ async def test_http_client_retries_transient_exception_then_succeeds() -> None:
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = await http.request("GET", "/connect")
+    response = http.request("GET", "/connect")
     assert response.status_code == 200
     assert calls["n"] == 2
 
 
-@pytest.mark.asyncio
-async def test_http_client_respects_retry_after_for_429(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_http_client_does_not_retry_429() -> None:
+    """429 surfaces immediately so callers can raise RateLimitError without hidden retries."""
     calls = {"n": 0}
-    delays: list[float] = []
 
-    async def fake_sleep(delay: float) -> None:
-        delays.append(delay)
-
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
-        if calls["n"] == 1:
-            return httpx.Response(429, headers={"Retry-After": "7"}, request=request)
-        return httpx.Response(200, json={"ok": True}, request=request)
+        return httpx.Response(429, headers={"Retry-After": "7"}, request=request)
 
-    monkeypatch.setattr("parsimony.transport.asyncio.sleep", fake_sleep)
     http = HttpClient(
         "https://api.example.com",
         _transport=httpx.MockTransport(handler),
-        retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0, max_delay_s=10.0),
+        retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0, max_delay_s=10.0),
     )
-    response = await http.request("GET", "/rate-limited")
-    assert response.status_code == 200
-    assert calls["n"] == 2
-    assert delays == [7.0]
+    response = http.request("GET", "/rate-limited")
+    assert response.status_code == 429
+    assert calls["n"] == 1
 
 
-@pytest.mark.asyncio
-async def test_http_client_exhausted_retries_preserves_error_mapping() -> None:
+def test_http_client_exhausted_retries_preserves_error_mapping() -> None:
     calls = {"n": 0}
 
-    async def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx.Request) -> httpx.Response:
         calls["n"] += 1
         return httpx.Response(503, request=request)
 
@@ -378,7 +365,7 @@ async def test_http_client_exhausted_retries_preserves_error_mapping() -> None:
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = await http.request("GET", "/still-failing")
+    response = http.request("GET", "/still-failing")
     assert calls["n"] == 3
     with pytest.raises(httpx.HTTPStatusError) as excinfo:
         response.raise_for_status()

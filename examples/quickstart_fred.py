@@ -17,13 +17,12 @@ Run:
 
 from __future__ import annotations
 
-import asyncio
 import os
 
 from parsimony_fred import fred_fetch, fred_search
 
 
-async def main() -> None:
+def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Bind the API key once; use the bound connector for all calls.
@@ -31,16 +30,16 @@ async def main() -> None:
     fetch = fred_fetch.bind(api_key=api_key)
 
     # 1. Search for GDP series
-    search_result = await search(search_text="US gross domestic product")
+    search_result = search(search_text="US gross domestic product")
     print("--- FRED Search: US GDP ---")
     print(search_result.df[["id", "title"]].head(5).to_string(index=False))
     print()
 
     # 2. Fetch the headline GDP series
-    result = await fetch(series_id="GDP")
+    result = fetch(series_id="GDP")
     print("--- GDP Observations (last 5 quarters) ---")
     print(result.df[["date", "value"]].tail(5).to_string(index=False))
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

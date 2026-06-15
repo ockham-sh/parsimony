@@ -18,16 +18,17 @@ from parsimony.discover import Provider
 
 
 def _toy(name: str, **kwargs: Any):
-    async def _fn(x: str = "y", api_key: str = "") -> dict[str, Any]:
+    def _fn(x: str = "y", api_key: str = "") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Fetch a toy observation with a plenty long description."
     _fn.__name__ = name
+    kwargs.setdefault("secrets", ("api_key",))
     return connector(**kwargs)(_fn)
 
 
 def _public_toy(name: str, **kwargs: Any):
-    async def _fn(x: str = "y") -> dict[str, Any]:
+    def _fn(x: str = "y") -> dict[str, Any]:
         return {}
 
     _fn.__doc__ = "Public fetch with no deps."
@@ -186,6 +187,7 @@ def test_list_skips_conformance_without_strict_flag(
     payload = json.loads(captured.out)
 
     assert payload["plugins"][0]["conformance"] == "skipped"
+    assert payload["plugins"][0]["connector_count"] == 1
     assert exit_code == 0
 
 

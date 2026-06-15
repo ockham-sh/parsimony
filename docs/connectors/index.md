@@ -1,7 +1,7 @@
 # The connector model
 
-A **connector** is a small async Python callable plus metadata. You write an
-`async def` that fetches data and returns a plain `pandas` object (or a scalar
+A **connector** is a small Python callable plus metadata. You write a
+`def` that fetches data and returns a plain `pandas` object (or a scalar
 or dict); the `@connector` decorator turns it into a frozen `Connector`, and the
 framework wraps whatever you return into a [`Result`/`TabularResult`](results.md)
 with framework-built [`Provenance`](results.md). The function's parameters *are*
@@ -15,33 +15,32 @@ one compact end-to-end example. The deeper pages drill into each piece.
 ## What a connector is
 
 `Connector` is a frozen dataclass that pairs a `name`, a `description`, the
-wrapped async `fn`, its `inspect.Signature`, and optional metadata (`tags`,
+wrapped `fn`, its `inspect.Signature`, and optional metadata (`tags`,
 `properties`, an `output` schema, declared `secrets`, namespace hints). You do
 not construct it directly — you decorate a function:
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony.connector import connector
 
 
 @connector
-async def demo_search(query: str) -> pd.DataFrame:
+def demo_search(query: str) -> pd.DataFrame:
     """Search demo series by keyword."""
     return pd.DataFrame(
         {"id": ["A", "B"], "title": [f"Series about {query}", "Another"]}
     )
 
 
-result = asyncio.run(demo_search(query="GDP"))
+result = demo_search(query="GDP")
 print(result.provenance.source)   # demo_search
 print(result.provenance.params)   # {'query': 'GDP'}
 print(len(result.df))             # 2
 ```
 
-Calling a connector is a coroutine, so it must be awaited — here driven by
-`asyncio.run`. The return value is always a `Result` (or its `TabularResult`
-subclass when the connector returns a DataFrame or Series).
+Calling a connector returns its result directly. The return value is always a
+`Result` (or its `TabularResult` subclass when the connector returns a
+DataFrame or Series).
 
 !!! note "Import path"
     `connector`, `loader`, `enumerator`, `Connector`, and `Connectors` are
@@ -72,7 +71,7 @@ OUTPUT = OutputConfig(
     tags=["demo"],
     secrets=("api_key",),
 )
-async def fetch(series_id: str, api_key: str) -> pd.DataFrame:
+def fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch demo observations for a series."""
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0]})
 ```
@@ -103,20 +102,20 @@ public `params` parameter as a Pydantic `BaseModel`. Scalar parameters keep the
 call surface legible to an agent and let the framework record exactly which
 arguments produced a result.
 
-### The function must be async
+### The function must be synchronous
 
-The decorator rejects a plain `def` at decoration time:
+The decorator rejects an `async def` at decoration time:
 
 ```python
 from parsimony.connector import connector
 
 try:
     @connector
-    def not_async(q: str) -> str:  # missing async
-        """Sync functions are rejected."""
+    async def not_sync(q: str) -> str:  # async is rejected
+        """Async functions are rejected."""
         return q
 except TypeError as exc:
-    print(exc)   # not_async: connector function must be async
+    print(exc)   # not_sync: connector function must be synchronous; ...
 ```
 
 ### A description is mandatory
@@ -127,7 +126,7 @@ it. If both are empty the decorator raises `ValueError`:
 ```python
 try:
     @connector
-    async def undocumented(q: str) -> str:
+    def undocumented(q: str) -> str:
         return q
 except ValueError as exc:
     print(exc)   # undocumented: add a docstring or pass description= ...
@@ -168,7 +167,6 @@ Define a connector, attach an output schema, bind a secret, collect it into a
 installed — no network, no plugins, no optional extras.
 
 ```python
-import asyncio
 import pandas as pd
 from parsimony.connector import Connectors, connector
 from parsimony.result import Column, ColumnRole, OutputConfig
@@ -182,32 +180,28 @@ OUTPUT = OutputConfig(
 
 
 @connector(output=OUTPUT, tags=["demo"], secrets=("api_key",))
-async def demo_fetch(series_id: str, api_key: str) -> pd.DataFrame:
+def demo_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch demo observations for a series id."""
     # A real connector would call an HTTP API here using api_key.
     return pd.DataFrame({"date": ["2020-01-01", "2020-02-01"], "value": ["1", "2"]})
 
 
-async def main() -> None:
-    # Bind the secret once; it disappears from the call surface and provenance.
-    wired = demo_fetch.bind(api_key="s3cr3t")
-    bundle = Connectors([wired])
+# Bind the secret once; it disappears from the call surface and provenance.
+wired = demo_fetch.bind(api_key="s3cr3t")
+bundle = Connectors([wired])
 
-    print(bundle.names())                       # ['demo_fetch']
-    result = await bundle["demo_fetch"](series_id="X1")
+print(bundle.names())                       # ['demo_fetch']
+result = bundle["demo_fetch"](series_id="X1")
 
-    print(result.provenance.source)             # demo_fetch
-    print(result.provenance.params)             # {'series_id': 'X1'} — api_key stripped
-    print(result.df["value"].tolist())          # [1, 2] — coerced to numeric
-
-
-asyncio.run(main())
+print(result.provenance.source)             # demo_fetch
+print(result.provenance.params)             # {'series_id': 'X1'} — api_key stripped
+print(result.df["value"].tolist())          # [1, 2] — coerced to numeric
 ```
 
 A few things to notice:
 
-- `await bundle["demo_fetch"](...)` is the canonical execution pattern:
-  `await connectors[name](**kwargs)`. `Connectors.__getitem__` takes a connector
+- `bundle["demo_fetch"](...)` is the canonical execution pattern:
+  `connectors[name](**kwargs)`. `Connectors.__getitem__` takes a connector
   **name**, not an integer index.
 - `bind` returns a *new* connector — `Connector` is frozen — with `api_key`
   fixed and removed from the public signature.
@@ -227,7 +221,7 @@ collection-wide `bind`, and the `describe()` / `to_llm()` prompt projections.
 | [Calling, binding, and composing](calling-binding-composing.md) | Invoking connectors, `bind`, `with_callback`, and the immutable `Connectors` collection. |
 | [Results and output schemas](results.md) | `Result` / `TabularResult`, `OutputConfig` / `Column` / `ColumnRole`, `Provenance`, and the dtype coercion rules. |
 | [Errors](errors.md) | The typed, agent-facing exception taxonomy connector authors raise. |
-| [HTTP transport](http-transport.md) | The async HTTP layer (`HttpClient`, retry policy, redaction) that connector authors build on. |
+| [HTTP transport](http-transport.md) | The HTTP layer (`HttpClient`, retry policy, redaction) that connector authors build on. |
 
 ## See also
 

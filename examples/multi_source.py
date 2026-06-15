@@ -17,14 +17,13 @@ Run:
 
 from __future__ import annotations
 
-import asyncio
 import os
 
 from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
 
-async def main() -> None:
+def main() -> None:
     api_key = os.environ["FRED_API_KEY"]
 
     # Compose: FRED (needs API key) + SDMX (no key required), via the + operator.
@@ -33,13 +32,13 @@ async def main() -> None:
     print()
 
     # --- FRED: US GDP ---
-    gdp = await bundle["fred_fetch"](series_id="GDP")
+    gdp = bundle["fred_fetch"](series_id="GDP")
     print("--- FRED: US GDP (last 3 quarters) ---")
     print(gdp.df[["date", "value"]].tail(3).to_string(index=False))
     print()
 
     # --- SDMX: ECB EUR/USD ---
-    fx = await bundle["sdmx_fetch"](
+    fx = bundle["sdmx_fetch"](
         dataset_key="ECB-EXR",
         series_key="D.USD.EUR.SP00.A",
         start_period="2024-06-01",
@@ -50,4 +49,4 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

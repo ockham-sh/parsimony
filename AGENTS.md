@@ -24,13 +24,12 @@ make format   # ruff format + auto-fix
 | Error hierarchy | `parsimony/errors.py` |
 | HTTP transport | `parsimony/transport/` (package; `helpers.py` for connectors) |
 | Plugin contract (authoritative) | [docs/contract.md](docs/contract.md) |
-| Architecture | [docs/architecture.md](docs/architecture.md) |
-| API reference | [docs/api-reference.md](docs/api-reference.md) |
+| API reference | [docs/reference/api.md](docs/reference/api.md) |
 
 ## Rules
 
 - Python 3.11+; `X | None` not `Optional[X]`; line length 120
-- All connectors `async def`; immutable by default (`frozen=True`)
+- All connectors synchronous (`def`, not `async def`); immutable by default (`frozen=True`)
 - Raise `ConnectorError` subclasses, never bare `Exception`
 - Never log API keys; no `print()`; no hardcoded secrets
 - No provider-specific code in the kernel — `test_kernel_purity.py` enforces this

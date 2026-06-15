@@ -1,15 +1,19 @@
 """Conformance checks for ``parsimony`` plugins.
 
-Four checks — the minimal integrity set every official plugin must pass:
+Six checks — the minimal integrity set every official plugin must pass:
 
 1. :func:`_check_connectors_exported` — module exports ``CONNECTORS``
    (a :class:`Connectors` with at least one entry).
 2. :func:`_check_descriptions_non_empty` — every connector has a non-empty
    description within length bounds (20–800 chars).
-3. :func:`_check_enumerator_return_type` — enumerators declare ``output=``
+3. :func:`_check_enumerator_decorator` — enumerators use :func:`enumerator`,
+   not :func:`connector` with an ``enumerator`` tag alone.
+4. :func:`_check_enumerator_return_type` — enumerators declare ``output=``
    and annotate ``pd.DataFrame`` return types.
-4. :func:`_check_flat_public_params` — public connector parameters are flat
+5. :func:`_check_flat_public_params` — public connector parameters are flat
    (no bundled ``params: BaseModel`` surface).
+6. :func:`_check_secrets_declared` — credential-like parameters are listed
+   in ``secrets=``.
 
 Two entry points:
 
@@ -21,6 +25,7 @@ Two entry points:
 from __future__ import annotations
 
 import inspect
+import re
 from collections.abc import Callable, Iterable
 from types import ModuleType
 from typing import Any, ClassVar, get_type_hints
@@ -33,6 +38,8 @@ __all__ = [
     "assert_plugin_valid",
     "iter_check_names",
 ]
+
+_SECRET_PARAM_RE = re.compile(r"^(api_key|token|secret|.*_key)$", re.IGNORECASE)
 
 
 class ConformanceError(AssertionError):
@@ -140,7 +147,7 @@ def _check_enumerator_decorator(module: ModuleType) -> None:
     for c in module.CONNECTORS:
         if "enumerator" not in c.tags:
             continue
-        if getattr(c.fn, "__parsimony_role__", None) != "enumerator":
+        if c.role != "enumerator":
             raise ConformanceError(
                 "check_enumerator_decorator",
                 (
@@ -179,12 +186,29 @@ def _check_enumerator_return_type(module: ModuleType) -> None:
             )
 
 
+def _check_secrets_declared(module: ModuleType) -> None:
+    """Credential-like exposed parameters must be listed in secrets=."""
+    for c in module.CONNECTORS:
+        secret_set = set(c.secrets)
+        for name in c.exposed_signature.parameters:
+            if _SECRET_PARAM_RE.fullmatch(name) and name not in secret_set:
+                raise ConformanceError(
+                    "check_secrets_declared",
+                    (
+                        f"connector {c.name!r}: parameter {name!r} looks like a credential "
+                        f"but is not listed in secrets={c.secrets!r}"
+                    ),
+                    next_action=f"Add secrets=({name!r}, ...) to the @connector decorator.",
+                )
+
+
 _CHECKS: dict[str, Callable[[ModuleType], object]] = {
     "check_connectors_exported": _check_connectors_exported,
     "check_descriptions_non_empty": _check_descriptions_non_empty,
     "check_enumerator_decorator": _check_enumerator_decorator,
     "check_enumerator_return_type": _check_enumerator_return_type,
     "check_flat_public_params": _check_flat_public_params,
+    "check_secrets_declared": _check_secrets_declared,
 }
 
 
@@ -231,7 +255,7 @@ class ProviderTestSuite:
     * :attr:`module` — the already-imported plugin module.
     * :attr:`module_path` — the dotted import path of the CONNECTORS-exporting module.
 
-    Pytest discovers :meth:`test_plugin_conforms` (all four checks via
+    Pytest discovers :meth:`test_plugin_conforms` (all registered checks via
     :func:`assert_plugin_valid`) plus optional :meth:`test_entry_point_resolves`
     when :attr:`entry_point_name` is set.
     """

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 from types import ModuleType
 
 import pandas as pd
@@ -18,13 +17,13 @@ class _BundledParams(BaseModel):
 
 
 @connector()
-async def _bundled_macro(params: _BundledParams) -> pd.DataFrame:
+def _bundled_macro(params: _BundledParams) -> pd.DataFrame:
     """Toy connector with bundled params for conformance testing."""
     return pd.DataFrame({"country": [params.country]})
 
 
 @connector()
-async def _flat_macro(country: str) -> pd.DataFrame:
+def _flat_macro(country: str) -> pd.DataFrame:
     """Toy connector with flat params for conformance testing."""
     _BundledParams(country=country)
     return pd.DataFrame({"country": [country]})
@@ -47,5 +46,5 @@ class TestFlatPublicParamsConformance:
         assert_plugin_valid(mod)
 
     def test_flat_call_records_flat_provenance(self) -> None:
-        result = asyncio.run(_flat_macro(country="USA"))
+        result = _flat_macro(country="USA")
         assert result.provenance.params == {"country": "USA"}

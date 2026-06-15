@@ -1,6 +1,6 @@
 """Connector primitives and collection.
 
-A connector is a small async Python callable plus metadata. Function
+A connector is a small synchronous Python callable plus metadata. Function
 parameters are the connector parameters; binding fixes parameter values and
 returns a new connector with a smaller exposed surface.
 
@@ -20,21 +20,24 @@ __all__ = [
 
 import inspect
 import logging
+import types as _types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, get_args, get_origin, get_type_hints, overload
+from typing import Any, Union, get_args, get_origin, get_type_hints, overload
 
 import pandas as pd
+from pydantic import BaseModel
 
 from parsimony.errors import ParseError
+from parsimony.namespace import Namespace
 from parsimony.result import ColumnRole, OutputConfig, Provenance, Result, TabularResult
 
 logger = logging.getLogger(__name__)
 
-ResultCallback = Callable[[Result], Any]
-"""Post-fetch **observer**: ``(result) -> None | Awaitable``.
+ResultCallback = Callable[[Result], None]
+"""Post-fetch **observer**: ``(result) -> None``.
 
 **Observer semantics — exceptions are logged and swallowed.** The connector
 has already produced a valid :class:`Result`; a downstream side-effect
@@ -46,15 +49,13 @@ site — do not rely on a post-hook.
 """
 
 
-async def _invoke_result_callbacks(
+def _invoke_result_callbacks(
     callbacks: tuple[ResultCallback, ...],
     result: Result,
 ) -> None:
     for cb in callbacks:
         try:
-            ret = cb(result)
-            if inspect.isawaitable(ret):
-                await ret
+            cb(result)
         except Exception:
             # Observer semantics — see ResultCallback docstring.
             logger.exception("Result observer %r failed; data was fetched successfully", cb)
@@ -103,6 +104,8 @@ def _namespace_hint_from_annotation(ann: Any) -> str | None:
     if not metadata:
         return None
     for m in metadata:
+        if isinstance(m, Namespace):
+            return m.name or None
         if isinstance(m, str) and m.startswith("ns:"):
             return m[3:] or None
     return None
@@ -125,11 +128,85 @@ def _namespace_hints_from_signature(fn: Callable[..., Any], signature: inspect.S
 
 
 def _strip_annotated(ann: Any) -> Any:
-    if get_origin(ann) is not None and str(get_origin(ann)) == "typing.Annotated":
+    # Annotated[X, ...] carries its metadata as __metadata__; stripping yields X.
+    # We use hasattr rather than a string comparison on get_origin(...) because
+    # str(get_origin(Annotated[X, ...])) is "<class 'typing.Annotated'>" not
+    # "typing.Annotated" in CPython 3.11+.
+    if hasattr(ann, "__metadata__"):
         args = get_args(ann)
         if args:
             return args[0]
     return ann
+
+
+def _json_type_for_annotation(ann: Any) -> dict[str, Any]:
+    """Map a Python annotation to a minimal JSON Schema fragment."""
+    ann = _strip_annotated(ann)
+    if ann is inspect.Parameter.empty or ann is Any:
+        return {}
+    if ann is str:
+        return {"type": "string"}
+    if ann is int:
+        return {"type": "integer"}
+    if ann is float:
+        return {"type": "number"}
+    if ann is bool:
+        return {"type": "boolean"}
+    origin = get_origin(ann)
+    if origin is not None:
+        args = get_args(ann)
+        if origin is list or str(origin) in {"list", "typing.List"}:
+            item = _json_type_for_annotation(args[0]) if args else {}
+            return {"type": "array", "items": item or {"type": "string"}}
+        if origin is dict or str(origin) in {"dict", "typing.Dict"}:
+            return {"type": "object"}
+        # Handle Union[X, None] (typing.Optional) and X | None (PEP 604).
+        # get_origin returns typing.Union for the former and types.UnionType
+        # for the latter; both need to be checked explicitly.
+        is_union = origin is Union or (hasattr(_types, "UnionType") and origin is _types.UnionType)
+        if is_union:
+            non_none = [a for a in args if a is not type(None)]
+            if len(non_none) == 1:
+                return _json_type_for_annotation(non_none[0])
+    if isinstance(ann, type) and issubclass(ann, BaseModel):
+        return ann.model_json_schema()
+    return {"type": "string"}
+
+
+def _param_schema_from_connector(c: Connector) -> dict[str, Any]:
+    """Build a JSON Schema for the connector's exposed call surface."""
+    exposed = c.exposed_signature
+    params = [
+        p
+        for p in exposed.parameters.values()
+        if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) and p.name not in c.secrets
+    ]
+    if len(params) == 1:
+        ann = get_type_hints(c.fn, include_extras=True).get(params[0].name, params[0].annotation)
+        ann = _strip_annotated(ann)
+        if isinstance(ann, type) and issubclass(ann, BaseModel):
+            return ann.model_json_schema()
+
+    try:
+        hints = get_type_hints(c.fn, include_extras=True)
+    except Exception:  # noqa: BLE001 - local annotations may be unavailable
+        hints = {}
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for param in params:
+        ann = hints.get(param.name, param.annotation)
+        spec = _json_type_for_annotation(ann)
+        if param.default is not inspect.Parameter.empty and param.default is not None:
+            spec.setdefault("default", param.default)
+        properties[param.name] = spec
+        if param.default is inspect.Parameter.empty:
+            required.append(param.name)
+
+    schema: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        schema["required"] = required
+    return schema
 
 
 def _public_signature(signature: inspect.Signature, bound: Mapping[str, Any]) -> inspect.Signature:
@@ -154,7 +231,7 @@ def _validate_secrets(signature: inspect.Signature, secrets: tuple[str, ...]) ->
 
 @dataclass(frozen=True)
 class Connector:
-    """Metadata + wrapped async function for a data connector.
+    """Metadata + wrapped synchronous callable for a data connector.
 
     A connector's exposed parameters are the callable's current unbound
     parameters. :meth:`bind` returns a new connector with selected parameters
@@ -172,12 +249,18 @@ class Connector:
     namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     bound_arguments: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), repr=False)
     secrets: tuple[str, ...] = ()
+    role: str | None = None
     _callbacks: tuple[ResultCallback, ...] = field(default=(), repr=False)
 
     @property
     def exposed_signature(self) -> inspect.Signature:
         """Signature currently visible to callers after binding."""
         return _public_signature(self.signature, self.bound_arguments)
+
+    @property
+    def param_schema(self) -> Mapping[str, Any]:
+        """JSON Schema for the connector's exposed parameters (MCP / tool adapters)."""
+        return MappingProxyType(_param_schema_from_connector(self))
 
     def with_callback(self, callback: ResultCallback) -> Connector:
         """Return a new :class:`Connector` with *callback* appended to its post-fetch hooks."""
@@ -198,9 +281,9 @@ class Connector:
         merged = {**self.bound_arguments, **kwargs}
         return replace(self, bound_arguments=_mapping_proxy(merged))
 
-    async def call_raw(self, **kwargs: Any) -> Any:
+    def call_raw(self, **kwargs: Any) -> Any:
         """Invoke the underlying function with merged bound and call-time arguments."""
-        return await self.fn(**kwargs)
+        return self.fn(**kwargs)
 
     def _wrap_result(self, raw: Any, call_params: Mapping[str, Any]) -> Result:
         """Wrap a connector return value in a :class:`Result` with framework-built provenance."""
@@ -250,16 +333,16 @@ class Connector:
             raise TypeError(f"Invalid bound parameters for connector {self.name!r}: {exc}") from exc
         return all_params, call_params
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> Result:
+    def __call__(self, *args: Any, **kwargs: Any) -> Result:
         """Execute the connector with call-time parameters."""
         all_params, call_params = self._bind_call(args, kwargs)
-        raw = await self.call_raw(**all_params)
+        raw = self.call_raw(**all_params)
         try:
             result = self._wrap_result(raw, call_params)
         except ValueError as exc:
             raise ParseError(self.name, str(exc)) from exc
         if self._callbacks:
-            await _invoke_result_callbacks(self._callbacks, result)
+            _invoke_result_callbacks(self._callbacks, result)
         return result
 
     def describe(self) -> str:
@@ -366,6 +449,7 @@ def connector(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    role: str | None = None,
 ) -> Callable[[Callable[..., Any]], Connector]: ...
 
 
@@ -378,8 +462,9 @@ def connector(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    role: str | None = None,
 ) -> Callable[[Callable[..., Any]], Connector] | Connector:
-    """Decorate an async data connector.
+    """Decorate a synchronous data connector.
 
     Defaults: ``name`` ← ``fn.__name__``; ``description`` ← stripped
     ``fn.__doc__`` (required). The callable signature is the connector's
@@ -387,8 +472,11 @@ def connector(
     """
 
     def decorator(inner: Callable[..., Any]) -> Connector:
-        if not inspect.iscoroutinefunction(inner):
-            raise TypeError(f"{inner.__name__}: connector function must be async")
+        if inspect.iscoroutinefunction(inner):
+            raise TypeError(
+                f"{inner.__name__}: connector function must be synchronous; "
+                "async connectors are not supported in this release"
+            )
         sig = inspect.signature(inner)
         doc = (inner.__doc__ or "").strip()
         desc = description if description is not None else doc
@@ -411,6 +499,7 @@ def connector(
             properties=_mapping_proxy(properties),
             namespace_hints=ns_hints,
             secrets=secret_tup,
+            role=role,
         )
 
     if fn is not None:
@@ -501,7 +590,7 @@ def loader(
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **loader** — stricter ``output`` contract than :func:`connector`."""
+    """Decorate a synchronous **loader** — stricter ``output`` contract than :func:`connector`."""
 
     _validate_loader_output(output)
     merged_tags = ["loader", *(tags or [])]
@@ -512,6 +601,7 @@ def loader(
         tags=merged_tags,
         properties=properties,
         secrets=secrets,
+        role="loader",
     )
 
 
@@ -524,13 +614,12 @@ def enumerator(
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
-    """Decorate an async **enumerator** returning a raw ``pd.DataFrame``."""
+    """Decorate a synchronous **enumerator** returning a raw ``pd.DataFrame``."""
 
     _validate_enumerator_output(output)
 
     def decorator(inner: Callable[..., Any]) -> Connector:
         _validate_enumerator_return(inner)
-        inner.__parsimony_role__ = "enumerator"  # type: ignore[attr-defined]
         merged_tags = ["enumerator", *(tags or [])]
         return connector(
             name=name,
@@ -539,6 +628,7 @@ def enumerator(
             tags=merged_tags,
             properties=dict(properties or {}),
             secrets=secrets,
+            role="enumerator",
         )(inner)
 
     return decorator
@@ -569,6 +659,14 @@ class Connectors:
 
     def bind(self, **kwargs: Any) -> Connectors:
         """Bind matching parameters across every connector in the collection."""
+        if kwargs:
+            all_params = {p for c in self._items for p in c.exposed_signature.parameters}
+            unmatched = [k for k in kwargs if k not in all_params]
+            if unmatched:
+                logging.getLogger(__name__).warning(
+                    "bind() keys matched no connector parameters: %s",
+                    sorted(unmatched),
+                )
         out: list[Connector] = []
         for c in self._items:
             allowed = set(c.exposed_signature.parameters)
@@ -640,9 +738,40 @@ class Connectors:
         names = [c.name for c in self._items]
         return f"Connectors({names!r})"
 
-    def filter(self, predicate: Callable[[Connector], bool]) -> Connectors:
-        """Return connectors matching *predicate*."""
-        return Connectors([c for c in self._items if predicate(c)])
+    def bind_env(self, overrides: Mapping[str, str] | None = None) -> Connectors:
+        """Compatibility shim: flat connectors resolve credentials at call time.
+
+        Returns ``self`` unchanged. Hosts (MCP, agents) load ``.env`` into
+        ``os.environ`` before calling; connector implementations use
+        :func:`parsimony.transport.helpers.require_key` for env fallback.
+        """
+        _ = overrides
+        return self
+
+    def env_vars(self) -> frozenset[str]:
+        """Declared env-var names for this collection (empty for flat connectors)."""
+        return frozenset()
+
+    @property
+    def unbound(self) -> tuple[str, ...]:
+        """Connector names missing required credentials (empty for flat connectors)."""
+        return ()
+
+    def filter(
+        self,
+        predicate: Callable[[Connector], bool] | None = None,
+        *,
+        tags: Sequence[str] | None = None,
+    ) -> Connectors:
+        """Return connectors matching *predicate* and/or *tags*."""
+        tag_set = set(tags) if tags is not None else None
+
+        def _match(c: Connector) -> bool:
+            if tag_set is not None and not tag_set.issubset(set(c.tags)):
+                return False
+            return predicate(c) if predicate is not None else True
+
+        return Connectors([c for c in self._items if _match(c)])
 
     def search(
         self,

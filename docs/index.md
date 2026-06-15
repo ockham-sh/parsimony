@@ -2,7 +2,7 @@
 
 Parsimony is a connector framework for financial data — typed fetch and hybrid-search
 catalogs. It gives you a small, agent-native data layer: connectors that fetch raw data
-through a typed, async call surface, and a portable in-memory catalog that indexes and
+through a typed, synchronous call surface, and a portable in-memory catalog that indexes and
 searches over the entities those connectors discover.
 
 The distribution is published to PyPI as `parsimony-core` (import name `parsimony`,
@@ -12,16 +12,16 @@ version `0.7.0`, Apache-2.0). It runs on Python `>=3.11` (3.11, 3.12, 3.13).
 
 Parsimony is built around two complementary ideas.
 
-- **Connectors** — a connector is a small **async** Python callable plus metadata. The
+- **Connectors** — a connector is a small **synchronous** Python callable plus metadata. The
   [`@connector`](connectors/defining-connectors.md) decorator (and the stricter
-  [`@loader` / `@enumerator`](connectors/loaders-and-enumerators.md) verbs) turn an
-  `async def` into a frozen `Connector`. The function's parameters *are* the connector's
+  [`@loader` / `@enumerator`](connectors/loaders-and-enumerators.md) verbs) turn a plain
+  `def` into a frozen `Connector`. The function's parameters *are* the connector's
   call surface — there is no bundled `params` object. A connector returns **raw data** (a
   DataFrame, Series, scalar, or dict); the framework wraps it in a
   [`Result` / `TabularResult`](connectors/results.md) carrying framework-built
   [`Provenance`](connectors/results.md). The immutable
   [`Connectors`](connectors/calling-binding-composing.md) collection composes connectors
-  and is invoked with `await connectors[name](**kwargs)`.
+  and is invoked with `connectors[name](**kwargs)`.
 
 - **Catalog** — a [`Catalog`](catalog/index.md) is a portable, in-memory, searchable index
   over normalized [`Entity`](catalog/entities.md) records. It supports
@@ -55,7 +55,7 @@ is an optional extra that loads lazily — a plain `import parsimony` never impo
 faiss.
 
 ```bash
-pip install "parsimony-core[standard]"
+pip install "parsimony-core[catalog]"
 ```
 
 See [Installation](getting-started/installation.md) for the full optional-extras matrix.
@@ -63,11 +63,9 @@ See [Installation](getting-started/installation.md) for the full optional-extras
 ## A 60-second taste
 
 This runs with only `parsimony-core` installed. Define a `@connector`, attach an output
-schema, await it, and read the typed `TabularResult`.
+schema, call it, and read the typed `TabularResult`.
 
 ```python
-import asyncio
-
 import pandas as pd
 
 from parsimony import Column, ColumnRole, OutputConfig, connector
@@ -81,24 +79,20 @@ OUTPUT = OutputConfig(
 
 
 @connector(output=OUTPUT, tags=["demo"])
-async def demo_fetch(series_id: str) -> pd.DataFrame:
+def demo_fetch(series_id: str) -> pd.DataFrame:
     """Fetch a tiny demo time series by series_id."""
     return pd.DataFrame({"date": ["2020-01-01", "2020-04-01"], "value": [1.0, 2.0]})
 
 
-async def main() -> None:
-    result = await demo_fetch(series_id="GDP")
-    print(result.df)                       # the validated DataFrame
-    print(result.provenance.source)        # 'demo_fetch'
-    print(result.provenance.params)        # {'series_id': 'GDP'}
-
-
-asyncio.run(main())
+result = demo_fetch(series_id="GDP")
+print(result.df)                       # the validated DataFrame
+print(result.provenance.source)        # 'demo_fetch'
+print(result.provenance.params)        # {'series_id': 'GDP'}
 ```
 
 A few things this shows:
 
-- The connector is `async`; a plain `def` would raise `TypeError` at decoration time.
+- The connector is a plain `def`; an `async def` would raise `TypeError` at decoration time.
 - The docstring becomes the connector's required `description` — omit both and decoration
   raises `ValueError`.
 - The function returns a **raw** DataFrame. The framework applies the
@@ -116,7 +110,8 @@ A few things this shows:
     from parsimony import Connectors
 
     bundle = Connectors([demo_fetch]) + Connectors([another_connector])
-    result = await bundle["demo_fetch"](series_id="GDP")
+    result = bundle["demo_fetch"](series_id="GDP")
+    print(result.df)
     ```
 
     There is no `.merge` method — `+` is the composition primitive. See
@@ -128,36 +123,29 @@ The catalog indexes [`Entity`](catalog/entities.md) records so you can search th
 catalog must be built before it can be searched. This example uses a keyword-only
 [`BM25Index`](catalog/indexes.md), which loads `rank-bm25` lazily on first build.
 
-!!! note "Needs the `standard` extra"
+!!! note "Needs the `catalog` extra"
 
     The `BM25Index` shown here resolves its backend on `build()`, so install the
-    [`standard` extra](getting-started/installation.md) first:
+    [`catalog` extra](getting-started/installation.md) first:
 
     ```bash
-    pip install "parsimony-core[standard]"
+    pip install "parsimony-core[catalog]"
     ```
 
 ```python
-import asyncio
-
 from parsimony import BM25Index, Catalog, Entity
 
-
-async def main() -> None:
-    catalog = Catalog(name="demo", indexes={"title": BM25Index()})
-    catalog.set_entities(
-        [
-            Entity(namespace="demo", code="gdp", title="Gross domestic product"),
-            Entity(namespace="demo", code="cpi", title="Consumer price index"),
-        ]
-    )
-    await catalog.build()                          # required before searching
-    matches, diagnostic = await catalog.search("price", limit=5)
-    for match in matches:
-        print(match.code, match.title, match.score)
-
-
-asyncio.run(main())
+catalog = Catalog(name="demo", indexes={"title": BM25Index()})
+catalog.set_entities(
+    [
+        Entity(namespace="demo", code="gdp", title="Gross domestic product"),
+        Entity(namespace="demo", code="cpi", title="Consumer price index"),
+    ]
+)
+catalog.build()                          # required before searching
+matches, diagnostic = catalog.search("price", limit=5)
+for match in matches:
+    print(match.code, match.title, match.score)
 ```
 
 `catalog.search(...)` returns a list of [`CatalogMatch`](catalog/search.md) records plus a

@@ -16,7 +16,7 @@ def _mk_connector(
     doc: str = "Fetch a toy observation.",
     tags: list[str] | None = None,
 ) -> Any:
-    async def _fn(x: str = "y") -> dict[str, Any]:
+    def _fn(x: str = "y") -> dict[str, Any]:
         return {"ok": True, "x": x}
 
     _fn.__doc__ = doc
@@ -107,7 +107,7 @@ def test_enumerator_missing_return_annotation_fails() -> None:
     with pytest.raises(ValueError, match="must annotate return type"):
 
         @enumerator(output=ENUMERATE_OUTPUT, name="bad_enum")
-        async def bad_enum():
+        def bad_enum():
             """An enumerator without a return type annotation."""
             return pd.DataFrame()
 
@@ -116,7 +116,7 @@ def test_enumerator_list_entity_return_annotation_fails() -> None:
     with pytest.raises(ValueError, match="pd.DataFrame"):
 
         @enumerator(output=ENUMERATE_OUTPUT, name="entity_enum")
-        async def entity_enum() -> list:
+        def entity_enum() -> list:
             """An enumerator that declares list return type."""
             return []
 
@@ -130,4 +130,5 @@ def test_iter_check_names_contains_minimal_checks() -> None:
         "check_enumerator_decorator",
         "check_enumerator_return_type",
         "check_flat_public_params",
+        "check_secrets_declared",
     }

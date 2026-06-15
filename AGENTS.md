@@ -1,8 +1,3 @@
----
-description: 
-alwaysApply: true
----
-
 # parsimony
 
 ## Commands

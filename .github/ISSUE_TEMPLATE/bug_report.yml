@@ -18,7 +18,6 @@ body:
       options:
         - Core framework
         - Catalog
-        - MCP server
         - FRED
         - SDMX
         - FMP

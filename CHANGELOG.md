@@ -4,6 +4,13 @@ All notable changes to parsimony will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- Redact the `registrationkey` query parameter in transport logs (previously emitted in cleartext).
+
+## [0.7.0] - 2026-05-28
 ## [0.7.1]
 
 ### Added

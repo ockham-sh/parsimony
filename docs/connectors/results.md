@@ -120,6 +120,71 @@ print(restored.output_schema.columns[0].namespace)        # 'fred'
 print(restored.provenance.params)                          # {'q': 'unemployment'}
 ```
 
+## The `to_llm()` view
+
+`to_llm()` renders a compact, **schema-in-context** view of a result for an LLM prompt — type and shape, not the full payload. It is the framework-owned counterpart to dumping `result.data`: the size it adds to context is O(schema) for tables and O(structure) for opaque payloads, not O(rows) or O(bytes). Every `Result` has it; `TabularResult` overrides it with a governed, schema-aware rendering.
+
+`to_llm()` is the data layer's single convention for "the governed string an LLM may see of this object" — the same method name carries the connector card (`Connector.to_llm()`), the bundle listing (`Connectors.to_llm()`), and this result view. (A runtime such as `parsimony-agents` has its own, separate `to_llm(mode) -> blocks` convention for *assembling* a message; it delegates the *content* of a governed object back to these methods.)
+
+The signature is shared across both types, so a caller holding any `Result` can call it blindly:
+
+```python
+to_llm(*, max_rows: int = 10, max_chars: int = 2000) -> str
+```
+
+`TabularResult` honors `max_rows`; the opaque `Result` honors `max_chars`. Each ignores the other's knob.
+
+### TabularResult preview
+
+Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) + namespace**), and a small head/tail CSV sample. Columns flagged [`exclude_from_llm_view`](#column) are dropped from **both** the schema block and the sample.
+
+```python
+import pandas as pd
+from parsimony.result import Column, ColumnRole, OutputConfig, TabularResult
+
+df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-01-02"]), "value": [1.0, 2.0]})
+result = TabularResult(data=df, output_schema=OutputConfig(columns=[
+    Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
+    Column(name="value", role=ColumnRole.DATA),
+]))
+print(result.to_llm())
+# TabularResult: 2 rows × 2 columns
+# Columns:
+# - date: datetime64[ns] (KEY ns:fred_series)
+# - value: float64 (DATA)
+# Sample (2 rows):
+# date,value
+# 2020-01-01,1.0
+# 2020-01-02,2.0
+```
+
+With no `output_schema` the schema lines carry dtype only (no role annotation). For frames longer than `max_rows` the sample shows a head and a tail separated by a `...` line, and wide cell values are truncated.
+
+### Result preview (opaque payloads)
+
+For non-tabular `data` (dict/JSON, list, str, scalar, bytes, pydantic model) the base method emits a depth-limited structural summary — one level of expansion, with nested values collapsed to a `type[shape]` token:
+
+```python
+from parsimony.result import Result
+
+print(Result(data={"name": "Alice", "items": [1, 2, 3], "meta": {"a": 1}}).to_llm())
+# Result (dict): 3 keys
+# - name: str
+# - items: list[3]
+# - meta: dict[1 keys]
+
+print(Result(data=4.25).to_llm())   # Result (float): 4.25
+```
+
+!!! note "One owner for governed rendering"
+    `Column.llm_annotation()` is the single source of truth for how a column's role and namespace
+    are rendered into **any** LLM-facing view — the connector card's `Returns:` line,
+    `to_llm`, and downstream consumers (for example the agent's fetch log). Downstream
+    layers **call it** rather than re-deriving role/namespace formatting, so the governed
+    vocabulary never drifts across the stack. A runtime may still add its own *presentation*
+    around the data (pagination, charts, caching handles); what it must not do is re-implement the
+    governed schema rendering.
+
 ## OutputConfig
 
 `OutputConfig` is the declarative schema you attach to a connector via `output=`. It is an ordered `list[Column]` that maps a raw DataFrame into a schema-applied `TabularResult`.

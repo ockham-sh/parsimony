@@ -298,14 +298,16 @@ parameters (including bound secrets) are invisible in both.
   `Output Schema` section (column name + role + namespace) when `output=` is set, and `Tags` /
   `Properties` lines.
 - **`to_llm()`** — a compact, token-efficient card for system prompts: `### <name> [tags]`, the
-  collapsed description (with a `Returns: col1, col2.` line when an `OutputConfig` declares
-  columns), then one `- <param>?: <type> [ns:x]` line per exposed parameter (`?` marks optional,
-  `[ns:...]` marks a namespace hint).
+  collapsed description (with a `Returns: <col> (ROLE ns:x), ...` line when an `OutputConfig`
+  declares columns — one `name (ROLE)` token per LLM-visible column, `ns:` appended for KEY/METADATA
+  columns that declare a namespace, columns with `exclude_from_llm_view` omitted), then one
+  `- <param>?: <type> [ns:x]` line per exposed parameter (`?` marks optional, `[ns:...]` marks a
+  namespace hint).
 
 ```python
 print(fred_fetch.to_llm())
 # ### fred_fetch
-# Fetch FRED time series observations by series_id. Returns: date, value.
+# Fetch FRED time series observations by series_id. Returns: date (KEY ns:fred_series), value (DATA).
 # - series_id: Annotated [ns:fred_series]
 
 print(fred_fetch.describe())

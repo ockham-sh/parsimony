@@ -35,6 +35,10 @@ if TYPE_CHECKING:
 COMPONENTS_DIRNAME = "components"
 PER_FIELD_DIRNAME = "per_field"
 EXACT_MATCH_SCORE = 1_000_000.0
+#: Lowest score a fuzzy hybrid candidate is shifted to, so a below-mean fusion
+#: score (z-score fusion produces negatives) stays > 0 and is not dropped by
+#: ``_ValuePostings.expand`` (which discards ``score <= 0``).
+_FUZZY_SCORE_FLOOR = 1e-3
 
 
 def _component_kind(index: CatalogIndex) -> str:
@@ -160,6 +164,24 @@ class _ValuePostings:
         return cls(values=values, value_to_id=value_to_id, offsets=offsets, row_ids=row_ids)
 
 
+def _exact_match_vid(postings: _ValuePostings, query: str) -> int | None:
+    """Resolve a case-insensitive exact value match to its vid, else ``None``.
+
+    Single source of truth for the exact-match short-circuit shared by every
+    index's ``_score_values`` (BM25, Vector): a case-sensitive hit wins fast,
+    otherwise fall back to a case-insensitive scan.
+    """
+    stripped = query.strip()
+    vid = postings.value_to_id.get(stripped)
+    if vid is not None:
+        return vid
+    normalized = stripped.casefold()
+    for text, candidate in postings.value_to_id.items():
+        if text.casefold() == normalized:
+            return candidate
+    return None
+
+
 @runtime_checkable
 class CatalogIndex(Protocol):
     """Runtime contract for a field-scoped catalog index."""
@@ -222,13 +244,7 @@ class BM25Index:
     def _score_values(self, query: str) -> dict[int, float]:
         if not self._postings.values:
             return {}
-        normalized = query.strip().casefold()
-        exact_vid = self._postings.value_to_id.get(query.strip())
-        if exact_vid is None:
-            for text, vid in self._postings.value_to_id.items():
-                if text.casefold() == normalized:
-                    exact_vid = vid
-                    break
+        exact_vid = _exact_match_vid(self._postings, query)
         if exact_vid is not None:
             return {exact_vid: EXACT_MATCH_SCORE}
         if self._bm25 is None:
@@ -325,13 +341,7 @@ class VectorIndex:
     ) -> dict[int, float]:
         if not self._postings.values:
             return {}
-        normalized = query.strip().casefold()
-        exact_vid = self._postings.value_to_id.get(query.strip())
-        if exact_vid is None:
-            for text, vid in self._postings.value_to_id.items():
-                if text.casefold() == normalized:
-                    exact_vid = vid
-                    break
+        exact_vid = _exact_match_vid(self._postings, query)
         if exact_vid is not None:
             return {exact_vid: EXACT_MATCH_SCORE}
         if self._faiss is None or self._faiss.ntotal == 0:
@@ -442,14 +452,47 @@ class HybridIndex:
             return {}
         positive_vids = {vid for scores in per_kind_scores.values() for vid, score in scores.items() if score > 0.0}
         fused_values = self._fusion(concat(value_rankings), limit=max(len(positive_vids), 1))
-        fused_scores = {
-            int(item.code): max(scores.get(int(item.code), 0.0) for scores in per_kind_scores.values())
-            for item in fused_values.items
-        }
+        fused_by_vid = {int(item.code): item.score for item in fused_values.items}
+        fused_scores = self._compose_fused_scores(positive_vids, per_kind_scores, fused_by_vid)
         reference = next(iter(self._components.values()))
         if not isinstance(reference, (BM25Index, VectorIndex)):
             raise TypeError(f"Unsupported hybrid component for postings: {type(reference)!r}")
         return reference._postings.expand(fused_scores)
+
+    @staticmethod
+    def _compose_fused_scores(
+        positive_vids: set[int],
+        per_kind_scores: dict[str, dict[int, float]],
+        fused_by_vid: dict[int, float],
+    ) -> dict[int, float]:
+        """Compose the per-vid row score from the configured fusion's output.
+
+        The configured fusion (ZScore/MinMax/RRF + weights) decides the order of
+        every fuzzy candidate — that is the whole point of choosing a fusion. Two
+        corrections keep that honest:
+
+        * An exact-match sentinel from any component is kept verbatim rather than
+          fused: the fusion would normalize a lone exact hit down to ~0, costing it
+          the cross-field dominance a sentinel must keep when the catalog merges
+          fields.
+        * Fusion scores are centred (z-score produces negatives) and
+          ``_ValuePostings.expand`` drops ``score <= 0`` — which would silently lose
+          every below-mean candidate. The fuzzy band is translated into the positive
+          range (lowest → ``_FUZZY_SCORE_FLOOR``), preserving the fusion's order and
+          relative gaps without dropping anyone (a vid a degenerate fusion omits —
+          e.g. MinMax skipping a uniform-score group — lands at the floor).
+        """
+        raw_max = {vid: max(s.get(vid, 0.0) for s in per_kind_scores.values()) for vid in positive_vids}
+        fused: dict[int, float] = {vid: raw_max[vid] for vid in positive_vids if raw_max[vid] >= EXACT_MATCH_SCORE}
+        fuzzy_vids = [vid for vid in positive_vids if raw_max[vid] < EXACT_MATCH_SCORE]
+        if not fuzzy_vids:
+            return fused
+        present = [fused_by_vid[vid] for vid in fuzzy_vids if vid in fused_by_vid]
+        lo = min(present) if present else 0.0
+        for vid in fuzzy_vids:
+            score = fused_by_vid.get(vid, lo)
+            fused[vid] = (score - lo) + _FUZZY_SCORE_FLOOR
+        return fused
 
     def ranking(
         self,

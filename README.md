@@ -36,7 +36,7 @@ The kernel ships **zero connectors in-tree**. Each connector (e.g. `parsimony-fr
 - **Declarative output schemas.** `OutputConfig` + `Column` + `ColumnRole` (`DATA`/`KEY`/`TITLE`/`METADATA`) shape results *and* drive catalog-entity extraction.
 - **Agent-facing error taxonomy.** A single `ConnectorError` base with subclasses whose default messages embed retry directives — built for autonomous agent loops, not just humans.
 - **Credential injection by composition.** `bind(api_key=...)` fixes a parameter, removes it from the call surface, and keeps it out of provenance.
-- **HTTP transport helpers.** `HttpClient`, `fetch_json`, and `map_http_error` translate `httpx` errors into the typed taxonomy, with secret redaction in logs and transient retry built in.
+- **HTTP transport helpers.** `HttpClient` plus `fetch_json` / `fetch_csv` / `fetch_text` (and `map_http_error`) translate `httpx` errors into the typed taxonomy — including a non-JSON/non-CSV body surfacing as `ParseError` — with secret redaction in logs and transient retry built in.
 - **Plugin discovery + conformance.** Plugins register under `parsimony.providers`; `parsimony list` enumerates them and `--strict` runs a conformance suite.
 - **Hybrid search.** BM25 + FAISS vector indexes fused with Z-score / min-max / RRF rankers, with adaptive FAISS index selection by row count.
 - **Swappable embedders.** Local PyTorch, faster ONNX (int8), or hosted (litellm) — each behind its own optional extra.
@@ -238,7 +238,7 @@ A few important details, grounded in the code:
 - **`search(query, limit, *, namespaces=None)`** — `limit` is positional and required.
 - **Default index policy.** `Catalog(name, indexes=None)` auto-creates BM25 indexes for `code`, `title`, and every metadata key at `build()` time. Pass an explicit `indexes` dict for full control.
 - **Exact value matches win.** A case-insensitive exact value match short-circuits to a sentinel score that dominates fuzzy BM25/cosine scores — ideal for code lookups.
-- **Portable, integrity-checked snapshots.** A saved catalog is a directory of Parquet (zstd) files plus `meta.json`; `Catalog.load` recomputes a content SHA-256 over every file and rejects a mismatch. Only `file://` (or a bare path) and `hf://` (Hugging Face dataset) schemes are wired in.
+- **Portable, integrity-checked snapshots.** A saved catalog is a directory of Parquet (zstd) files plus `meta.json`; `Catalog.load` recomputes a content SHA-256 over the data files and rejects a mismatch (an anti-corruption check, not a signature — trust the source of any snapshot you load). Only `file://` (or a bare path) and `hf://` (Hugging Face dataset) schemes are wired in. An `hf://` URL may pin a revision — `hf://<org>/<repo>@<commit-sha>` — for a reproducible, tamper-resistant remote load; without one it tracks the dataset's default branch.
 
 ### Building entities from connector output
 

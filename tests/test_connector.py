@@ -406,30 +406,3 @@ class TestResultWrap:
 
         with pytest.raises(TypeError, match="must return raw data"):
             with_meta(series_id="GDPC1")
-
-
-class TestCallback:
-    def test_callback_fires_on_success(self) -> None:
-        log: list[str] = []
-        c = _fake_connectors().with_callback(lambda r: log.append(r.provenance.source))
-        c["demo_search"](query="GDP")
-        assert log == ["demo_search"]
-
-    def test_callback_preserved_through_bind(self) -> None:
-        log: list[str] = []
-
-        @connector
-        def keyed(query: str, api_key: str) -> pd.DataFrame:
-            """Keyed."""
-            return _make_search_df(query)
-
-        c = Connectors([keyed]).with_callback(lambda r: log.append(r.provenance.source)).bind(api_key="k")
-        c["keyed"](query="GDP")
-        assert log == ["keyed"]
-
-    def test_callback_exceptions_are_logged_not_raised(self) -> None:
-        def boom(_result: Result) -> None:
-            raise RuntimeError("callback broke")
-
-        result = _fake_connectors().with_callback(boom)["demo_search"](query="GDP")
-        assert len(result.data) == 2

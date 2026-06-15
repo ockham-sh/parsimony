@@ -24,6 +24,32 @@ def _entries() -> list[Entity]:
     ]
 
 
+def test_save_coerces_non_json_native_metadata(tmp_path: Path) -> None:
+    # A datetime/Decimal metadata value must not crash the whole snapshot save;
+    # it serializes to its string form (default=str) and round-trips as a string.
+    import datetime as _dt
+    from decimal import Decimal
+
+    catalog = Catalog(name="meta", indexes={"title": BM25Index()})
+    catalog.set_entities(
+        [
+            Entity(
+                namespace="meta",
+                code="A",
+                title="alpha",
+                metadata={"updated": _dt.date(2026, 6, 11), "ratio": Decimal("1.5")},
+            )
+        ]
+    )
+    catalog.build()
+    catalog.save(f"file://{tmp_path}/snap")
+
+    loaded = Catalog.load(f"file://{tmp_path}/snap")
+    md = loaded.entities[0].metadata
+    assert md["updated"] == "2026-06-11"
+    assert md["ratio"] == "1.5"
+
+
 def _enumeration_schema(*, namespace: str | None = "series") -> OutputConfig:
     return OutputConfig(
         columns=[

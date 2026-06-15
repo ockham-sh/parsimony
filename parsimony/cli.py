@@ -45,8 +45,9 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Inspects the 'parsimony.providers' entry-point group. Shows each "
             "plugin's name, version, connector count, and conformance status. "
-            "With --strict, runs the conformance suite against each plugin "
-            "and exits non-zero on any failure."
+            "With --strict, imports each plugin to run the conformance suite and "
+            "to list the credential (secret) parameters its connectors declare; "
+            "exits non-zero on any failure."
         ),
     )
     ls.add_argument("--json", dest="json_output", action="store_true", help="Emit JSON instead of a table.")
@@ -62,8 +63,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description=(
             "Manage the global parsimony cache. The root resolves through "
             "PARSIMONY_CACHE_DIR (defaulting to "
-            "platformdirs.user_cache_dir('parsimony')) and contains four "
-            "named subdirectories: catalogs, models, connectors, staging."
+            "platformdirs.user_cache_dir('parsimony')) and contains the named "
+            f"subdirectories: {', '.join(cache._SUBDIRS)}."
         ),
     )
     cc_sub = cc.add_subparsers(dest="cache_action", required=True)
@@ -79,7 +80,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cc_clear.add_argument(
         "--subdir",
         metavar="NAME",
-        help="Clear only this subdir (catalogs, models, connectors, staging).",
+        help=f"Clear only this subdir ({', '.join(cache._SUBDIRS)}).",
     )
     cc_clear.add_argument(
         "--yes",
@@ -113,6 +114,7 @@ class _PluginRow(TypedDict):
     connector_count: int
     conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
+    secrets: list[str]  # union of declared secret param names (strict mode only)
 
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
@@ -144,10 +146,13 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
         connector_count = 0
         conformance = "skipped"
         detail: str | None = None
+        secrets: list[str] = []
 
         try:
             connectors = provider.load()
             connector_count = len(connectors)
+            if strict:
+                secrets = sorted({s for c in connectors for s in c.secrets})
         except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
             if strict:
                 conformance = "fail"
@@ -175,6 +180,7 @@ def _collect_rows(*, strict: bool) -> list[_PluginRow]:
                 "connector_count": connector_count,
                 "conformance": conformance,
                 "conformance_detail": detail,
+                "secrets": secrets,
             }
         )
     return rows
@@ -189,15 +195,24 @@ def _render_table(rows: list[_PluginRow], stream: TextIO) -> None:
         )
         return
 
-    header = ["NAME", "VERSION", "CONNECTORS", "CONFORMANCE"]
+    header = ["NAME", "VERSION", "CONNECTORS", "CONFORMANCE", "SECRETS"]
     body: list[list[str]] = [header]
     for r in rows:
+        # Secrets are only inspected in --strict mode; "?" marks "not inspected",
+        # "-" marks "inspected, declares none".
+        if r["conformance"] == "skipped":
+            secrets_cell = "?"
+        elif r["secrets"]:
+            secrets_cell = ", ".join(r["secrets"])
+        else:
+            secrets_cell = "-"
         body.append(
             [
                 r["name"],
                 r["version"] or "?",
                 str(r["connector_count"]) if r["connector_count"] else "0",
                 r["conformance"],
+                secrets_cell,
             ]
         )
 

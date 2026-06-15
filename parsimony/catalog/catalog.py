@@ -413,7 +413,10 @@ class Catalog:
                 "namespace": entry.namespace,
                 "code": entry.code,
                 "title": entry.title,
-                "metadata_json": json.dumps(entry.metadata),
+                # default=str so a non-JSON-native metadata value (datetime,
+                # Decimal, …) coerces to its string form instead of crashing the
+                # whole snapshot save (matches Provenance.safe_dump).
+                "metadata_json": json.dumps(entry.metadata, default=str),
             }
             for entry in self._entities
         ]
@@ -484,7 +487,7 @@ def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = N
     catalog._save_to_path(target, builder=builder)
 
 
-def _load_hf(root: str, sub: str) -> Catalog:
+def _load_hf(root: str, sub: str, *, revision: str | None = None) -> Catalog:
     from huggingface_hub import snapshot_download
 
     from parsimony import cache
@@ -495,12 +498,13 @@ def _load_hf(root: str, sub: str) -> Catalog:
             snapshot_download(
                 repo_id=root,
                 repo_type=REPO_TYPE,
+                revision=revision,
                 cache_dir=cache_dir,
                 allow_patterns=[f"{sub}/*"],
             )
         )
         return Catalog._load_from_path(local / sub)
-    local = Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, cache_dir=cache_dir))
+    local = Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, revision=revision, cache_dir=cache_dir))
     return Catalog._load_from_path(local)
 
 
@@ -526,5 +530,5 @@ def _dispatch_load(url: str) -> Catalog:
     if parsed.scheme == "file":
         return _load_file(parsed.root, parsed.sub)
     if parsed.scheme == "hf":
-        return _load_hf(parsed.root, parsed.sub)
+        return _load_hf(parsed.root, parsed.sub, revision=parsed.revision)
     raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")

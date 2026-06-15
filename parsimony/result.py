@@ -16,6 +16,7 @@ __all__ = [
 import json
 import logging
 import re
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -83,6 +84,16 @@ class Column(BaseModel):
                 raise ValueError("namespace must be non-empty when set")
         return self
 
+    def llm_annotation(self) -> str:
+        """Governed schema token for LLM views: ``(ROLE)`` or ``(ROLE ns:<namespace>)``.
+
+        Single source of truth for how a column's role + namespace is rendered
+        into any LLM-facing view (connector card, result preview, fetch log).
+        """
+        role = self.role.value.upper()
+        ns = f" ns:{self.namespace}" if self.namespace else ""
+        return f"({role}{ns})"
+
 
 def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
     match column.dtype:
@@ -145,6 +156,108 @@ class Provenance(BaseModel):
         return raw
 
 
+# ---------------------------------------------------------------------------
+# LLM preview helpers
+# ---------------------------------------------------------------------------
+
+_PREVIEW_DEFAULT_MAX_ROWS = 10
+_PREVIEW_DEFAULT_MAX_CHARS = 2000
+_PREVIEW_MAX_CELL_CHARS = 80
+_PREVIEW_MAX_KEYS = 20
+
+
+def _truncate_cell(value: Any, max_len: int) -> str:
+    s = str(value)
+    if len(s) <= max_len:
+        return s
+    return s[: max(0, max_len - 1)] + "…"
+
+
+def _shape_token(value: Any) -> str:
+    """One-line type/shape token for a nested value — no payload.
+
+    Scalars (bool/int/float/str/bytes/...) fall through to the type-name
+    fallback; only containers and models carry a size annotation.
+    """
+    if isinstance(value, Mapping):
+        return f"dict[{len(value)} keys]"
+    if isinstance(value, BaseModel):
+        return f"{type(value).__name__}[{len(type(value).model_fields)} fields]"
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return f"{type(value).__name__}[{len(value)}]"
+    if value is None:
+        return "None"
+    return type(value).__name__
+
+
+def _homogeneous_elem_type(value: Sequence[Any] | set[Any] | frozenset[Any]) -> str | None:
+    types = {type(v).__name__ for v in value}
+    return next(iter(types)) if len(types) == 1 else None
+
+
+def _preview_value(value: Any, *, max_chars: int) -> str:
+    """Depth-limited structural preview of an opaque ``Result.data`` payload."""
+    tname = type(value).__name__
+    if value is None:
+        return "Result (NoneType): None"
+    if isinstance(value, str):
+        return f"Result (str): {len(value)} chars\n{_truncate_cell(value, max_chars)}"
+    if isinstance(value, (bytes, bytearray)):
+        return f"Result ({tname}): {len(value)} bytes"
+    if isinstance(value, bool):
+        return f"Result (bool): {value}"
+    if isinstance(value, (int, float)):
+        return f"Result ({tname}): {value}"
+    if isinstance(value, Mapping):
+        lines = [f"Result (dict): {len(value)} keys"]
+        for i, (k, v) in enumerate(value.items()):
+            if i >= _PREVIEW_MAX_KEYS:
+                lines.append(f"... ({len(value) - _PREVIEW_MAX_KEYS} more keys)")
+                break
+            lines.append(f"- {k}: {_shape_token(v)}")
+        return "\n".join(lines)
+    if isinstance(value, BaseModel):
+        fields = list(type(value).model_fields)
+        lines = [f"Result ({tname}): {len(fields)} fields"]
+        for i, fname in enumerate(fields):
+            if i >= _PREVIEW_MAX_KEYS:
+                lines.append(f"... ({len(fields) - _PREVIEW_MAX_KEYS} more fields)")
+                break
+            lines.append(f"- {fname}: {_shape_token(getattr(value, fname, None))}")
+        return "\n".join(lines)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        elem = _homogeneous_elem_type(value)
+        suffix = f" of {elem}" if elem else ""
+        lines = [f"Result ({tname}): {len(value)} items{suffix}"]
+        if isinstance(value, (list, tuple)) and value:
+            lines.append(f"[0]: {_shape_token(value[0])}")
+        return "\n".join(lines)
+    return f"Result ({tname}): {_truncate_cell(repr(value), max_chars)}"
+
+
+def _frame_csv(frame: pd.DataFrame) -> str:
+    truncated = frame.copy()
+    for col in truncated.columns:
+        truncated[col] = truncated[col].map(lambda v: _truncate_cell(v, _PREVIEW_MAX_CELL_CHARS))
+    csv_text: str = truncated.to_csv(index=False)
+    return csv_text.strip()
+
+
+def _sample_csv(frame: pd.DataFrame, visible: list[str], max_rows: int) -> tuple[str, int]:
+    # Slice rows before selecting columns: column selection copies every row
+    # of the selected columns, so on a large frame it must only ever see the
+    # head/tail sample, never the full length.
+    n = len(frame)
+    if n <= max_rows:
+        return _frame_csv(frame[visible]), n
+    head_n = (max_rows + 1) // 2
+    tail_n = max_rows - head_n
+    head_csv = _frame_csv(frame.head(head_n)[visible])
+    tail_csv = _frame_csv(frame.tail(tail_n)[visible])
+    tail_rows = "\n".join(tail_csv.splitlines()[1:])
+    return f"{head_csv}\n...\n{tail_rows}", head_n + tail_n
+
+
 class Result(BaseModel):
     """Opaque connector output: any payload plus provenance.
 
@@ -171,6 +284,21 @@ class Result(BaseModel):
         if isinstance(self.data, str):
             return self.data
         return str(self.data)
+
+    def to_llm(
+        self,
+        *,
+        max_rows: int = _PREVIEW_DEFAULT_MAX_ROWS,
+        max_chars: int = _PREVIEW_DEFAULT_MAX_CHARS,
+    ) -> str:
+        """The governed, bounded string view of this result for LLM context.
+
+        Renders type and shape, not the full payload — size in context is
+        O(structure + ``max_chars``), not O(payload). ``max_rows`` is accepted
+        for signature parity with :meth:`TabularResult.to_llm` and is
+        unused for opaque payloads.
+        """
+        return _preview_value(self.data, max_chars=max_chars)
 
 
 class TabularResult(Result):
@@ -224,6 +352,49 @@ class TabularResult(Result):
     @property
     def metadata_columns(self) -> list[Column]:
         return [c for c in self.columns if c.role == ColumnRole.METADATA]
+
+    def to_llm(
+        self,
+        *,
+        max_rows: int = _PREVIEW_DEFAULT_MAX_ROWS,
+        max_chars: int = _PREVIEW_DEFAULT_MAX_CHARS,
+    ) -> str:
+        """The governed string view: shape, per-column dtype + role + namespace,
+        and a small head/tail sample.
+
+        Columns flagged ``exclude_from_llm_view`` are dropped from both the
+        schema block and the sample. Size in context is O(schema + ``max_rows``),
+        not O(rows). ``max_chars`` is accepted for signature parity with
+        :meth:`Result.to_llm`.
+        """
+        frame = self.data
+        schema_by_name = {c.name: c for c in self.columns}
+        hidden = {c.name for c in self.columns if c.exclude_from_llm_view}
+        visible = [name for name in frame.columns if name not in hidden]
+        n_rows = len(frame)
+        n_cols = len(frame.columns)
+
+        header = f"TabularResult: {n_rows} rows × {n_cols} columns"
+        if hidden:
+            header += f" ({len(hidden)} hidden from LLM view)"
+        lines = [header]
+
+        if not visible:
+            lines.append("Columns: (all hidden from LLM view)")
+            return "\n".join(lines)
+
+        lines.append("Columns:")
+        for name in visible:
+            dtype = str(frame[name].dtype)
+            col = schema_by_name.get(name)
+            annot = f" {col.llm_annotation()}" if col is not None else ""
+            lines.append(f"- {name}: {dtype}{annot}")
+
+        body, shown = _sample_csv(frame, visible, max_rows)
+        label = f"Sample ({shown} of {n_rows} rows):" if shown < n_rows else f"Sample ({n_rows} rows):"
+        lines.append(label)
+        lines.append(body)
+        return "\n".join(lines)
 
     def to_arrow(self) -> pa.Table:
         """Serialize to Arrow with embedded provenance and optional schema metadata."""
@@ -291,7 +462,6 @@ class OutputConfig(BaseModel):
     def _apply_columns(
         self,
         df: pd.DataFrame,
-        params: dict[str, Any],
     ) -> tuple[pd.DataFrame, list[tuple[Column, str]], set[str]]:
         processed_series: list[tuple[Column, pd.Series]] = []
         consumed: set[str] = set()
@@ -346,7 +516,7 @@ class OutputConfig(BaseModel):
         if frame.empty and len(frame.columns) == 0:
             raise ValueError("Returned an empty DataFrame with no columns.")
 
-        full_df, columns_info, consumed = self._apply_columns(frame, {})
+        full_df, columns_info, consumed = self._apply_columns(frame)
 
         declared = {c.name for c in self.columns if c.name != "*"}
         unmatched = sorted(declared - consumed)

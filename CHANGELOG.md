@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-06-15
+
 ### Added
 
 - **Governed `to_llm()` result views.** `Result.to_llm()` renders a compact, depth-limited
@@ -50,8 +52,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Snapshot save coerces non-JSON-native catalog metadata (datetime, Decimal) to its string form
   (`json.dumps(default=str)`) instead of crashing the whole save.
 
-## [0.7.0] - 2026-05-28
-## [0.7.1]
+## [0.7.1] - 2026-06-14
 
 ### Added
 
@@ -81,7 +82,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Synced all connector-contract documentation to the synchronous calling surface
   (connectors are `def`, not `async def`).
 
-## [0.7.0]
+## [0.7.0] - 2026-05-28
 
 ### Breaking changes
 

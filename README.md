@@ -14,7 +14,7 @@
 
 
 <p align="center">
-  <img src="docs/assets/parsimony-hero.gif" alt="parsimony: decorate a function with @connector, bind the operator's API key, and call it — the result comes back as a typed Result carrying both the data and full provenance (connector, source, call-time args, fetch time), with the bound api_key kept out of the record." width="900" />
+  <img src="docs/assets/parsimony-hero.gif" alt="parsimony: decorate a function with @connector, bind the operator's API key, and call it — the result comes back as a typed Result carrying both the data and full provenance (source, call-time params, fetch time), with the bound api_key kept out of the record." width="900" />
 </p>
 
 ---

@@ -219,6 +219,32 @@ column's namespace on your loader/enumerator `OutputConfig`, and tie a parameter
 namespace for LLM cards with an `Annotated[str, "ns:<namespace>"]` hint. See
 [entities](../catalog/entities.md) for how these flow into a catalog.
 
+## Shipping agent guidance (skills)
+
+When your connectors share procedural knowledge that belongs to no single verb — how to
+combine them into one workflow, a recovery ladder, a cardinality table — ship it as a native
+[Anthropic `SKILL.md`](https://docs.claude.com/en/docs/agents-and-tools/agent-skills/overview)
+inside your package:
+
+```text
+parsimony_acme/
+└── skills/
+    └── acme_key_resolution/
+        └── SKILL.md        # YAML frontmatter (name, description) + the markdown playbook
+```
+
+It is just a file — no registration, no API, no `Connectors` coupling. The skill belongs to the
+package, so anything that uses your connectors can find it:
+
+- **Claude Code / Cursor** discover it on disk (the frontmatter `description` is the menu line,
+  the body loads on demand).
+- **parsimony-agents** injects the body into its prompt whenever any of your connectors are in
+  the active bundle — package-presence, resolved from each connector's defining module.
+
+Make sure the `skills/` tree ships in your wheel (with hatchling's default `packages = [...]`
+layout it does; verify with `unzip -l dist/*.whl`). The frontmatter `name` should match the
+skill's directory name.
+
 ## A minimal conformant module
 
 This module exports a fetch connector and an enumerator, binds them into `CONNECTORS`,

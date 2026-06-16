@@ -25,6 +25,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import threading
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
@@ -79,6 +80,52 @@ class EmbeddingProvider(Protocol):
     def info(self) -> EmbedderInfo:
         """Persisted identity for this embedder, used in catalog metadata."""
         ...
+
+
+_MODEL_CACHE: dict[tuple[str, str | None], SentenceTransformer] = {}
+_MODEL_CACHE_LOCK = threading.Lock()
+
+
+def _load_shared_model(model_name: str, device: str | None) -> SentenceTransformer:
+    """Load a SentenceTransformer once per ``(model, device)`` and share it process-wide.
+
+    Catalog snapshots loaded from disk each reconstruct their ``VectorIndex`` with a fresh
+    embedder (see ``VectorIndex._require_embedder``), so without this cache the same model is
+    reloaded once per loaded catalog — seconds each, and it dominates a multi-codelist agent
+    run. ``normalize``/``batch_size`` are applied at encode time and do not affect the loaded
+    model, so the cache keys on ``(model, device)`` only.
+
+    This in-memory cache is intentionally ``SentenceTransformerEmbedder``-only — it is the
+    default embedder (``parsimony-core[catalog]``) and the PyTorch constructor re-reads the
+    full model into memory on every instantiation, with nothing cached between instances.
+    ``OnnxEmbedder`` (the opt-in ``parsimony-core[standard-onnx]`` path, used for a 2-3×
+    faster int8 inference) deliberately has no analogue here: its one genuinely expensive
+    step — exporting the model to ONNX and quantizing it — is cached on *disk* by
+    ``OnnxEmbedder._prepare_cache`` and reused across every instance and process, so building
+    a fresh ``InferenceSession`` per embedder is comparatively cheap. The trade-off is that a
+    load-many-catalogs run still rebuilds the Onnx session/tokenizer per instance; that
+    smaller cost was left uncached on purpose rather than mirrored here.
+    """
+    key = (model_name, device)
+    cached = _MODEL_CACHE.get(key)
+    if cached is not None:
+        return cached
+    with _MODEL_CACHE_LOCK:
+        cached = _MODEL_CACHE.get(key)
+        if cached is not None:
+            return cached
+        from sentence_transformers import SentenceTransformer
+
+        # local_files_only=True prevents HuggingFace Hub update checks that can
+        # block on CLOSE-WAIT sockets in long-running parent processes.
+        # Falls back to network download when the model is not cached.
+        model: SentenceTransformer
+        try:
+            model = SentenceTransformer(model_name, device=device, local_files_only=True)
+        except Exception:
+            model = SentenceTransformer(model_name, device=device)
+        _MODEL_CACHE[key] = model
+        return model
 
 
 class SentenceTransformerEmbedder:
@@ -160,15 +207,7 @@ class SentenceTransformerEmbedder:
 
     def _get_model(self) -> SentenceTransformer:
         if self._model is None:
-            from sentence_transformers import SentenceTransformer
-
-            # local_files_only=True prevents HuggingFace Hub update checks that can
-            # block on CLOSE-WAIT sockets in long-running parent processes.
-            # Falls back to network download when the model is not cached.
-            try:
-                self._model = SentenceTransformer(self._model_name, device=self._device, local_files_only=True)
-            except Exception:
-                self._model = SentenceTransformer(self._model_name, device=self._device)
+            self._model = _load_shared_model(self._model_name, self._device)
         return self._model
 
 

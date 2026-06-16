@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import tempfile
 import threading
@@ -44,6 +45,8 @@ from parsimony.catalog.storage import (
 from parsimony.catalog.urls import REPO_TYPE, parse_catalog_url
 from parsimony.entity import Entity, entity_key, normalize_namespace
 from parsimony.ranking import Ranking, ranking_from_scores
+
+logger = logging.getLogger(__name__)
 
 
 def _filter_namespaces(ranking: Ranking, namespaces: list[str]) -> Ranking:
@@ -98,6 +101,9 @@ class Catalog:
         self._entities: list[Entity] = []
         self._key_to_idx: dict[tuple[str, str], int] = {}
         self._dirty = True
+        # Set by ``load_entities_only``: indexes were never loaded, so ``search``
+        # is unavailable and the catalog supports listing ``entities`` only.
+        self._entities_only = False
         self._lock = threading.Lock()
         self._validate_indexes()
 
@@ -248,6 +254,11 @@ class Catalog:
     ) -> tuple[list[CatalogMatch], SearchDiagnostic]:
         """Search entries."""
 
+        if self._entities_only:
+            raise BroadSearchUnavailableError(
+                "Catalog was loaded entities-only (no search indexes) and cannot be searched. "
+                "Reload it with Catalog.load() for search; entities-only supports listing entities."
+            )
         self._ensure_built("searched")
         known_fields = set(self._indexes)
         parsed = parse_query(query, known_fields=known_fields)
@@ -366,6 +377,44 @@ class Catalog:
         catalog._dirty = False
         return catalog
 
+    @classmethod
+    def load_entities_only(cls, url: str | Path) -> Catalog:
+        """Load only a catalog's entities — no search indexes, no integrity hash.
+
+        Reads just the entries parquet (plus ``meta.json`` for the name), skipping
+        ``_load_indexes`` (the FAISS vector read and embedder hydration) and the
+        whole-dir content-SHA verification. The result can iterate and page
+        :attr:`entities` but :meth:`search` raises. Use for browse/list flows where
+        the vector index is dead weight — e.g. listing a small codelist to pick a
+        code by hand. For ``hf://`` sources only the entries + meta files are
+        fetched, not the (often large) ``vectors.faiss``.
+
+        The integrity digest is computed over the whole snapshot dir including the
+        index files this path deliberately does not read, so it cannot be verified
+        here — hence it is skipped (logged at debug). Only reach for this when the
+        caller is going to list rather than search.
+        """
+        return _dispatch_load(str(url), entities_only=True)
+
+    @classmethod
+    def _load_entities_only_from_path(cls, path: Path) -> Catalog:
+        """Build an entities-only catalog from a local snapshot dir (no indexes, no SHA)."""
+        src = Path(path)
+        meta = read_meta(src)
+        if meta.schema_version != 1:
+            raise ValueError(f"Unsupported catalog schema_version {meta.schema_version}; expected 1")
+        logger.debug(
+            "Loading entities-only catalog from %s (indexes + integrity check skipped)", src
+        )
+        entries = _read_parquet(src / ENTRIES_FILENAME)
+        catalog = cls(meta.name, indexes={}, default_field=None)
+        catalog._default_index_policy = False
+        catalog._entities = entries
+        catalog._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(entries)}
+        catalog._dirty = False
+        catalog._entities_only = True
+        return catalog
+
     def _invalidate(self) -> None:
         self._dirty = True
 
@@ -475,10 +524,12 @@ def _load_indexes(
 # ---------------------------------------------------------------------------
 
 
-def _load_file(root: str, sub: str) -> Catalog:
+def _load_file(root: str, sub: str, *, entities_only: bool = False) -> Catalog:
     path = Path(root) / sub if sub else Path(root)
     if not path.exists():
         raise FileNotFoundError(f"Catalog directory does not exist: {path}")
+    if entities_only:
+        return Catalog._load_entities_only_from_path(path)
     return Catalog._load_from_path(path)
 
 
@@ -487,12 +538,20 @@ def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = N
     catalog._save_to_path(target, builder=builder)
 
 
-def _load_hf(root: str, sub: str, *, revision: str | None = None) -> Catalog:
+def _load_hf(root: str, sub: str, *, revision: str | None = None, entities_only: bool = False) -> Catalog:
     from huggingface_hub import snapshot_download
 
     from parsimony import cache
 
     cache_dir = cache.catalogs_dir()
+    # Entities-only fetches just the entries + manifest, skipping the (often large)
+    # vector index, so browse/list loads neither download nor read it.
+    patterns: list[str] | None
+    if entities_only:
+        only = [META_FILENAME, ENTRIES_FILENAME]
+        patterns = [f"{sub}/{name}" for name in only] if sub else only
+    else:
+        patterns = [f"{sub}/*"] if sub else None
     if sub:
         local = Path(
             snapshot_download(
@@ -500,12 +559,24 @@ def _load_hf(root: str, sub: str, *, revision: str | None = None) -> Catalog:
                 repo_type=REPO_TYPE,
                 revision=revision,
                 cache_dir=cache_dir,
-                allow_patterns=[f"{sub}/*"],
+                allow_patterns=patterns,
             )
         )
-        return Catalog._load_from_path(local / sub)
-    local = Path(snapshot_download(repo_id=root, repo_type=REPO_TYPE, revision=revision, cache_dir=cache_dir))
-    return Catalog._load_from_path(local)
+        target = local / sub
+    else:
+        local = Path(
+            snapshot_download(
+                repo_id=root,
+                repo_type=REPO_TYPE,
+                revision=revision,
+                cache_dir=cache_dir,
+                allow_patterns=patterns,
+            )
+        )
+        target = local
+    if entities_only:
+        return Catalog._load_entities_only_from_path(target)
+    return Catalog._load_from_path(target)
 
 
 def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
@@ -525,10 +596,10 @@ def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = Non
         )
 
 
-def _dispatch_load(url: str) -> Catalog:
+def _dispatch_load(url: str, *, entities_only: bool = False) -> Catalog:
     parsed = parse_catalog_url(url)
     if parsed.scheme == "file":
-        return _load_file(parsed.root, parsed.sub)
+        return _load_file(parsed.root, parsed.sub, entities_only=entities_only)
     if parsed.scheme == "hf":
-        return _load_hf(parsed.root, parsed.sub, revision=parsed.revision)
+        return _load_hf(parsed.root, parsed.sub, revision=parsed.revision, entities_only=entities_only)
     raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")

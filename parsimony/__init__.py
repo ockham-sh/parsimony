@@ -62,7 +62,7 @@ from parsimony.errors import (
     UnauthorizedError,
 )
 from parsimony.namespace import Namespace
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 try:
     __version__ = version("parsimony-core")
@@ -78,7 +78,6 @@ __all__ = [
     "enumerator",
     "loader",
     "Result",
-    "TabularResult",
     "OutputConfig",
     "Column",
     "ColumnRole",

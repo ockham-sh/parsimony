@@ -24,7 +24,7 @@ from parsimony.connector import Connectors, connector, enumerator
 from parsimony.entity import Entity
 from parsimony.errors import EmptyDataError
 from parsimony.namespace import Namespace
-from parsimony.result import Column, ColumnRole, OutputConfig, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig
 from parsimony.transport.helpers import require_key
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +51,7 @@ def gdp_trend(country: str, years: int = 5) -> pd.DataFrame:
 
 result = gdp_trend(country="US")
 
-assert isinstance(result, TabularResult)
+assert result.is_tabular
 assert list(result.data.columns) == ["year", "gdp"]
 assert result.provenance.source == "gdp_trend"
 assert result.provenance.params == {"country": "US", "years": 5}
@@ -421,9 +421,9 @@ def acme_enumerate() -> pd.DataFrame:
     )
 
 
-# Call the enumerator — produces a TabularResult like any connector
+# Call the enumerator — produces a Result like any connector
 enum_result = acme_enumerate()
-assert isinstance(enum_result, TabularResult)
+assert enum_result.is_tabular
 
 # build_entities() uses the declared OUTPUT schema to extract Entity objects
 entities = enum_result.output_schema.build_entities(enum_result.data)
@@ -519,7 +519,7 @@ with tempfile.TemporaryDirectory() as tmp2:
 
     # First call loads catalog from snap path, runs BM25 search
     r_search = acme_search_v2(query="core inflation prices")
-    assert isinstance(r_search, TabularResult)
+    assert r_search.is_tabular
     print(f"\nsearch 'core inflation prices':\n{r_search.data.to_string(index=False)}")
 
     # EmptyDataError when no results match

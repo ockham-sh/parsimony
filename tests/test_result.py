@@ -12,7 +12,6 @@ from parsimony.result import (
     OutputConfig,
     Provenance,
     Result,
-    TabularResult,
 )
 
 
@@ -38,7 +37,7 @@ def test_build_table_result_rename_and_dtypes() -> None:
         ]
     )
     r = cfg.build_table_result(raw)
-    assert isinstance(r, TabularResult)
+    assert r.is_tabular
     assert r.output_schema is not None
     assert list(r.data.columns) == ["d", "value", "meta"]
     assert r.provenance.properties.get("metadata") is None
@@ -79,7 +78,7 @@ def test_entity_keys() -> None:
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="v", role=ColumnRole.DATA),
     ]
-    r = TabularResult(data=df, output_schema=OutputConfig(columns=cols))
+    r = Result(data=df, output_schema=OutputConfig(columns=cols))
     assert list(r.entity_keys.columns) == ["sym"]
 
 
@@ -146,8 +145,8 @@ def test_column_namespace_only_on_key_or_metadata() -> None:
 
 def test_result_from_dataframe_infers_data_columns() -> None:
     df = pd.DataFrame({"a": [1], "b": ["x"]})
-    r = TabularResult.from_dataframe(df)
-    assert isinstance(r, TabularResult)
+    r = Result.from_dataframe(df)
+    assert r.is_tabular
     assert list(r.data.columns) == ["a", "b"]
     assert r.output_schema is None
     assert r.columns == []
@@ -155,7 +154,7 @@ def test_result_from_dataframe_infers_data_columns() -> None:
 
 def test_result_from_dataframe_rejects_empty() -> None:
     with pytest.raises(ValueError, match="empty"):
-        TabularResult.from_dataframe(pd.DataFrame())
+        Result.from_dataframe(pd.DataFrame())
 
 
 def test_provenance_field_set_is_locked() -> None:
@@ -208,13 +207,13 @@ def test_build_table_result_metadata_columns_are_schema_roles() -> None:
 
 def test_result_with_properties_is_cumulative() -> None:
     df = pd.DataFrame({"a": [1]})
-    r = TabularResult.from_dataframe(df)._with_properties(a=1)._with_properties(b=2)
+    r = Result.from_dataframe(df)._with_properties(a=1)._with_properties(b=2)
     assert r.provenance.properties == {"a": 1, "b": 2}
 
 
 def test_result_to_table_adds_unmapped_as_data() -> None:
     df = pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]})
-    r = TabularResult(data=df, provenance=_prov())
+    r = Result(data=df, provenance=_prov())
     schema = OutputConfig(
         columns=[
             Column(name="k", role=ColumnRole.KEY),
@@ -222,7 +221,7 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
         ]
     )
     t = r.to_table(schema)
-    assert isinstance(t, TabularResult)
+    assert t.is_tabular
     assert t.output_schema is not None
     roles = {c.name: c.role for c in t.output_schema.columns}
     assert roles["obs"] == ColumnRole.DATA
@@ -230,7 +229,7 @@ def test_result_to_table_adds_unmapped_as_data() -> None:
 
 def test_table_result_to_table_reapplies_schema() -> None:
     df = pd.DataFrame({"a": [1], "b": [2]})
-    t1 = TabularResult.from_dataframe(df)
+    t1 = Result.from_dataframe(df)
     t2 = t1.to_table(
         OutputConfig(
             columns=[
@@ -412,11 +411,11 @@ def test_preview_pydantic_payload() -> None:
 
 
 # ---------------------------------------------------------------------------
-# to_llm — TabularResult (governed schema + sample)
+# to_llm — Result (governed schema + sample)
 # ---------------------------------------------------------------------------
 
 
-def _preview_df_schema() -> TabularResult:
+def _preview_df_schema() -> Result:
     df = pd.DataFrame(
         {
             "date": pd.to_datetime(["2020-01-01", "2020-01-02"]),
@@ -429,11 +428,11 @@ def _preview_df_schema() -> TabularResult:
         Column(name="value", role=ColumnRole.DATA),
         Column(name="note", role=ColumnRole.METADATA),
     ]
-    return TabularResult(data=df, output_schema=OutputConfig(columns=cols))
+    return Result(data=df, output_schema=OutputConfig(columns=cols))
 
 
 def test_preview_shape_line() -> None:
-    assert _preview_df_schema().to_llm().startswith("TabularResult: 2 rows × 3 columns")
+    assert _preview_df_schema().to_llm().startswith("Result (table): 2 rows × 3 columns")
 
 
 def test_preview_schema_lists_dtype_role_namespace() -> None:
@@ -445,7 +444,7 @@ def test_preview_schema_lists_dtype_role_namespace() -> None:
 
 def test_preview_without_schema_shows_dtype_only() -> None:
     df = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
-    out = TabularResult.from_dataframe(df).to_llm()
+    out = Result.from_dataframe(df).to_llm()
     assert "- a: int64" in out
     assert "(DATA)" not in out
 
@@ -456,7 +455,7 @@ def test_preview_omits_excluded_columns() -> None:
         Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
         Column(name="value", role=ColumnRole.DATA),
     ]
-    out = TabularResult(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
     assert "internal_id" not in out
     assert "- value: float64 (DATA)" in out
     assert "(1 hidden from LLM view)" in out
@@ -465,39 +464,77 @@ def test_preview_omits_excluded_columns() -> None:
 def test_preview_small_frame_shows_all_rows() -> None:
     out = _preview_df_schema().to_llm()
     assert "..." not in out
-    assert "Sample (2 rows):" in out
+    assert "Rows (2):" in out
 
 
-def test_preview_large_frame_head_tail() -> None:
+def test_preview_large_frame_first_page_no_tail() -> None:
     df = pd.DataFrame({"i": list(range(100))})
-    out = TabularResult.from_dataframe(df).to_llm(max_rows=4)
-    assert "Sample (4 of 100 rows):" in out
-    assert "..." in out
-    assert "99" in out
+    out = Result.from_dataframe(df).to_llm(max_rows=4)
+    assert "Rows (showing 4 of 100):" in out
+    # Honest first page: the first rows are shown, the tail is NOT smuggled
+    # in as a head/tail sample masquerading as the whole.
+    assert out.rstrip().endswith("3")
+    assert "99" not in out
     assert "50" not in out
 
 
 def test_preview_truncates_wide_cells() -> None:
     df = pd.DataFrame({"text": ["A" * 200, "B" * 200]})
-    out = TabularResult.from_dataframe(df).to_llm()
+    out = Result.from_dataframe(df).to_llm()
     assert "…" in out
     assert "A" * 200 not in out
 
 
 def test_preview_max_rows_param() -> None:
     df = pd.DataFrame({"i": list(range(100))})
-    out = TabularResult.from_dataframe(df).to_llm(max_rows=2)
-    assert "Sample (2 of 100 rows):" in out
+    out = Result.from_dataframe(df).to_llm(max_rows=2)
+    assert "Rows (showing 2 of 100):" in out
 
 
 def test_preview_empty_frame() -> None:
     df = pd.DataFrame({"a": pd.Series([], dtype="float64")})
-    out = TabularResult(data=df).to_llm()
+    out = Result(data=df).to_llm()
     assert "0 rows × 1 columns" in out
 
 
 def test_preview_all_columns_hidden() -> None:
     df = pd.DataFrame({"k": [1, 2]})
     cols = [Column(name="k", role=ColumnRole.KEY, exclude_from_llm_view=True)]
-    out = TabularResult(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
     assert "(all hidden from LLM view)" in out
+
+
+def test_preview_handles_integer_column_labels() -> None:
+    # Default RangeIndex columns (int labels) must not crash governed_view —
+    # selecting by str(name) would KeyError on the real int key.
+    out = Result(data=pd.DataFrame([[1, 2], [3, 4]])).to_llm()
+    assert "2 rows × 2 columns" in out
+    assert "- 0: int64" in out and "- 1: int64" in out
+    assert "1,2" in out and "3,4" in out
+
+
+def test_preview_handles_duplicate_column_names() -> None:
+    # Duplicate column names (common in SQL joins) must not crash: frame[name]
+    # would return a DataFrame and .dtype would raise.
+    df = pd.DataFrame([[1, 2, 3]], columns=["a", "a", "b"])
+    out = Result(data=df).to_llm()
+    assert "1 rows × 3 columns" in out
+    assert out.count("- a:") == 2
+    assert "1,2,3" in out
+
+
+def test_governance_pairs_schema_to_frame_by_position() -> None:
+    # Two columns share the name "x": one hidden, one visible. Name-based hiding
+    # would drop BOTH; positional pairing keeps the visible one (its value 20),
+    # drops only the hidden one (value 10).
+    df = pd.DataFrame([[1, 10, 20]], columns=["id", "x", "x"])
+    cols = [
+        Column(name="id", role=ColumnRole.DATA),
+        Column(name="x", role=ColumnRole.METADATA, exclude_from_llm_view=True),
+        Column(name="x", role=ColumnRole.DATA),
+    ]
+    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    assert "1 hidden from LLM view" in out
+    assert out.count("- x:") == 1  # only the visible sibling
+    assert "20" in out  # visible value kept
+    assert "10" not in out  # hidden value suppressed

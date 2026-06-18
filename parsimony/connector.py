@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 from parsimony.errors import ParseError
 from parsimony.namespace import Namespace
-from parsimony.result import ColumnRole, OutputConfig, Provenance, Result, TabularResult
+from parsimony.result import ColumnRole, OutputConfig, Provenance, Result
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -259,9 +259,9 @@ class Connector:
                 "put provider facts in DataFrame columns."
             )
 
-        if isinstance(raw, (Result, TabularResult)):
+        if isinstance(raw, Result):
             raise TypeError(
-                f"connector {self.name!r}: must return raw data, not Result/TabularResult; "
+                f"connector {self.name!r}: must return raw data, not a Result; "
                 "the framework builds the execution envelope."
             )
 
@@ -281,7 +281,7 @@ class Connector:
                 _validate_enumerator_dataframe(result.data, self.output_config)
             return result.model_copy(update={"provenance": provenance})
         if isinstance(raw, (pd.DataFrame, pd.Series)):
-            return TabularResult(data=pd.DataFrame(raw), provenance=provenance)
+            return Result(data=pd.DataFrame(raw), provenance=provenance)
         return Result(data=raw, provenance=provenance)
 
     def _bind_call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:

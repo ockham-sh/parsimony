@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-06-18
+
+### Changed
+
+- **Unified result type + honest governed `to_llm()`.** `TabularResult` is collapsed into a single
+  `Result` (`data: Any` + optional `output_schema`; `is_tabular` / `frame` accessors), so tabular and
+  opaque payloads are one type. `Result.to_llm()` renders an honest header (real
+  `N rows × M columns [K hidden]`), a governed per-column schema, and the first N rows — never a
+  head/tail sample masquerading as the whole. `governed_view()` and `shape_descriptor()` are the single
+  source of truth for `exclude_from_llm_view` governance + schema annotation, paired to the frame by
+  position (robust to integer and duplicate column labels).
+
+### Removed
+
+- **`TabularResult`** (breaking) — use `Result`; a result is tabular when `data` is a DataFrame. The
+  head/tail `to_llm` sampler is gone.
+
 ## [0.7.2] - 2026-06-15
 
 ### Added

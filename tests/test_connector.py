@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Result, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Result
 
 
 class _MacroParams(BaseModel):
@@ -193,7 +193,7 @@ class TestEnumerator:
             return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
 
         result = good_enumerator()
-        assert isinstance(result, TabularResult)
+        assert result.is_tabular
         assert list(result.data.columns) == ["code", "title"]
 
     def test_enumerator_manual_result_raises_typeerror(self) -> None:
@@ -382,17 +382,17 @@ class TestResultWrap:
 
     def test_tabular_result_return_raises_typeerror(self) -> None:
         @connector
-        def with_props(series_id: str) -> TabularResult:
-            """Incorrectly returns TabularResult."""
-            return TabularResult.from_dataframe(_make_fetch_df())
+        def with_props(series_id: str) -> Result:
+            """Incorrectly returns Result."""
+            return Result.from_dataframe(_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
             with_props(series_id="GDPC1")
 
     def test_build_table_result_return_raises_typeerror(self) -> None:
         @connector(output=FETCH_OUTPUT)
-        def bad_table(series_id: str) -> TabularResult:
-            """Incorrectly returns a framework-built TabularResult."""
+        def bad_table(series_id: str) -> Result:
+            """Incorrectly returns a framework-built Result."""
             return FETCH_OUTPUT.build_table_result(_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):

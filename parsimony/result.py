@@ -10,7 +10,8 @@ __all__ = [
     "REDACTED",
     "Result",
     "SECRET_NAME_PATTERN",
-    "TabularResult",
+    "governed_view",
+    "shape_descriptor",
 ]
 
 import json
@@ -237,41 +238,84 @@ def _preview_value(value: Any, *, max_chars: int) -> str:
 
 def _frame_csv(frame: pd.DataFrame) -> str:
     truncated = frame.copy()
-    for col in truncated.columns:
-        truncated[col] = truncated[col].map(lambda v: _truncate_cell(v, _PREVIEW_MAX_CELL_CHARS))
+    # Truncate per-cell by COLUMN POSITION — label-based ``truncated[col] = …``
+    # is ambiguous when column names are duplicated (common in SQL joins).
+    for i in range(truncated.shape[1]):
+        truncated.isetitem(i, truncated.iloc[:, i].map(lambda v: _truncate_cell(v, _PREVIEW_MAX_CELL_CHARS)))
     csv_text: str = truncated.to_csv(index=False)
     return csv_text.strip()
 
 
-def _sample_csv(frame: pd.DataFrame, visible: list[str], max_rows: int) -> tuple[str, int]:
-    # Slice rows before selecting columns: column selection copies every row
-    # of the selected columns, so on a large frame it must only ever see the
-    # head/tail sample, never the full length.
-    n = len(frame)
-    if n <= max_rows:
-        return _frame_csv(frame[visible]), n
-    head_n = (max_rows + 1) // 2
-    tail_n = max_rows - head_n
-    head_csv = _frame_csv(frame.head(head_n)[visible])
-    tail_csv = _frame_csv(frame.tail(tail_n)[visible])
-    tail_rows = "\n".join(tail_csv.splitlines()[1:])
-    return f"{head_csv}\n...\n{tail_rows}", head_n + tail_n
+def governed_view(frame: pd.DataFrame, columns: Sequence[Column]) -> tuple[pd.DataFrame, int, list[str]]:
+    """Single source of truth for tabular column governance + schema annotation.
+
+    Returns ``(visible_frame, hidden_count, schema_lines)``. Columns flagged
+    ``exclude_from_llm_view`` are dropped from ``visible_frame`` and never appear
+    in ``schema_lines``. Every LLM-facing tabular view — core preview,
+    kernel-output render — applies governance through here, so a hidden column
+    is hidden on *every* path.
+
+    Columns are selected by **position** (``iloc``) and dtypes read by zipping
+    ``frame.columns`` with ``frame.dtypes`` — robust to non-string column labels
+    (a default ``RangeIndex``) and to duplicate column names (common in SQL
+    joins), neither of which ``frame[name]`` survives. When ``columns`` covers
+    the frame one-to-one (the normal case for a built :class:`Result`) the schema
+    is paired to the frame **by position**, so a hidden column does not suppress
+    a visible sibling that happens to share its name; otherwise it falls back to
+    name-based matching.
+    """
+    by_name = {c.name: c for c in columns}
+    positional = len(columns) == len(frame.columns)
+    keep_positions: list[int] = []
+    lines: list[str] = []
+    hidden_count = 0
+    for pos, (name, dtype) in enumerate(zip(frame.columns, frame.dtypes, strict=True)):
+        col = columns[pos] if positional else by_name.get(name)
+        if col is not None and col.exclude_from_llm_view:
+            hidden_count += 1
+            continue
+        keep_positions.append(pos)
+        annot = f" {col.llm_annotation()}" if col is not None else ""
+        lines.append(f"- {name}: {dtype}{annot}")
+    return frame.iloc[:, keep_positions], hidden_count, lines
+
+
+def shape_descriptor(frame: pd.DataFrame, hidden_count: int) -> str:
+    """Honest ``N rows × M cols [K hidden]`` size token for a tabular view."""
+    descriptor = f"{len(frame)} rows × {len(frame.columns)} columns"
+    if hidden_count:
+        descriptor += f" ({hidden_count} hidden from LLM view)"
+    return descriptor
 
 
 class Result(BaseModel):
-    """Opaque connector output: any payload plus provenance.
+    """Connector output: any payload plus provenance, optionally tabular.
 
-    Use :class:`TabularResult` when ``data`` is a :class:`~pandas.DataFrame`.
-    The framework wraps connector return values automatically; connectors
-    should not construct this directly. Put provider facts in returned
-    tabular columns with :class:`ColumnRole` semantics; do not attach
-    provider metadata through ``provenance.properties``.
+    One result type for every payload. When ``data`` is a
+    :class:`~pandas.DataFrame` the result is *tabular* (``is_tabular``) and may
+    carry an :class:`OutputConfig` schema — column roles, namespaces, and
+    ``exclude_from_llm_view`` governance; otherwise it is an opaque payload
+    rendered as a bounded structural preview. The framework wraps connector
+    return values automatically; connectors should not construct this directly.
+    Put provider facts in returned tabular columns with :class:`ColumnRole`
+    semantics; do not attach provider metadata through ``provenance.properties``.
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
     data: Any
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
+    output_schema: OutputConfig | None = Field(default=None)
+
+    # -- construction -----------------------------------------------------
+
+    @classmethod
+    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> Result:
+        """Build a tabular result with no schema applied."""
+        frame = pd.DataFrame(df)
+        if frame.empty:
+            raise ValueError("Returned an empty DataFrame.")
+        return cls(data=frame)
 
     def _with_properties(self, **properties: Any) -> Result:
         """Merge extras into ``provenance.properties`` (serialization/tests only)."""
@@ -279,51 +323,34 @@ class Result(BaseModel):
         new_prov = self.provenance.model_copy(update={"properties": merged})
         return self.model_copy(update={"provenance": new_prov})
 
+    def to_table(self, output: OutputConfig) -> Result:
+        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
+        result = output.build_table_result(self.frame, merge_unmapped_as_data=True)
+        return result.model_copy(update={"provenance": self.provenance})
+
+    # -- payload accessors ------------------------------------------------
+
+    @property
+    def is_tabular(self) -> bool:
+        """Whether ``data`` is a DataFrame (so frame/schema accessors apply)."""
+        return isinstance(self.data, pd.DataFrame)
+
+    @property
+    def frame(self) -> pd.DataFrame:
+        """The tabular payload. Raises if this result is not tabular."""
+        if not self.is_tabular:
+            raise TypeError(f"Result payload is not tabular (data type: {type(self.data).__name__})")
+        return self.data
+
+    @property
+    def df(self) -> pd.DataFrame:
+        return self.frame
+
     @property
     def text(self) -> str:
         if isinstance(self.data, str):
             return self.data
         return str(self.data)
-
-    def to_llm(
-        self,
-        *,
-        max_rows: int = _PREVIEW_DEFAULT_MAX_ROWS,
-        max_chars: int = _PREVIEW_DEFAULT_MAX_CHARS,
-    ) -> str:
-        """The governed, bounded string view of this result for LLM context.
-
-        Renders type and shape, not the full payload — size in context is
-        O(structure + ``max_chars``), not O(payload). ``max_rows`` is accepted
-        for signature parity with :meth:`TabularResult.to_llm` and is
-        unused for opaque payloads.
-        """
-        return _preview_value(self.data, max_chars=max_chars)
-
-
-class TabularResult(Result):
-    """Tabular connector output with optional :class:`OutputConfig` schema."""
-
-    data: pd.DataFrame
-    output_schema: OutputConfig | None = Field(default=None)
-
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> TabularResult:
-        """Build tabular data with no schema applied."""
-        frame = pd.DataFrame(df)
-        if frame.empty:
-            raise ValueError("Returned an empty DataFrame.")
-        return cls(data=frame)
-
-    def _with_properties(self, **properties: Any) -> TabularResult:
-        merged = {**self.provenance.properties, **properties}
-        new_prov = self.provenance.model_copy(update={"properties": merged})
-        return self.model_copy(update={"provenance": new_prov})
-
-    def to_table(self, output: OutputConfig) -> TabularResult:
-        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
-        result = output.build_table_result(self.data, merge_unmapped_as_data=True)
-        return result.model_copy(update={"provenance": self.provenance})
 
     @property
     def columns(self) -> list[Column]:
@@ -332,18 +359,15 @@ class TabularResult(Result):
         return self.output_schema.columns
 
     @property
-    def df(self) -> pd.DataFrame:
-        return self.data
-
-    @property
     def entity_keys(self) -> pd.DataFrame:
         key_names = [c.mapped_name or c.name for c in self.columns if c.role == ColumnRole.KEY]
         if not key_names:
             return pd.DataFrame()
-        missing = [n for n in key_names if n not in self.data.columns]
+        frame = self.frame
+        missing = [n for n in key_names if n not in frame.columns]
         if missing:
             raise ValueError(f"Result data missing key columns: {missing}")
-        return self.data[key_names].copy()
+        return frame[key_names].copy()
 
     @property
     def data_columns(self) -> list[Column]:
@@ -353,52 +377,46 @@ class TabularResult(Result):
     def metadata_columns(self) -> list[Column]:
         return [c for c in self.columns if c.role == ColumnRole.METADATA]
 
+    # -- LLM view ---------------------------------------------------------
+
     def to_llm(
         self,
         *,
         max_rows: int = _PREVIEW_DEFAULT_MAX_ROWS,
         max_chars: int = _PREVIEW_DEFAULT_MAX_CHARS,
     ) -> str:
-        """The governed string view: shape, per-column dtype + role + namespace,
-        and a small head/tail sample.
+        """Governed, bounded string view for LLM context.
 
-        Columns flagged ``exclude_from_llm_view`` are dropped from both the
-        schema block and the sample. Size in context is O(schema + ``max_rows``),
-        not O(rows). ``max_chars`` is accepted for signature parity with
-        :meth:`Result.to_llm`.
+        Tabular payloads render an honest header (the *real* row/column
+        counts), a governed per-column schema (``exclude_from_llm_view``
+        columns dropped), and the first ``max_rows`` rows — never a head/tail
+        sample masquerading as the whole. Opaque payloads render a structural
+        preview (type + shape), size O(structure + ``max_chars``). ``max_rows``
+        is unused for opaque payloads and ``max_chars`` for tabular ones; both
+        are accepted for a single uniform signature.
         """
-        frame = self.data
-        schema_by_name = {c.name: c for c in self.columns}
-        hidden = {c.name for c in self.columns if c.exclude_from_llm_view}
-        visible = [name for name in frame.columns if name not in hidden]
-        n_rows = len(frame)
-        n_cols = len(frame.columns)
-
-        header = f"TabularResult: {n_rows} rows × {n_cols} columns"
-        if hidden:
-            header += f" ({len(hidden)} hidden from LLM view)"
-        lines = [header]
-
-        if not visible:
+        if not self.is_tabular:
+            return _preview_value(self.data, max_chars=max_chars)
+        frame = self.frame
+        visible_frame, hidden_count, schema_lines = governed_view(frame, self.columns)
+        lines = [f"Result (table): {shape_descriptor(frame, hidden_count)}"]
+        if visible_frame.shape[1] == 0:
             lines.append("Columns: (all hidden from LLM view)")
             return "\n".join(lines)
-
         lines.append("Columns:")
-        for name in visible:
-            dtype = str(frame[name].dtype)
-            col = schema_by_name.get(name)
-            annot = f" {col.llm_annotation()}" if col is not None else ""
-            lines.append(f"- {name}: {dtype}{annot}")
-
-        body, shown = _sample_csv(frame, visible, max_rows)
-        label = f"Sample ({shown} of {n_rows} rows):" if shown < n_rows else f"Sample ({n_rows} rows):"
+        lines.extend(schema_lines)
+        n_rows = len(frame)
+        shown = min(max_rows, n_rows)
+        label = f"Rows (showing {shown} of {n_rows}):" if shown < n_rows else f"Rows ({n_rows}):"
         lines.append(label)
-        lines.append(body)
+        lines.append(_frame_csv(visible_frame.head(shown)))
         return "\n".join(lines)
 
+    # -- serialization (tabular only) ------------------------------------
+
     def to_arrow(self) -> pa.Table:
-        """Serialize to Arrow with embedded provenance and optional schema metadata."""
-        table = pa.Table.from_pandas(self.data, preserve_index=False)
+        """Serialize a tabular result to Arrow with embedded provenance and schema."""
+        table = pa.Table.from_pandas(self.frame, preserve_index=False)
         payload: dict[str, Any] = {
             "provenance": self.provenance.safe_dump(),
         }
@@ -409,7 +427,7 @@ class TabularResult(Result):
         return table.replace_schema_metadata(meta)
 
     @classmethod
-    def from_arrow(cls, table: pa.Table) -> TabularResult:
+    def from_arrow(cls, table: pa.Table) -> Result:
         """Deserialize an Arrow table written by :meth:`to_arrow`."""
         df = table.to_pandas()
         raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
@@ -428,17 +446,17 @@ class TabularResult(Result):
         return cls(data=df, provenance=provenance)
 
     def to_parquet(self, path: str | Path) -> None:
-        """Write Parquet with embedded column schema and provenance."""
+        """Write a tabular result to Parquet with embedded column schema and provenance."""
         pq.write_table(self.to_arrow(), path)
 
     @classmethod
-    def from_parquet(cls, path: str | Path) -> TabularResult:
-        """Read Parquet written by :meth:`to_parquet`."""
+    def from_parquet(cls, path: str | Path) -> Result:
+        """Read a tabular result from Parquet written by :meth:`to_parquet`."""
         return cls.from_arrow(pq.read_table(path))
 
 
 class OutputConfig(BaseModel):
-    """Declarative schema: maps raw data frames into schema-applied :class:`TabularResult` instances."""
+    """Declarative schema: maps raw data frames into schema-applied :class:`Result` instances."""
 
     columns: list[Column]
 
@@ -508,7 +526,7 @@ class OutputConfig(BaseModel):
         df: pd.DataFrame | pd.Series,
         *,
         merge_unmapped_as_data: bool = True,
-    ) -> TabularResult:
+    ) -> Result:
         """Apply column schema to *df*; unmapped columns become DATA when requested."""
         if not isinstance(df, (pd.DataFrame, pd.Series)):
             raise TypeError(f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}")
@@ -546,7 +564,7 @@ class OutputConfig(BaseModel):
         new_df = pd.concat([s for _, s in processed_series], axis=1)
         resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
         resolved_config = OutputConfig(columns=resolved_schema)
-        return TabularResult(data=new_df, output_schema=resolved_config)
+        return Result(data=new_df, output_schema=resolved_config)
 
     def build_entities(self, df: pd.DataFrame) -> list[Entity]:
         """Apply this schema to *df* to extract a list of :class:`Entity`.
@@ -587,3 +605,10 @@ class OutputConfig(BaseModel):
             metadata_columns=meta_names,
             namespace_column=namespace_column,
         )
+
+
+# ``Result.output_schema`` forward-references ``OutputConfig``, defined above but
+# only after ``Result``. Resolve the reference explicitly now that both exist, so
+# validation never depends on Pydantic's lazy first-use resolution (which would
+# break silently if this module were ever split).
+Result.model_rebuild()

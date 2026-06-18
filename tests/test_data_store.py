@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
 
 LOAD_SCHEMA = OutputConfig(
@@ -24,7 +24,7 @@ def demo_loader(q: str = "x") -> pd.DataFrame:
 
 
 def test_data_from_result_extracts_data_columns_only() -> None:
-    table = TabularResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
@@ -39,7 +39,7 @@ def test_data_from_result_extracts_data_columns_only() -> None:
 
 
 def test_data_from_result_groups_by_key() -> None:
-    table = TabularResult(
+    table = Result(
         data=pd.DataFrame(
             {
                 "code_col": ["A", "B", "A"],
@@ -58,7 +58,7 @@ def test_data_from_result_groups_by_key() -> None:
 
 
 def test_data_from_result_requires_key_namespace() -> None:
-    table = TabularResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=OutputConfig(
@@ -76,7 +76,7 @@ def test_load_result_skips_existing_keys() -> None:
     store = InMemoryDataStore()
     store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
-    table = TabularResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,
@@ -95,7 +95,7 @@ def test_load_result_force_upserts_existing() -> None:
     store = InMemoryDataStore()
     store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
-    table = TabularResult(
+    table = Result(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_schema=LOAD_SCHEMA,

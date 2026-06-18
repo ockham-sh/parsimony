@@ -9,12 +9,10 @@ import pandas as pd
 
 from parsimony.connector import Connector
 from parsimony.entity import Entity
-from parsimony.result import OutputConfig, Result, TabularResult
+from parsimony.result import OutputConfig, Result
 
 
 def _dataframe_from_raw(raw: Any) -> pd.DataFrame:
-    if isinstance(raw, TabularResult):
-        return raw.data
     if isinstance(raw, Result):
         data = raw.data
         if isinstance(data, pd.DataFrame):
@@ -25,6 +23,10 @@ def _dataframe_from_raw(raw: Any) -> pd.DataFrame:
         return raw
     if isinstance(raw, pd.Series):
         return pd.DataFrame(raw)
+    if isinstance(raw, Result):
+        raise TypeError(
+            f"Cannot extract catalog entities from a non-tabular Result (payload type: {type(raw.data).__name__})"
+        )
     raise TypeError(f"Cannot extract catalog entities from {type(raw)!r}")
 
 

@@ -10,12 +10,13 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, connector
-from parsimony.result import Result, TabularResult
 from parsimony.testing import ConformanceError, ProviderTestSuite
 
 
-def _demo_fn() -> Result:
-    return TabularResult.from_dataframe(pd.DataFrame({"x": [1]}))
+def _demo_fn() -> pd.DataFrame:
+    # A conforming connector returns RAW data; the framework wraps it. Returning
+    # a Result here would be rejected by _wrap_result.
+    return pd.DataFrame({"x": [1]})
 
 
 def _make_connector(

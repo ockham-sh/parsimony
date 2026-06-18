@@ -403,9 +403,7 @@ class Catalog:
         meta = read_meta(src)
         if meta.schema_version != 1:
             raise ValueError(f"Unsupported catalog schema_version {meta.schema_version}; expected 1")
-        logger.debug(
-            "Loading entities-only catalog from %s (indexes + integrity check skipped)", src
-        )
+        logger.debug("Loading entities-only catalog from %s (indexes + integrity check skipped)", src)
         entries = _read_parquet(src / ENTRIES_FILENAME)
         catalog = cls(meta.name, indexes={}, default_field=None)
         catalog._default_index_policy = False

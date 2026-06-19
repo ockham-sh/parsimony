@@ -104,7 +104,7 @@ def test_lru_keys_entities_only_separately_from_full(tmp_path: Path) -> None:
 
     assert browse is not full
     # The full one searches; the entities-only one refuses.
-    hits, _ = full.search("alpha", limit=5)
+    hits = full.search("alpha", limit=5)
     assert [h.code for h in hits] == ["A"]
     with pytest.raises(BroadSearchUnavailableError):
         browse.search("alpha", limit=5)

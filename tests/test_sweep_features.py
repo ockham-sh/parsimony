@@ -79,6 +79,20 @@ def test_snapshot_integrity(tmp_path: Path) -> None:
         Catalog.load(save_path)
 
 
+def test_snapshot_integrity_ignores_hf_dataset_card_files(tmp_path: Path) -> None:
+    cat = Catalog("test", indexes={"title": BM25Index()})
+    cat.set_entities([Entity(namespace="ns", code="A", title="HF card should not affect digest")])
+    cat.build()
+
+    save_path = tmp_path / "snapshot"
+    cat.save(save_path)
+    (save_path / "README.md").write_text("---\nconfigs: []\n---\n")
+    (save_path / ".gitattributes").write_text("*.parquet filter=lfs diff=lfs merge=lfs -text\n")
+
+    loaded = Catalog.load(save_path)
+    assert loaded.name == "test"
+
+
 def test_bm25_self_contained(tmp_path: Path) -> None:
     cat = Catalog("test", indexes={"title": BM25Index()})
     cat.set_entities(
@@ -99,7 +113,7 @@ def test_bm25_self_contained(tmp_path: Path) -> None:
     assert values_file.exists()
 
     loaded = Catalog.load(save_path)
-    results, _ = loaded.search("Unique token", limit=5)
+    results = loaded.search("Unique token", limit=5)
     assert len(results) == 1
     assert results[0].code == "A"
 
@@ -110,6 +124,6 @@ def test_bm25_overlap_fallback_on_tiny_corpus() -> None:
     cat.set_entities([Entity(namespace="ns", code="FXUSDCAD", title="USD/CAD")])
     cat.build()
 
-    results, _ = cat.search("USD", limit=5)
+    results = cat.search("USD", limit=5)
     assert len(results) == 1
     assert results[0].code == "FXUSDCAD"

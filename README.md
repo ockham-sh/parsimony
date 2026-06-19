@@ -221,10 +221,10 @@ catalog = Catalog(
 catalog.set_entities(entries)
 catalog.build()  # MUST build before search/save
 
-hits, diag = catalog.search("inflation adjusted output", limit=5)   # broad
-print(diag.mode, [(h.code, round(h.score, 3)) for h in hits])
+hits = catalog.search("inflation adjusted output", limit=5)   # broad
+print([(h.code, round(h.score, 3)) for h in hits])
 
-hits2, _ = catalog.search("code: UNRATE", limit=1)                   # structured, exact match
+hits2 = catalog.search("code: UNRATE", limit=1)                   # structured, exact match
 print(hits2[0].title)
 
 catalog.save("file:///tmp/macro-catalog", builder="readme-example")

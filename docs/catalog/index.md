@@ -35,7 +35,7 @@ set_entities([...])                 load / replace entities  ── marks dirty
         ▼
 catalog.build()               materialize indexes      ── clears dirty
         │
-        ├──► catalog.search("query", limit=5)   →  (list[CatalogMatch], SearchDiagnostic)
+        ├──► catalog.search("query", limit=5)   →  list[CatalogMatch]
         │
         └──► catalog.save("file:///path")        →  snapshot directory
                                                             │
@@ -80,15 +80,13 @@ catalog.set_entities(
 )
 catalog.build()
 
-matches, diagnostic = catalog.search("alpha", limit=5)
-print(diagnostic.mode)          # -> broad
+matches = catalog.search("alpha", limit=5)
 top = matches[0]
 print(top.namespace, top.code)  # -> series A
 print(top.title, round(top.score, 3))
 ```
 
-`search()` returns a tuple: a list of [`CatalogMatch`](search.md) records ordered by
-descending score, and a `SearchDiagnostic` describing how the query was executed.
+`search()` returns a list of [`CatalogMatch`](search.md) records ordered by descending score.
 
 ## Constructing a catalog
 
@@ -145,26 +143,24 @@ restrict search to a known set of surfaces. The available index types — `BM25I
 
 `search(query, limit, *, namespaces=None)` inspects the query string and picks one of two modes.
 
-A query is **structured** when it begins with a `FIELD:` token (it matches `^\s*\w+\s*:`). Clauses
-are separated by `&&` and AND-intersected; within a clause, comma-separated values are OR-merged.
-Every referenced field must have an index, or the parse raises `UnknownIndexedFieldError`.
+A query is **structured** when it begins with a `FIELD:` token (it matches `^\s*\w+\s*:`).
+Core `Catalog.search` accepts one soft-scored structured clause; comma-separated values within
+that clause are OR-merged. Use `filter=` for exact AND constraints. Every referenced field must
+have an index, or the parse raises `UnknownIndexedFieldError`.
 
 ```python
-matches, diagnostic = catalog.search("title: alpha && region: eu, us", limit=5)
-print(diagnostic.mode)  # -> structured
+matches = catalog.search("title: alpha", filter={"region": ["eu", "us"]}, limit=5)
 ```
 
 Any query that does not start with a `FIELD:` token is a **broad** query, scored against the
 `default_field`. If no broad field is configured, `search()` raises `BroadSearchUnavailableError`.
 
 ```python
-matches, diagnostic = catalog.search("alpha growth", limit=5)
-print(diagnostic.mode)  # -> broad
+matches = catalog.search("alpha growth", limit=5)
 ```
 
-`SearchDiagnostic.mode` is the literal `"broad"` or `"structured"`. The optional `namespaces`
-argument post-filters results to entities whose namespace is in the given list. The full DSL,
-result shape, and the search-time exceptions are documented in
+The optional `namespaces` argument post-filters results to entities whose namespace is in the given list.
+The full DSL, result shape, and the search-time exceptions are documented in
 [Building and searching](search.md).
 
 ## Saving and loading snapshots
@@ -212,7 +208,7 @@ This section breaks the catalog down into focused pages:
 - **[Entities](entities.md)** — the `Entity` record model, normalization rules, and how
   DataFrames become entities.
 - **[Building and searching](search.md)** — the full `Catalog` API, the query DSL,
-  `CatalogMatch` / `SearchDiagnostic`, and the search-time exceptions.
+  `CatalogMatch`, and the search-time exceptions.
 - **[Indexes](indexes.md)** — the `CatalogIndex` protocol and the BM25, vector, hybrid, and
   DisMax backends, plus the adaptive selection policies.
 - **[Ranking and fusion](ranking-and-fusion.md)** — `Ranking`, the `Ranker` protocol, and the

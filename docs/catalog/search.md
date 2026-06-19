@@ -18,7 +18,7 @@ pip install "parsimony-core[catalog]"
     `parsimony.catalog`. For catalog-heavy code, importing everything from the submodule —
     `from parsimony.catalog import Catalog, Entity, BM25Index, ...` — is the clearest
     convention, and it is the only way to reach the names that are *not* top-level
-    (`SearchDiagnostic`, `StructuredQuery`, `parse_query`, and the query error types).
+    (`StructuredQuery`, `parse_query`, and the query error types).
 
 ## Constructing a catalog
 
@@ -131,15 +131,17 @@ Catalog entries or indexes changed — call catalog.build() before it can be sea
 ```python
 def search(
     self,
-    query: str,
-    limit: int,
+    query: str | None = None,
+    limit: int = 50,
     *,
+    field: str | None = None,
+    filter: Mapping[str, Sequence[str]] | None = None,
+    top_k_values: int = 50,
     namespaces: list[str] | None = None,
-) -> tuple[list[CatalogMatch], SearchDiagnostic]
+) -> list[CatalogMatch]
 ```
 
-`query` and `limit` are positional and both required; `namespaces` is keyword-only. The
-method returns a tuple of the ranked matches and a diagnostic describing how the query ran.
+The method returns ranked matches as a list.
 
 - `limit` caps the number of results. (Whole tie-groups can slightly exceed it — see
   [Ranking and fusion](ranking-and-fusion.md).)
@@ -152,8 +154,7 @@ broad mode.
 ### Broad search
 
 If the query does **not** start with a `field:` prefix, it is a broad query against the
-catalog's resolved default field. The query is scored against that one index and the
-diagnostic reports `mode="broad"`.
+catalog's resolved default field. The query is scored against that one index.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
@@ -166,8 +167,8 @@ catalog.set_entities(
     ]
 )
 catalog.build()
-hits, diag = catalog.search("alpha", limit=1)
-print(diag.mode, hits[0].code)  # -> broad A
+hits = catalog.search("alpha", limit=1)
+print(hits[0].code)  # -> A
 ```
 
 If no default field can be resolved — `default_field` is unset and there is no `"title"`
@@ -182,15 +183,14 @@ This catalog only supports structured queries. Use 'field: value' syntax. Indexe
 A query is *structured* if and only if it matches the regex `^\s*\w+\s*:` — that is, it begins
 with a word followed by a colon. The grammar:
 
-- `&&` separates **clauses**, which are **AND**ed together (a result must satisfy every
-  clause).
-- Within one clause, `FIELD: v1, v2` lists values separated by `,`, which are **OR**ed (any
-  value matching contributes).
+- `FIELD: v1, v2` lists values separated by `,`, which are **OR**ed (any value matching
+  contributes).
+- Core `Catalog.search` accepts one soft-scored structured clause. Use `filter=` for exact
+  AND constraints such as dimension/code filters on parquet-backed catalogs.
 
 Each clause field must have a configured index, otherwise the parse raises
-`UnknownIndexedFieldError`. Scoring within a clause keeps the maximum positive score per row
-across the OR values; across clauses, the surviving rows (the intersection) have their clause
-scores summed.
+`UnknownIndexedFieldError`. Scoring within the clause keeps the maximum positive score per row
+across the OR values.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
@@ -210,8 +210,7 @@ catalog.set_entities(
     ]
 )
 catalog.build()
-res, diag = catalog.search("ref_area: Germany && icp_item: energy", limit=5)
-print(diag.mode)               # -> structured
+res = catalog.search("ref_area: Germany", filter={"icp_item": ["energy"]}, limit=5)
 print({m.code for m in res})   # -> {'A'}
 ```
 
@@ -251,19 +250,15 @@ final relevance score:
 | `score` | `float` | The fused/ranked score; higher is better. |
 | `metadata` | `dict[str, Any]` | Shallow copy of the entity's metadata. |
 
-The second tuple element is a `SearchDiagnostic`, whose `mode` is the literal `"broad"` or
-`"structured"` and whose `notes` is a list of strings (empty by default).
-
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
 
 catalog = Catalog("demo", indexes={"title": BM25Index()})
 catalog.set_entities([Entity(namespace="demo", code="A", title="alpha title")])
 catalog.build()
-matches, diag = catalog.search("alpha", limit=5)
+matches = catalog.search("alpha", limit=5)
 top = matches[0]
 print(top.namespace, top.code, top.title)  # -> demo A alpha title
-print(diag.mode)                            # -> broad
 ```
 
 ## Query errors

@@ -70,14 +70,20 @@ def test_structured_search_execution() -> None:
     with pytest.raises(UnknownIndexedFieldError, match="UNKNOWN_FIELD"):
         cat.search("UNKNOWN_FIELD: Germany", limit=5)
 
-    res, _ = cat.search("REF_AREA: Germany", limit=5)
+    res = cat.search("REF_AREA: Germany", limit=5)
     assert {m.code for m in res} == {"A", "C"}
 
-    res_or, _ = cat.search("REF_AREA: Germany, Italy", limit=5)
+    res_or = cat.search("REF_AREA: Germany, Italy", limit=5)
     assert {m.code for m in res_or} == {"A", "B", "C"}
 
-    res_and, _ = cat.search("REF_AREA: Germany && ICP_ITEM: energy", limit=5)
+    res_and = cat.search(
+        filter={"REF_AREA": ["Germany"], "ICP_ITEM": ["energy"]},
+        limit=5,
+    )
     assert {m.code for m in res_and} == {"A"}
 
-    res_comb, _ = cat.search("REF_AREA: Germany, France && ICP_ITEM: food", limit=5)
+    res_comb = cat.search(
+        filter={"REF_AREA": ["Germany", "France"], "ICP_ITEM": ["food"]},
+        limit=5,
+    )
     assert {m.code for m in res_comb} == {"C", "D"}

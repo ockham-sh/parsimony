@@ -50,8 +50,8 @@ there is no `build()` call needed after a load.
 from parsimony.catalog import Catalog
 
 catalog = Catalog.load("file:///tmp/parsimony/snapshot")
-hits, diag = catalog.search("alpha", limit=5)
-print(diag.mode, [m.code for m in hits])
+hits = catalog.search("alpha", limit=5)
+print([m.code for m in hits])
 ```
 
 A loaded catalog is reconstructed exactly from what was serialized: its `default_field` and

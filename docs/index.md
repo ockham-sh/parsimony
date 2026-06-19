@@ -143,13 +143,13 @@ catalog.set_entities(
     ]
 )
 catalog.build()                          # required before searching
-matches, diagnostic = catalog.search("price", limit=5)
+matches = catalog.search("price", limit=5)
 for match in matches:
     print(match.code, match.title, match.score)
 ```
 
-`catalog.search(...)` returns a list of [`CatalogMatch`](catalog/search.md) records plus a
-search diagnostic. Mutating a built catalog marks it dirty; search and save raise until you
+`catalog.search(...)` returns a list of [`CatalogMatch`](catalog/search.md) records.
+Mutating a built catalog marks it dirty; search and save raise until you
 rebuild. See [The Catalog](catalog/index.md) for the full lifecycle.
 
 ## Using a real provider

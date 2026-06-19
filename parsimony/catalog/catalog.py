@@ -7,13 +7,20 @@ import logging
 import shutil
 import tempfile
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from parsimony.catalog.backends import (
+    InMemoryRowBackend,
+    ParquetRowBackend,
+    entity_from_row,
+    entity_matches_filter,
+)
+from parsimony.catalog.contracts import CatalogBackendConfig, FilterSpec
 from parsimony.catalog.indexes import (
     BM25Index,
     CatalogIndex,
@@ -21,21 +28,23 @@ from parsimony.catalog.indexes import (
     HybridIndex,
     IndexBuildContext,
     VectorIndex,
-    _ranking_from_row_scores,
     embed_query_vectors,
+    search_index_values,
 )
 from parsimony.catalog.models import (
     BroadSearchConfigError,
     BroadSearchUnavailableError,
     CatalogMatch,
-    SearchDiagnostic,
+    CatalogValueMatch,
+    UnknownIndexedFieldError,
     catalog_match_from_entity,
 )
-from parsimony.catalog.query import StructuredQuery, parse_query
+from parsimony.catalog.query import parse_query
 from parsimony.catalog.storage import (
     ENTRIES_FILENAME,
     INDEXES_DIRNAME,
     META_FILENAME,
+    BackendMeta,
     BuildInfo,
     CatalogMeta,
     _compute_content_sha256,
@@ -43,7 +52,9 @@ from parsimony.catalog.storage import (
     read_meta,
 )
 from parsimony.catalog.urls import REPO_TYPE, parse_catalog_url
-from parsimony.entity import Entity, entity_key, normalize_namespace
+from parsimony.catalog.validation import compute_manifest_contract_sha256, validate_catalog_snapshot
+from parsimony.entity import Entity, entity_key, field_value, normalize_namespace
+from parsimony.errors import InvalidParameterError
 from parsimony.ranking import Ranking, ranking_from_scores
 
 logger = logging.getLogger(__name__)
@@ -70,7 +81,7 @@ def _starter_default_indexes() -> dict[str, CatalogIndex]:
 
 
 class Catalog:
-    """Portable in-memory catalog over entries and configured indexes.
+    """Portable catalog over entries and configured indexes.
 
     Pass ``indexes=None`` to use the framework default index policy: at
     :meth:`build`, BM25 indexes are created for ``code``, ``title``, and each
@@ -82,6 +93,10 @@ class Catalog:
     they match an Entity field name when an index reads exactly one Entity
     field. Composite indexes such as :class:`~parsimony.catalog.indexes.DisMaxIndex`
     may expose one surface name while reading multiple Entity fields internally.
+
+    For large datasets, call :meth:`attach_parquet_rows` after :meth:`build`
+    to switch the row store to a lazy parquet backend; the index entities act
+    purely as the scoring surface, and actual rows are streamed on demand.
     """
 
     def __init__(
@@ -90,22 +105,29 @@ class Catalog:
         *,
         indexes: dict[str, CatalogIndex] | None = None,
         default_field: str | None = None,
+        field_links: dict[str, str] | None = None,
+        backend: CatalogBackendConfig | None = None,
     ) -> None:
         self.name = normalize_namespace(name)
         self.default_field = default_field
+        self._field_links = dict(field_links or {})
+        self._backend_config = backend or CatalogBackendConfig()
         self._default_index_policy = indexes is None
-        if indexes is not None:
-            self._indexes = dict(indexes)
-        else:
-            self._indexes = _starter_default_indexes()
+        self._indexes: dict[str, CatalogIndex] = dict(indexes) if indexes is not None else _starter_default_indexes()
         self._entities: list[Entity] = []
         self._key_to_idx: dict[tuple[str, str], int] = {}
+        self._backend: InMemoryRowBackend | ParquetRowBackend | None = None
+        self._parquet_source: Path | None = None
         self._dirty = True
         # Set by ``load_entities_only``: indexes were never loaded, so ``search``
         # is unavailable and the catalog supports listing ``entities`` only.
         self._entities_only = False
         self._lock = threading.Lock()
         self._validate_indexes()
+
+    # ------------------------------------------------------------------
+    # Public properties
+    # ------------------------------------------------------------------
 
     @property
     def entities(self) -> list[Entity]:
@@ -115,42 +137,67 @@ class Catalog:
     def indexes(self) -> dict[str, CatalogIndex]:
         return dict(self._indexes)
 
-    def _validate_indexes(self) -> None:
-        missing_default = (
-            self.default_field is not None
-            and self.default_field not in self._indexes
-            and not self._default_index_policy
-        )
-        if missing_default:
-            indexed = ", ".join(f"'{f}'" for f in sorted(self._indexes))
-            raise BroadSearchConfigError(
-                f"No index configured for default_field {self.default_field!r}. Indexed fields: [{indexed}]"
-            )
+    @property
+    def field_links(self) -> dict[str, str]:
+        return dict(self._field_links)
 
-    def index_for(self, field: str) -> CatalogIndex:
-        """Return the index configured for the given field, or raise KeyError."""
-        try:
-            return self._indexes[field]
-        except KeyError as err:
-            raise KeyError(f"No index found for field {field!r}") from err
+    @property
+    def is_parquet_backend(self) -> bool:
+        return self._backend_config.kind == "parquet"
 
     def __len__(self) -> int:
-        return len(self._entities)
+        return len(self._entities) if not self.is_parquet_backend else (self._backend.count() if self._backend else 0)
 
-    def _resolve_default_field(self) -> str | None:
-        """Field name used for broad (unstructured) search, or None if disabled."""
-        if self.default_field is not None:
-            return self.default_field
-        if "title" in self._indexes:
-            return "title"
-        return None
+    # ------------------------------------------------------------------
+    # Mutation
+    # ------------------------------------------------------------------
 
-    def _indexed_fields(self) -> list[str]:
-        return sorted(self._indexes)
+    def set_entities(self, entries: list[Entity]) -> None:
+        """Replace entries without rebuilding indexes."""
+        self._entities = []
+        self._key_to_idx = {}
+        self._upsert_entities(entries)
+        self._invalidate()
+
+    def set_index(self, field: str, index: CatalogIndex) -> None:
+        """Replace one field index without rebuilding."""
+        self._indexes[field] = index
+        self._default_index_policy = False
+        self._validate_indexes()
+        self._invalidate()
+
+    def update_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
+        """Merge or replace field indexes without rebuilding."""
+        self._indexes.update(indexes)
+        self._default_index_policy = False
+        self._validate_indexes()
+        self._invalidate()
+
+    def set_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
+        """Replace all field indexes without rebuilding."""
+        self._indexes = dict(indexes)
+        self._default_index_policy = False
+        self._validate_indexes()
+        self._invalidate()
+
+    def set_field_links(self, field_links: dict[str, str]) -> None:
+        self._field_links = dict(field_links)
+
+    def attach_parquet_rows(self, parquet_path: Path, *, config: CatalogBackendConfig) -> None:
+        """Bind a flat parquet file as the row backend.
+
+        Indexes must be built first (call :meth:`build`). After attaching, all
+        searches stream rows from *parquet_path* instead of from in-memory entities.
+        """
+        self._backend_config = config
+        self._parquet_source = Path(parquet_path)
+        self._backend = ParquetRowBackend(self._parquet_source, config=config)
+        self._entities = []
+        self._key_to_idx = {}
+        self._dirty = False
 
     def build(self) -> None:
         """Build configured indexes over the catalog's current entries."""
-
         if self._default_index_policy:
             self._indexes = _default_indexes_from_entities(self._entities)
 
@@ -165,126 +212,9 @@ class Catalog:
 
         with self._lock:
             self._rebuild_indices()
+            if self._backend_config.kind == "memory":
+                self._backend = InMemoryRowBackend(self._entities, config=self._backend_config)
             self._dirty = False
-
-    def set_entities(self, entries: list[Entity]) -> None:
-        """Replace entries without rebuilding indexes."""
-
-        self._entities = []
-        self._key_to_idx = {}
-        self._upsert_entities(entries)
-        self._invalidate()
-
-    def set_index(self, field: str, index: CatalogIndex) -> None:
-        """Replace one field index without rebuilding."""
-
-        self._indexes[field] = index
-        self._default_index_policy = False
-        self._validate_indexes()
-        self._invalidate()
-
-    def update_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
-        """Merge or replace field indexes without rebuilding."""
-
-        self._indexes.update(indexes)
-        self._default_index_policy = False
-        self._validate_indexes()
-        self._invalidate()
-
-    def set_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
-        """Replace all field indexes without rebuilding."""
-
-        self._indexes = dict(indexes)
-        self._default_index_policy = False
-        self._validate_indexes()
-        self._invalidate()
-
-    def _execute_structured(
-        self,
-        query: StructuredQuery,
-        *,
-        limit: int,
-        query_vectors: dict[tuple[str, int, bool], list[float]] | None,
-    ) -> Ranking:
-        for field, _ in query.clauses:
-            try:
-                self.index_for(field)
-            except KeyError as err:
-                raise ValueError(f"No index configured for field {field!r}") from err
-
-        clause_results: list[dict[int, float]] = []
-        for field, values in query.clauses:
-            idx = self.index_for(field)
-            merged_clause_scores: dict[int, float] = {}
-            for val in values:
-                scores = idx.score_candidates(val, query_vectors=query_vectors)
-                for row_id, score in scores.items():
-                    if score <= 0.0:
-                        continue
-                    prev = merged_clause_scores.get(row_id)
-                    if prev is None or score > prev:
-                        merged_clause_scores[row_id] = score
-            clause_results.append(merged_clause_scores)
-
-        if not clause_results:
-            return Ranking.empty()
-
-        intersection = set(clause_results[0])
-        for clause in clause_results[1:]:
-            intersection &= set(clause)
-
-        if not intersection:
-            return Ranking.empty()
-
-        final_scores: dict[int, float] = {
-            row_id: sum(clause[row_id] for clause in clause_results) for row_id in intersection
-        }
-        rows = [
-            (self._entities[row_id].namespace, self._entities[row_id].code, score)
-            for row_id, score in final_scores.items()
-        ]
-        return ranking_from_scores(rows, limit=limit)
-
-    def search(
-        self,
-        query: str,
-        limit: int,
-        *,
-        namespaces: list[str] | None = None,
-    ) -> tuple[list[CatalogMatch], SearchDiagnostic]:
-        """Search entries."""
-
-        if self._entities_only:
-            raise BroadSearchUnavailableError(
-                "Catalog was loaded entities-only (no search indexes) and cannot be searched. "
-                "Reload it with Catalog.load() for search; entities-only supports listing entities."
-            )
-        self._ensure_built("searched")
-        known_fields = set(self._indexes)
-        parsed = parse_query(query, known_fields=known_fields)
-        if parsed is None:
-            broad_field = self._resolve_default_field()
-            if broad_field is None:
-                indexed = ", ".join(f"'{f}'" for f in sorted(known_fields))
-                raise BroadSearchUnavailableError(
-                    f"This catalog only supports structured queries. "
-                    f"Use 'field: value' syntax. Indexed fields: [{indexed}]"
-                )
-            broad_index = self.index_for(broad_field)
-            query_vectors = embed_query_vectors(query, [broad_index])
-            row_scores = broad_index.score_candidates(query, query_vectors=query_vectors)
-            ranking = _ranking_from_row_scores(self._entities, row_scores, limit=limit)
-            diagnostic = SearchDiagnostic(mode="broad")
-        else:
-            indexes = [self.index_for(field) for field, _ in parsed.clauses]
-            query_vectors = embed_query_vectors(query, indexes)
-            ranking = self._execute_structured(parsed, limit=limit, query_vectors=query_vectors)
-            diagnostic = SearchDiagnostic(mode="structured")
-
-        if namespaces is not None:
-            ranking = _filter_namespaces(ranking, namespaces)
-
-        return self._matches_from_ranking(ranking), diagnostic
 
     def get(self, namespace: str, code: str) -> Entity | None:
         idx = self._key_to_idx.get(entity_key(namespace, code))
@@ -303,6 +233,258 @@ class Catalog:
             self._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(self._entities)}
             self._invalidate()
             return len(targets)
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def search(
+        self,
+        query: str | None = None,
+        limit: int = 50,
+        *,
+        field: str | None = None,
+        filter: FilterSpec | None = None,
+        top_k_values: int = 50,
+        namespaces: list[str] | None = None,
+    ) -> list[CatalogMatch]:
+        """Search catalog rows.
+
+        Parameters
+        ----------
+        query:
+            Free-text or structured ``FIELD: value`` query.  Omit for filter-only search.
+        limit:
+            Maximum results returned.
+        field:
+            Restrict soft scoring to this indexed field.  Requires *query*.
+        filter:
+            Exact AND filter: ``{column: [allowed_values, …]}``.  Can combine with query.
+        top_k_values:
+            How many distinct indexed values to score for parquet backends.
+        namespaces:
+            Post-filter to these entity namespaces.
+        """
+        if self._entities_only:
+            raise BroadSearchUnavailableError(
+                "Catalog was loaded entities-only (no search indexes) and cannot be searched. "
+                "Reload it with Catalog.load() for search; entities-only supports listing entities."
+            )
+        self._ensure_built("searched")
+        filter_spec = dict(filter or {})
+
+        if query is None and not filter_spec:
+            raise InvalidParameterError("catalog", "search requires query= and/or filter=")
+        if field is not None and query is None:
+            raise InvalidParameterError("catalog", "field= requires a non-empty query=")
+        if field is not None:
+            try:
+                self.index_for(field)
+            except KeyError as err:
+                raise UnknownIndexedFieldError(f"No index configured for field {field!r}") from err
+
+        # Resolve structured DSL queries ("FIELD: v1, v2") when no explicit field
+        multi_values: Sequence[str] | None = None
+        if query is not None and field is None:
+            parsed = parse_query(query, known_fields=set(self._indexes))
+            if parsed is not None:
+                if len(parsed.clauses) > 1:
+                    raise InvalidParameterError(
+                        "catalog",
+                        "Multi-clause structured queries are not supported. "
+                        "Use filter= for exact constraints and field= for single-field soft search.",
+                    )
+                field, multi_values = parsed.clauses[0]
+                query = None  # consumed by DSL
+
+        filter_spec = self._normalize_filter_spec(filter_spec)
+
+        # Dispatch
+        if field is not None:
+            values: Sequence[str] = multi_values if multi_values is not None else (query,)  # type: ignore[assignment]
+            matches = self._search_field(
+                field, values, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            )
+        elif query is not None:
+            broad_field = self._resolve_default_field()
+            if broad_field is None:
+                raise BroadSearchUnavailableError(
+                    f"This catalog requires field= or filter=. "
+                    f"Indexed fields: [{', '.join(repr(f) for f in sorted(self._indexes))}]"
+                )
+            matches = self._search_field(
+                broad_field, (query,), filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            )
+        else:
+            matches = self._search_filter_only(filter_spec, limit=limit)
+
+        if namespaces is not None:
+            allowed = {normalize_namespace(ns) for ns in namespaces}
+            matches = [m for m in matches if m.namespace in allowed]
+
+        return matches
+
+    def search_values(
+        self,
+        query: str,
+        field: str,
+        *,
+        limit: int = 20,
+    ) -> list[CatalogValueMatch]:
+        """Return distinct indexed values for *field* ranked by *query*.
+
+        If *field* is in ``field_links``, each result also carries the linked value
+        (e.g. the canonical code for a human-readable label).
+        """
+        self._ensure_built("searched")
+        try:
+            index = self.index_for(field)
+        except KeyError as err:
+            raise UnknownIndexedFieldError(f"No index configured for field {field!r}") from err
+        qvecs = embed_query_vectors(query, [index])
+        scored = search_index_values(index, query, limit=limit, query_vectors=qvecs)
+        link_field = self._field_links.get(field)
+        if link_field is None:
+            return [CatalogValueMatch(value=text, score=score) for text, score in scored]
+        return [
+            CatalogValueMatch(value=text, score=score, linked_value=self._linked_value(field, text, link_field))
+            for text, score in scored
+        ]
+
+    # ------------------------------------------------------------------
+    # Internal search helpers
+    # ------------------------------------------------------------------
+
+    def _normalize_filter_spec(self, filter_spec: dict[str, Sequence[str]]) -> dict[str, Sequence[str]]:
+        if not filter_spec or not isinstance(self._backend, ParquetRowBackend):
+            return filter_spec
+        columns = set(self._backend.column_names())
+        aliases = {
+            "code": self._backend_config.code_column,
+            "title": self._backend_config.title_column,
+        }
+        normalized: dict[str, Sequence[str]] = {}
+        for field, values in filter_spec.items():
+            column = aliases.get(field, field)
+            if column not in columns:
+                raise InvalidParameterError(
+                    "catalog",
+                    f"Unknown parquet filter column {field!r}. Available columns: {sorted(columns)}",
+                )
+            normalized[column] = values
+        return normalized
+
+    def _search_field(
+        self,
+        field: str,
+        values: Sequence[str],
+        *,
+        filter_spec: FilterSpec | None,
+        limit: int,
+        top_k_values: int,
+    ) -> list[CatalogMatch]:
+        """Score rows by field index over *values* (multi-value → take max per row)."""
+        index = self.index_for(field)
+        if isinstance(self._backend, ParquetRowBackend):
+            return self._parquet_field_search(
+                index, field, values, filter_spec=filter_spec, limit=limit, top_k_values=top_k_values
+            )
+        return self._memory_field_search(index, values, filter_spec=filter_spec, limit=limit)
+
+    def _memory_field_search(
+        self,
+        index: CatalogIndex,
+        values: Sequence[str],
+        *,
+        filter_spec: FilterSpec | None,
+        limit: int,
+    ) -> list[CatalogMatch]:
+        merged: dict[int, float] = {}
+        for value in values:
+            qvecs = embed_query_vectors(value, [index])
+            for row_id, score in index.score_candidates(value, query_vectors=qvecs).items():
+                if score <= 0.0:
+                    continue
+                if filter_spec is not None and not entity_matches_filter(self._entities[row_id], filter_spec):
+                    continue
+                if score > merged.get(row_id, 0.0):
+                    merged[row_id] = score
+        ranking = ranking_from_scores(
+            [(self._entities[i].namespace, self._entities[i].code, s) for i, s in merged.items()],
+            limit=limit,
+        )
+        return self._matches_from_ranking(ranking)
+
+    def _parquet_field_search(
+        self,
+        index: CatalogIndex,
+        field: str,
+        values: Sequence[str],
+        *,
+        filter_spec: FilterSpec | None,
+        limit: int,
+        top_k_values: int,
+    ) -> list[CatalogMatch]:
+        backend = self._require_parquet_backend()
+        value_scores: dict[str, float] = {}
+        for value in values:
+            qvecs = embed_query_vectors(value, [index])
+            for text, score in search_index_values(index, value, limit=top_k_values, query_vectors=qvecs):
+                if score > value_scores.get(text, 0.0):
+                    value_scores[text] = score
+        ranked = backend.top_scored_rows(
+            filter_spec=filter_spec,
+            score_column=field,
+            value_scores=value_scores,
+            limit=limit,
+        )
+        return [
+            catalog_match_from_entity(entity_from_row(row, config=self._backend_config), score=score)
+            for row, score in ranked
+        ]
+
+    def _search_filter_only(self, filter_spec: FilterSpec, *, limit: int) -> list[CatalogMatch]:
+        if isinstance(self._backend, ParquetRowBackend):
+            backend = self._require_parquet_backend()
+            matches: list[CatalogMatch] = []
+            for row in backend.iter_rows(filter_spec=filter_spec):
+                matches.append(catalog_match_from_entity(entity_from_row(row, config=self._backend_config), score=1.0))
+                if len(matches) >= limit:
+                    break
+            return matches
+        return [
+            catalog_match_from_entity(e, score=1.0) for e in self._entities if entity_matches_filter(e, filter_spec)
+        ][:limit]
+
+    def _linked_value(self, field: str, value: str, link_field: str) -> str | None:
+        """Resolve the linked field value for a given indexed value."""
+        if isinstance(self._backend, ParquetRowBackend):
+            # Scan parquet: find first row where field==value and return link_field
+            for row in self._backend.iter_rows(filter_spec={field: [value]}, columns=[link_field]):
+                lv = row.get(link_field)
+                return str(lv) if lv is not None else None
+            return None
+        for entity in self._entities:
+            fv = field_value(entity, field)
+            if fv is not None and str(fv) == value:
+                lv = field_value(entity, link_field)
+                return str(lv) if lv is not None else None
+        return None
+
+    # ------------------------------------------------------------------
+    # Index/entity accessors
+    # ------------------------------------------------------------------
+
+    def index_for(self, field: str) -> CatalogIndex:
+        """Return the index configured for the given field, or raise KeyError."""
+        try:
+            return self._indexes[field]
+        except KeyError as err:
+            raise KeyError(f"No index found for field {field!r}") from err
+
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
 
     def save(self, url: str | Path, *, builder: str | None = None) -> None:
         """Save a catalog snapshot to a URL or bare path."""
@@ -327,7 +509,14 @@ class Catalog:
             shutil.rmtree(tmp)
         try:
             tmp.mkdir(parents=True)
-            self._write_parquet(tmp / ENTRIES_FILENAME)
+            rows_name = self._backend_config.rows_path or ENTRIES_FILENAME
+            if self.is_parquet_backend:
+                source = self._parquet_source
+                if source is None or not source.is_file():
+                    raise ValueError("Parquet catalog save requires attach_parquet_rows() with a readable file")
+                shutil.copy2(source, tmp / rows_name)
+            else:
+                self._write_parquet(tmp / ENTRIES_FILENAME)
             self._write_indexes(tmp / INDEXES_DIRNAME)
             self._write_meta(tmp, builder)
             if target.exists():
@@ -342,15 +531,14 @@ class Catalog:
     def load(cls, url: str | Path) -> Catalog:
         """Load a built, searchable catalog snapshot from a URL or bare path.
 
-        Supports local file paths (bare or file://) and remote Hugging Face
-        dataset URLs (hf://). Caching loaded catalogs is the caller's
+        Supports local file paths (bare or ``file://``) and remote Hugging Face
+        dataset URLs (``hf://``). Caching loaded catalogs is the caller's
         responsibility.
         """
         return _dispatch_load(str(url))
 
     @classmethod
     def _load_from_path(cls, path: Path) -> Catalog:
-        """Load a clean-slate catalog snapshot from a local directory."""
         src = Path(path)
         meta = read_meta(src)
         if meta.schema_version != 1:
@@ -367,13 +555,38 @@ class Catalog:
                     f"`parsimony cache clear --subdir catalogs --yes` and retry."
                 )
 
-        entries = _read_parquet(src / ENTRIES_FILENAME)
+        meta = validate_catalog_snapshot(src, meta=meta)
+
+        backend_config = CatalogBackendConfig(
+            kind=meta.backend.kind,
+            rows_path=meta.backend.rows_filename,
+            namespace=meta.backend.namespace,
+            code_column=meta.backend.code_column,
+            title_column=meta.backend.title_column,
+            field_links=dict(meta.backend.field_links),
+        )
         indexes = _load_indexes(src / INDEXES_DIRNAME, index_fields=meta.index_fields)
 
-        catalog = cls(meta.name, indexes=indexes, default_field=meta.default_field)
+        catalog = cls(
+            meta.name,
+            indexes=indexes,
+            default_field=meta.default_field,
+            field_links=backend_config.field_links,
+            backend=backend_config,
+        )
         catalog._default_index_policy = False
-        catalog._entities = entries
-        catalog._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(entries)}
+
+        if backend_config.kind == "parquet":
+            rows_name = backend_config.rows_path or ENTRIES_FILENAME
+            catalog._backend = ParquetRowBackend(src / rows_name, config=backend_config)
+            catalog._entities = []
+            catalog._key_to_idx = {}
+        else:
+            entries = _read_parquet(src / ENTRIES_FILENAME)
+            catalog._entities = entries
+            catalog._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(entries)}
+            catalog._backend = InMemoryRowBackend(entries, config=backend_config)
+
         catalog._dirty = False
         return catalog
 
@@ -404,7 +617,8 @@ class Catalog:
         if meta.schema_version != 1:
             raise ValueError(f"Unsupported catalog schema_version {meta.schema_version}; expected 1")
         logger.debug("Loading entities-only catalog from %s (indexes + integrity check skipped)", src)
-        entries = _read_parquet(src / ENTRIES_FILENAME)
+        rows_name = meta.backend.rows_filename or ENTRIES_FILENAME
+        entries = _read_parquet(src / rows_name)
         catalog = cls(meta.name, indexes={}, default_field=None)
         catalog._default_index_policy = False
         catalog._entities = entries
@@ -412,6 +626,32 @@ class Catalog:
         catalog._dirty = False
         catalog._entities_only = True
         return catalog
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_default_field(self) -> str | None:
+        if self.default_field is not None:
+            return self.default_field
+        if "title" in self._indexes:
+            return "title"
+        return None
+
+    def _indexed_fields(self) -> list[str]:
+        return sorted(self._indexes)
+
+    def _validate_indexes(self) -> None:
+        missing_default = (
+            self.default_field is not None
+            and self.default_field not in self._indexes
+            and not self._default_index_policy
+        )
+        if missing_default:
+            indexed = ", ".join(f"'{f}'" for f in sorted(self._indexes))
+            raise BroadSearchConfigError(
+                f"No index configured for default_field {self.default_field!r}. Indexed fields: [{indexed}]"
+            )
 
     def _invalidate(self) -> None:
         self._dirty = True
@@ -436,12 +676,16 @@ class Catalog:
             index.build(self._entities, ctx=ctx)
 
     def _matches_from_ranking(self, ranking: Ranking) -> list[CatalogMatch]:
-        matches: list[CatalogMatch] = []
-        for row in ranking.items:
-            idx = self._key_to_idx.get((row.namespace, row.code))
-            if idx is not None:
-                matches.append(catalog_match_from_entity(self._entities[idx], score=float(row.score)))
-        return matches
+        return [
+            catalog_match_from_entity(self._entities[idx], score=float(row.score))
+            for row in ranking.items
+            if (idx := self._key_to_idx.get((row.namespace, row.code))) is not None
+        ]
+
+    def _require_parquet_backend(self) -> ParquetRowBackend:
+        if not isinstance(self._backend, ParquetRowBackend):
+            raise ValueError("Catalog parquet backend is not configured")
+        return self._backend
 
     def _write_parquet(self, target: Path) -> None:
         if not self._entities:
@@ -456,16 +700,16 @@ class Catalog:
             pq.write_table(pa.Table.from_pylist([], schema=schema), target)
             return
         rows = [
+            # default=str so a non-JSON-native metadata value (datetime, Decimal,
+            # …) coerces to its string form instead of crashing the whole snapshot
+            # save (matches Provenance.safe_dump).
             {
-                "namespace": entry.namespace,
-                "code": entry.code,
-                "title": entry.title,
-                # default=str so a non-JSON-native metadata value (datetime,
-                # Decimal, …) coerces to its string form instead of crashing the
-                # whole snapshot save (matches Provenance.safe_dump).
-                "metadata_json": json.dumps(entry.metadata, default=str),
+                "namespace": e.namespace,
+                "code": e.code,
+                "title": e.title,
+                "metadata_json": json.dumps(e.metadata, default=str),
             }
-            for entry in self._entities
+            for e in self._entities
         ]
         pq.write_table(pa.Table.from_pylist(rows), target, compression="zstd")
 
@@ -479,22 +723,37 @@ class Catalog:
 
     def _write_meta(self, target: Path, builder: str | None) -> None:
         content_sha = _compute_content_sha256(target)
+        row_count = self._backend.count() if self._backend is not None else len(self._entities)
+        if self.is_parquet_backend:
+            namespaces = [self._backend_config.namespace or self.name]
+        else:
+            namespaces = sorted({entry.namespace for entry in self._entities})
         meta = CatalogMeta(
             name=self.name,
-            namespaces=sorted({entry.namespace for entry in self._entities}),
-            entry_count=len(self._entities),
+            namespaces=namespaces,
+            entry_count=row_count,
             index_fields={field: index.kind for field, index in self._indexes.items()},
             default_field=self.default_field,
+            backend=BackendMeta(
+                kind=self._backend_config.kind,
+                rows_filename=self._backend_config.rows_path or ENTRIES_FILENAME,
+                namespace=self._backend_config.namespace,
+                code_column=self._backend_config.code_column,
+                title_column=self._backend_config.title_column,
+                field_links=dict(self._field_links),
+            ),
             build=BuildInfo(builder=builder, content_sha256=content_sha),
         )
+        meta.build.manifest_contract_sha256 = compute_manifest_contract_sha256(meta)
         (target / META_FILENAME).write_text(meta.model_dump_json(indent=2))
 
 
-def _load_indexes(
-    path: Path,
-    *,
-    index_fields: dict[str, str],
-) -> dict[str, CatalogIndex]:
+# ---------------------------------------------------------------------------
+# Index loading
+# ---------------------------------------------------------------------------
+
+
+def _load_indexes(path: Path, *, index_fields: dict[str, str]) -> dict[str, CatalogIndex]:
     if not path.exists():
         raise FileNotFoundError(f"Catalog snapshot missing indexes directory: {path}")
     indexes: dict[str, CatalogIndex] = {}
@@ -514,11 +773,7 @@ def _load_indexes(
 
 
 # ---------------------------------------------------------------------------
-# Snapshot load/save dispatch.
-#
-# These helpers live here (rather than in :mod:`parsimony.catalog.urls`) so the
-# module that knows :class:`Catalog` is the one that depends on the URL parser,
-# not the other way around — keeping the import graph acyclic.
+# Snapshot load/save dispatch
 # ---------------------------------------------------------------------------
 
 
@@ -583,7 +838,6 @@ def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = Non
     with tempfile.TemporaryDirectory() as tmpdir:
         staging = Path(tmpdir) / "snapshot"
         catalog._save_to_path(staging, builder=builder)
-
         api = HfApi()
         api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
         api.upload_folder(

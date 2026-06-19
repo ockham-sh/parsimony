@@ -252,8 +252,7 @@ def test_dismax_inside_catalog_search() -> None:
     catalog.set_entities(entries)
     catalog.build()
 
-    matches, diagnostic = catalog.search("title: World Bank GDP", limit=5)
-    assert diagnostic.mode == "structured"
+    matches = catalog.search("title: World Bank GDP", limit=5)
     assert matches
     assert matches[0].code == "A"
 
@@ -273,7 +272,6 @@ def test_dismax_inside_catalog_broad_search() -> None:
     catalog.set_entities(entries)
     catalog.build()
 
-    matches, diagnostic = catalog.search("World Bank GDP", limit=5)
-    assert diagnostic.mode == "broad"
+    matches = catalog.search("World Bank GDP", limit=5)
     assert matches
     assert matches[0].code == "A"

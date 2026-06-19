@@ -186,7 +186,7 @@ def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) -> None:
 
     loaded = Catalog.load(f"file://{tmp_path}/snapshot")
     assert loaded.default_field == "description"
-    hits, _ = loaded.search("alpha", limit=1)
+    hits = loaded.search("alpha", limit=1)
 
     assert hits[0].code == "B"
 

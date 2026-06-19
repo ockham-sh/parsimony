@@ -140,14 +140,13 @@ catalog.set_entities(
 
 catalog.build()  # materialize the indexes; required before searching
 
-matches, diagnostic = catalog.search("unemployment", limit=5)
-print(diagnostic.mode)  # "broad" — a plain-text query against default_field
+matches = catalog.search("unemployment", limit=5)
 for match in matches:
     assert isinstance(match, CatalogMatch)
     print(match.namespace, match.code, match.title, round(match.score, 3))
 ```
 
-`search` returns a tuple `(list[CatalogMatch], SearchDiagnostic)`. Each `CatalogMatch` carries the entity's `namespace`, `code`, `title`, `metadata`, and a final `score`. The `SearchDiagnostic.mode` tells you how the query was executed: `"broad"` for plain text, or `"structured"` when the query uses `FIELD: value` syntax.
+`search` returns a `list[CatalogMatch]`. Each `CatalogMatch` carries the entity's `namespace`, `code`, `title`, `metadata`, and a final `score`.
 
 !!! warning "Build before you search"
     Every mutation (`set_entities`, `set_index`, `delete_many`, …) marks the

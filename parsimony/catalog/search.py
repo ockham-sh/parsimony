@@ -295,7 +295,7 @@ def make_local_search_connector(
         except ValidationError as exc:
             raise InvalidParameterError(provider=provider, message=str(exc)) from exc
         catalog = _load_catalog(params)
-        matches, _ = catalog.search(params.query, limit=params.limit)
+        matches = catalog.search(params.query, limit=params.limit)
         if not matches:
             msg = empty_message or f"No catalog matches for query={params.query!r}."
             raise EmptyDataError(provider=provider, message=msg)

@@ -208,7 +208,7 @@ Its lifecycle is a fixed sequence:
 Catalog(name, indexes=…)        # construct
    └─ set_entities([Entity, …]) # load records   (marks the catalog dirty)
         └─ build()              # materialize the indexes
-             └─ search(q, limit=…)   -> ([CatalogMatch, …], SearchDiagnostic)
+             └─ search(q, limit=…)   -> [CatalogMatch, …]
                   └─ save(url)        # persist a snapshot (file:// or hf://)
 ```
 
@@ -221,8 +221,8 @@ catalog.set_entities([
     Entity(namespace="demo", code="beta", title="Beta series"),
 ])
 catalog.build()
-hits, diag = catalog.search("Alpha", limit=5)
-print(diag.mode, hits[0].code, round(hits[0].score, 3))  # -> broad alpha …
+hits = catalog.search("Alpha", limit=5)
+print(hits[0].code, round(hits[0].score, 3))  # -> alpha …
 ```
 
 !!! note "This catalog example needs the `catalog` extra"

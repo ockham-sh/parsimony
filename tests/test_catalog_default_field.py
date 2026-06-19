@@ -23,9 +23,8 @@ def test_catalog_default_field_none_resolves_title() -> None:
 
     cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={})])
     cat.build()
-    matches, diag = cat.search("Title", limit=5)
+    matches = cat.search("Title", limit=5)
     assert len(matches) >= 1
-    assert diag.mode == "broad"
 
 
 def test_explicit_default_field() -> None:
@@ -44,7 +43,7 @@ def test_broad_search_unavailable_without_title_index() -> None:
     cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={"code": "x"})])
     cat.build()
 
-    with pytest.raises(BroadSearchUnavailableError, match="structured"):
+    with pytest.raises(BroadSearchUnavailableError, match="field="):
         cat.search("plain text", limit=5)
 
 

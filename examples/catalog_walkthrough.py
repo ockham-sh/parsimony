@@ -320,16 +320,14 @@ cat.set_entities(entries)
 cat.build()
 
 # Broad search — uses default_field="title"
-hits, diag = cat.search("inflation rate", limit=5)
+hits = cat.search("inflation rate", limit=5)
 assert hits and hits[0].code == "INFL"
-print(f"broad 'inflation rate':   {[(h.code, round(h.score, 2)) for h in hits]}  mode={diag.mode!r}")
 
 # Structured query — DSL "field: value"
-hits2, diag2 = cat.search("freq: daily", limit=5)
+hits2 = cat.search("freq: daily", limit=5)
 assert {"YIELD", "FOREX"}.issubset({h.code for h in hits2})
-print(f"structured 'freq: daily': {[(h.code, round(h.score, 2)) for h in hits2]}  mode={diag2.mode!r}")
 
-hits3, _ = cat.search("code: GDP", limit=3)
+hits3 = cat.search("code: GDP", limit=3)
 assert hits3 and hits3[0].code == "GDP"
 print(f"structured 'code: GDP':   {[(h.code, round(h.score, 2)) for h in hits3]}")
 
@@ -360,7 +358,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
     # Load from disk — no re-build required
     cat_loaded = Catalog.load(snapshot_path)
-    hits_l, _ = cat_loaded.search("consumer credit", limit=3)
+    hits_l = cat_loaded.search("consumer credit", limit=3)
     assert any(h.code == "CREDIT" for h in hits_l)
     print(f"\nloaded catalog search 'consumer credit': {[h.code for h in hits_l]}")
 
@@ -439,12 +437,12 @@ cat2 = Catalog("acme2", default_field="title")
 cat2.set_entities(entities)
 cat2.build()
 
-hits_e, _ = cat2.search("payrolls", limit=3)
+hits_e = cat2.search("payrolls", limit=3)
 assert any(h.code == "NONFARM" for h in hits_e)
 print(f"\ncatalog search 'payrolls': {[h.code for h in hits_e]}")
 
 # Metadata indexes are auto-created because indexes=None
-hits_cat, _ = cat2.search("category: prices", limit=5)
+hits_cat = cat2.search("category: prices", limit=5)
 price_codes = sorted(h.code for h in hits_cat)
 assert set(price_codes) == {"CORE_CPI", "CORE_PCE"}
 print(f"structured 'category: prices': {price_codes}")

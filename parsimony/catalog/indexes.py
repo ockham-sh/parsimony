@@ -223,6 +223,9 @@ class BM25Index:
         if not self._tokens:
             self._bm25 = None
             return
+        if not any(self._tokens):
+            self._bm25 = None
+            return
         from rank_bm25 import BM25Okapi
 
         self._bm25 = BM25Okapi(self._tokens)
@@ -277,7 +280,7 @@ class BM25Index:
         values = [str(row["text"]) for row in rows]
         index._tokens = [list(row["tokens"]) for row in rows]
         index._postings = _ValuePostings.load_postings(path / POSTINGS_FILENAME, values)
-        if index._tokens:
+        if index._tokens and any(index._tokens):
             from rank_bm25 import BM25Okapi
 
             index._bm25 = BM25Okapi(index._tokens)
@@ -740,3 +743,65 @@ def _ranking_from_row_scores(
         if 0 <= row_id < len(entries)
     ]
     return ranking_from_scores(rows, limit=limit)
+
+
+def _value_texts_from_index(index: CatalogIndex) -> list[str]:
+    if isinstance(index, BM25Index):
+        return list(index._postings.values)
+    if isinstance(index, VectorIndex):
+        return list(index._postings.values)
+    if isinstance(index, HybridIndex):
+        reference = next(iter(index._components.values()))
+        if isinstance(reference, (BM25Index, VectorIndex)):
+            return list(reference._postings.values)
+    raise TypeError(f"search_values is not supported for index type {type(index)!r}")
+
+
+def _fused_value_scores(
+    index: CatalogIndex,
+    query: str,
+    *,
+    query_vectors: dict[tuple[str, int, bool], list[float]] | None,
+) -> dict[int, float]:
+    if isinstance(index, BM25Index):
+        return index._score_values(query)
+    if isinstance(index, VectorIndex):
+        return index._score_values(query, query_vectors=query_vectors)
+    if isinstance(index, HybridIndex):
+        value_rankings: dict[str, Ranking] = {}
+        per_kind_scores: dict[str, dict[int, float]] = {}
+        for kind, component in index._components.items():
+            if isinstance(component, BM25Index):
+                value_scores = component._score_values(query)
+            elif isinstance(component, VectorIndex):
+                value_scores = component._score_values(query, query_vectors=query_vectors)
+            else:
+                raise TypeError(f"Unsupported hybrid component: {type(component)!r}")
+            per_kind_scores[kind] = value_scores
+            rows = [("", str(vid), float(score)) for vid, score in value_scores.items() if score > 0.0]
+            value_rankings[kind] = ranking_from_scores(rows, limit=len(rows))
+        if not value_rankings:
+            return {}
+        positive_vids = {vid for scores in per_kind_scores.values() for vid, score in scores.items() if score > 0.0}
+        fused_values = index._fusion(concat(value_rankings), limit=max(len(positive_vids), 1))
+        return {
+            int(item.code): max(scores.get(int(item.code), 0.0) for scores in per_kind_scores.values())
+            for item in fused_values.items
+        }
+    raise TypeError(f"search_values is not supported for index type {type(index)!r}")
+
+
+def search_index_values(
+    index: CatalogIndex,
+    query: str,
+    *,
+    limit: int,
+    query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
+) -> list[tuple[str, float]]:
+    """Score distinct indexed values for *query* and return top-*limit* (text, score) pairs."""
+    value_scores = _fused_value_scores(index, query, query_vectors=query_vectors)
+    if not value_scores:
+        return []
+    texts = _value_texts_from_index(index)
+    ranked = sorted(value_scores.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    return [(texts[vid], float(score)) for vid, score in ranked if 0 <= vid < len(texts)]

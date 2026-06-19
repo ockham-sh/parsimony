@@ -121,16 +121,9 @@ A few things this shows:
 
 The catalog indexes [`Entity`](catalog/entities.md) records so you can search them. A
 catalog must be built before it can be searched. This example uses a keyword-only
-[`BM25Index`](catalog/indexes.md), which loads `rank-bm25` lazily on first build.
-
-!!! note "Needs the `catalog` extra"
-
-    The `BM25Index` shown here resolves its backend on `build()`, so install the
-    [`catalog` extra](getting-started/installation.md) first:
-
-    ```bash
-    pip install "parsimony-core[catalog]"
-    ```
+[`BM25Index`](catalog/indexes.md), which loads `rank-bm25` lazily on first build —
+that ships in the base install, so no extra is needed for keyword search. (The
+[`catalog` extra](getting-started/installation.md) is only for *vector* search.)
 
 ```python
 from parsimony import BM25Index, Catalog, Entity

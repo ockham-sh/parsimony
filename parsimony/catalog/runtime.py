@@ -91,12 +91,12 @@ def auto_catalog(df: pd.DataFrame, *, name: str = "output") -> Catalog:
     Entity's own field (the row position / joined row text), not the column.
     Duplicate column names are rejected — they cannot be distinct metadata keys.
 
-    Search is BM25 only. Semantic (vector) search is intentionally unavailable: a
-    runtime frame is fresh data with no prebuilt vector index, and the typical
-    caller (a sandboxed agent) has neither network nor an embedder. To build a
-    curated, persistable, optionally vector-backed catalog, use the
-    :class:`~parsimony.catalog.Catalog` lifecycle directly instead. Building the
-    BM25 index needs the ``catalog`` extra (``pip install "parsimony-core[catalog]"``).
+    Search is BM25 only — which works on a bare ``pip install parsimony-core`` (no
+    extra). Semantic (vector) search is intentionally unavailable: a runtime frame
+    is fresh data with no prebuilt vector index, and the typical caller (a sandboxed
+    agent) has neither network nor an embedder. To build a curated, persistable,
+    optionally vector-backed catalog, use the :class:`~parsimony.catalog.Catalog`
+    lifecycle directly instead.
     """
     if df.columns.duplicated().any():
         dupes = sorted({str(col) for col in df.columns[df.columns.duplicated(keep=False)]})

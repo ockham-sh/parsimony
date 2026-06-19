@@ -51,7 +51,7 @@ with an extra installed, `import parsimony` stays cheap (see
 
 | Extra | `pip install` | Adds | Enables |
 | --- | --- | --- | --- |
-| `catalog` | `parsimony-core[catalog]` | `faiss-cpu`, `rank-bm25`, `sentence-transformers`, `huggingface_hub` | The canonical catalog runtime: BM25 keyword search, FAISS vector search, the default sentence-transformers embedder, and `hf://` snapshot load/save |
+| `catalog` | `parsimony-core[catalog]` | `faiss-cpu`, `sentence-transformers`, `huggingface_hub` | The **vector** catalog runtime: FAISS vector search, the default sentence-transformers embedder, and `hf://` snapshot load/save. (BM25 keyword search — `rank-bm25` — is in the base install, no extra needed.) |
 | `standard-onnx` | `parsimony-core[standard-onnx]` | everything in `catalog`, plus `optimum[onnxruntime]`, `onnxruntime` | The int8-quantized [`OnnxEmbedder`](../catalog/embedders.md) — a faster CPU embedding path; a superset of `catalog` |
 | `litellm` | `parsimony-core[litellm]` | `litellm` | The hosted-API [`LiteLLMEmbeddingProvider`](../catalog/embedders.md) (OpenAI, Gemini, Cohere, Voyage, Bedrock) |
 | `all` | `parsimony-core[all]` | `catalog`, `standard-onnx`, `litellm` | Everything above in one shot |

@@ -1,6 +1,6 @@
 [project]
 name = "parsimony-core"
-version = "0.7.4"
+version = "0.7.5"
 description = "Connector framework for financial data — typed fetch and hybrid-search catalogs."
 authors = [{ name = "Ockham.sh", email = "team@ockham.sh" }]
 license = "Apache-2.0"
@@ -22,21 +22,27 @@ classifiers = [
 ]
 dependencies = [
     # Mandatory kernel footprint — validation, data carriers, async HTTP,
-    # cache directory resolution. Heavy catalog deps live under [catalog].
+    # cache directory resolution. The heavy *vector* catalog deps (FAISS,
+    # sentence-transformers, hf) live under [catalog]; BM25 does not.
     "pydantic>=2.11.1,<3",
     "pandas>=2.3.0,<3",
     "pyarrow>=23.0.1",
     "httpx>=0.28.1",
     "platformdirs>=4.0.0,<5",
+    # Lexical BM25 backend. Pure-Python on top of numpy (already pulled in by
+    # pandas), so it adds ~no weight — and it is a base requirement because
+    # `auto_catalog` and `BM25Index` are base, top-level features that must work
+    # on a bare `pip install parsimony-core` (e.g. in the sandboxed agent kernel).
+    "rank-bm25>=0.2",
 ]
 
 [project.optional-dependencies]
-# Canonical Catalog runtime: Parquet rows + FAISS vectors + BM25 keywords
-# with the sentence-transformers default embedder, plus the hf:// loader.
-# Stays optional so `pip install parsimony-core` never pulls torch.
+# Vector catalog runtime: FAISS vectors + the sentence-transformers default
+# embedder + the hf:// loader. BM25 keyword search is in the base install; this
+# extra adds the *semantic* half. Stays optional so `pip install parsimony-core`
+# never pulls torch.
 catalog = [
     "faiss-cpu>=1.8.0",
-    "rank-bm25>=0.2",
     "sentence-transformers>=3.0.0",
     "huggingface_hub>=0.25.0",
 ]

@@ -35,10 +35,11 @@ the snapshot. It is recorded in the manifest's `build.builder` field and is othe
     is marked dirty and `save()` raises `ValueError("Catalog entries or indexes changed — call
     catalog.build() before it can be saved")` until you re-run `catalog.build()`.
 
-!!! note "BM25 / vector backends are an optional extra"
-    The `BM25Index` example above builds and searches only with the `catalog` extra installed
-    (it pulls in `rank-bm25`). The snapshot machinery itself — atomic writes, the manifest, the
-    integrity digest, URL dispatch — is pure `parsimony-core`. See
+!!! note "Vector backends are an optional extra; BM25 is not"
+    The `BM25Index` example above builds and searches on a bare `parsimony-core` (`rank-bm25` is a
+    base dependency). Only the *vector* backends (`VectorIndex` / `HybridIndex`, via FAISS + an
+    embedder) need the `catalog` extra. The snapshot machinery itself — atomic writes, the
+    manifest, the integrity digest, URL dispatch — is pure `parsimony-core`. See
     [Installation](../getting-started/installation.md) for the extras matrix.
 
 ## Loading a catalog

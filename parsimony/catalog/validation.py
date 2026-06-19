@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Literal
 
@@ -56,10 +57,17 @@ def _resolve_rows_path(catalog_dir: Path, rows_filename: str) -> Path:
     rows_path = Path(rows_filename)
     if rows_path.is_absolute() or ".." in rows_path.parts:
         raise CatalogValidationError(f"backend.rows_filename must be a relative catalog path, got {rows_filename!r}")
-    resolved = (catalog_dir / rows_path).resolve()
-    if catalog_dir.resolve() not in resolved.parents and resolved != catalog_dir.resolve():
+    candidate = catalog_dir / rows_path
+    # Lexical containment check only — do NOT use Path.resolve() here. HF
+    # snapshot_download materializes every file as a symlink into the blob
+    # cache, so resolving the final component would point a legitimate in-dir
+    # file at `.../blobs/<hash>` and make it look like it escapes the catalog
+    # dir. The is_absolute()/".." guard above already blocks path traversal.
+    base = os.path.normpath(catalog_dir)
+    full = os.path.normpath(candidate)
+    if full != base and not full.startswith(base + os.sep):
         raise CatalogValidationError(f"backend.rows_filename escapes catalog directory: {rows_filename!r}")
-    return resolved
+    return candidate
 
 
 def _parquet_column_names(path: Path) -> set[str]:

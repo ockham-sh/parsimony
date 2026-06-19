@@ -26,12 +26,39 @@ def _write_memory_catalog(target: Path) -> None:
     catalog.save(f"file://{target}")
 
 
+def _mirror_as_hf_snapshot(real: Path, snap: Path) -> None:
+    """Mirror *real* into *snap* the way ``huggingface_hub.snapshot_download`` does:
+    real directories, but every file a symlink pointing OUTSIDE *snap* (into the
+    blob cache). Used to prove validation tolerates symlinked snapshot files.
+    """
+    for src in sorted(real.rglob("*")):
+        dst = snap / src.relative_to(real)
+        if src.is_dir():
+            dst.mkdir(parents=True, exist_ok=True)
+        else:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            dst.symlink_to(src)
+
+
 def test_validate_catalog_snapshot_memory_backend(tmp_path: Path) -> None:
     bundle = tmp_path / "bundle"
     _write_memory_catalog(bundle)
     meta = validate_catalog_snapshot(bundle)
     assert meta.name == "demo"
     assert meta.build.manifest_contract_sha256
+
+
+def test_validate_catalog_snapshot_accepts_hf_symlinked_files(tmp_path: Path) -> None:
+    """Regression: snapshot_download stores files as symlinks into a blob cache,
+    so a legitimate rows file resolves outside the snapshot dir. Validation must
+    not reject it as escaping the catalog directory."""
+    real = tmp_path / "blobs"
+    _write_memory_catalog(real)
+    snap = tmp_path / "snapshot"
+    _mirror_as_hf_snapshot(real, snap)
+    assert (snap / "entries.parquet").is_symlink()
+    meta = validate_catalog_snapshot(snap)
+    assert meta.name == "demo"
 
 
 def test_unknown_backend_kind_rejected(tmp_path: Path) -> None:

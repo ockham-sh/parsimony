@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-06-19
+
 ### Added
 
 - **`auto_catalog(df)`** — a top-level convenience that wraps a DataFrame in an
@@ -15,6 +17,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   rows in data you already hold — not a way to build curated catalogs; for those, use the
   `Catalog` lifecycle with `entities_from_dataframe`. BM25 only (needs the `catalog` extra); no
   vector mode, since a runtime frame ships no prebuilt vectors.
+- **Parquet-backed catalogs for large datasets.** `Catalog.attach_parquet_rows(path, config)` binds
+  a flat parquet file as a lazy row backend (`ParquetRowBackend`): the index entities are the
+  scoring surface while the actual rows stream on demand with filter pushdown. `CatalogBackendConfig`
+  (memory|parquet, code/title columns, field links) captures the backend shape and is persisted in
+  the snapshot manifest.
+- **Release-ready snapshot validation.** Snapshots carry a `content_sha256` integrity digest plus a
+  `manifest_contract_sha256`, both verified on load; validation tolerates Hugging Face
+  `snapshot_download` symlinked files.
+- **Richer search.** `Catalog.search()` adds `field=` (single-field soft scoring), `filter=` (exact
+  AND constraints) and `top_k_values=`, and accepts a query-less filter-only search.
+  `Catalog.search_values()` returns distinct indexed values as `CatalogValueMatch`.
+
+### Changed
+
+- **BREAKING — `Catalog.search()` returns `list[CatalogMatch]`** instead of
+  `tuple[list[CatalogMatch], SearchDiagnostic]`. Drop the diagnostic from the unpack:
+  `matches = cat.search(...)`.
+
+### Removed
+
+- **BREAKING — `SearchDiagnostic`.** `search()` no longer returns per-query diagnostics.
+- **BREAKING — `Catalog.load_entities_only`.** Load a full snapshot with `Catalog.load()`.
 
 ## [0.7.3] - 2026-06-18
 

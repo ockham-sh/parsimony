@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any, Literal
 
 import pyarrow.parquet as pq
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from parsimony.entity import Entity
 
@@ -33,10 +34,29 @@ class BuildInfo(BaseModel):
         default="",
         description="Integrity digest of all files in the catalog except meta.json",
     )
+    manifest_contract_sha256: str = Field(
+        default="",
+        description="Digest of normalized manifest contract fields (backend semantics, indexes, extensions).",
+    )
+
+
+class BackendMeta(BaseModel):
+    """Row storage configuration for a catalog snapshot."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["memory", "parquet"] = "memory"
+    rows_filename: str = ENTRIES_FILENAME
+    namespace: str | None = None
+    code_column: str = "code"
+    title_column: str = "title"
+    field_links: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogMeta(BaseModel):
     """Catalog snapshot manifest."""
+
+    model_config = ConfigDict(extra="forbid")
 
     schema_version: int = 1
     name: str
@@ -44,7 +64,12 @@ class CatalogMeta(BaseModel):
     entry_count: int = Field(ge=0)
     index_fields: dict[str, str] = Field(default_factory=dict)
     default_field: str | None = None
+    backend: BackendMeta = Field(default_factory=BackendMeta)
     build: BuildInfo = Field(default_factory=BuildInfo)
+    sdmx: dict[str, Any] | None = Field(
+        default=None,
+        description="Optional provider extension block; must not alter backend semantics.",
+    )
 
 
 def read_meta(path: str | Path) -> CatalogMeta:
@@ -53,18 +78,26 @@ def read_meta(path: str | Path) -> CatalogMeta:
     return CatalogMeta.model_validate_json((Path(path) / META_FILENAME).read_text())
 
 
+# Hub dataset repos carry README / .gitattributes beside snapshot payloads; exclude
+# them from the integrity digest so Catalog.load("hf://…") matches local saves.
+_SNAPSHOT_NON_PAYLOAD_NAMES = frozenset({"meta.json", "README.md", ".gitattributes"})
+
+
 def _compute_content_sha256(directory: Path) -> str:
     import hashlib
 
     lines: list[str] = []
     for p in sorted(directory.rglob("*")):
-        if p.is_file() and p.name != "meta.json":
-            relpath = p.relative_to(directory).as_posix()
-            file_hash = hashlib.sha256()
-            with open(p, "rb") as f:
-                while chunk := f.read(65536):
-                    file_hash.update(chunk)
-            lines.append(f"{relpath}:{file_hash.hexdigest()}\n")
+        if not p.is_file():
+            continue
+        relpath = p.relative_to(directory).as_posix()
+        if p.name in _SNAPSHOT_NON_PAYLOAD_NAMES or relpath.startswith(".cache/"):
+            continue
+        file_hash = hashlib.sha256()
+        with open(p, "rb") as f:
+            while chunk := f.read(65536):
+                file_hash.update(chunk)
+        lines.append(f"{relpath}:{file_hash.hexdigest()}\n")
 
     lines.sort()
     concatenated = "".join(lines).encode("utf-8")

@@ -74,7 +74,7 @@ def test_metadata_is_searchable_only_when_index_targets_it() -> None:
     title_only = Catalog(name="test_ns")
     title_only.set_entities(entries)
     title_only.build()
-    title_hits, _ = title_only.search("renewable wind energy", limit=2)
+    title_hits = title_only.search("renewable wind energy", limit=2)
     assert not title_hits or title_hits[0].code != "A.1"
 
     description_indexed = Catalog(
@@ -84,6 +84,6 @@ def test_metadata_is_searchable_only_when_index_targets_it() -> None:
     )
     description_indexed.set_entities(entries)
     description_indexed.build()
-    hits, _ = description_indexed.search("renewable wind energy", limit=2)
+    hits = description_indexed.search("renewable wind energy", limit=2)
     assert hits[0].code == "A.1"
     assert hits[0].score > 0

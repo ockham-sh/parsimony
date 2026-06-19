@@ -155,7 +155,6 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 | `DisMaxIndex` | class — DisMax index over several entity fields under one surface name |
 | `StructuredQuery` | class — parsed structured query (`FIELD: v1, v2 && ...`) |
 | `parse_query` | function — parse a query string into broad/structured form |
-| `SearchDiagnostic` | class — `search()` diagnostics (carries `.mode`) |
 | `UnknownIndexedFieldError` | exception — structured clause names an unindexed field |
 | `BroadSearchUnavailableError` | exception — broad search with no default-field index |
 | `BroadSearchConfigError` | exception — broad-search configuration error |
@@ -170,7 +169,6 @@ from parsimony.catalog import (
     DisMaxIndex,
     StructuredQuery,
     parse_query,
-    SearchDiagnostic,
     UnknownIndexedFieldError,
     BroadSearchUnavailableError,
     BroadSearchConfigError,

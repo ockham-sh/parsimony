@@ -26,7 +26,7 @@ def test_default_policy_indexes_metadata_at_build() -> None:
     cat.build()
 
     assert set(cat._indexed_fields()) == {"code", "title", "region", "sector"}
-    res, _ = cat.search("sector: tech", limit=5)
+    res = cat.search("sector: tech", limit=5)
     assert {m.code for m in res} == {"A"}
 
 

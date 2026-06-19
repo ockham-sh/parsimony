@@ -302,7 +302,7 @@ entities = [
 catalog = Catalog("test", indexes={"title": VectorIndex(embedder=emb)})
 catalog.set_entities(entities)
 catalog.build()
-hits, _ = catalog.search("euro area 10Y bond yield", limit=1)
+hits = catalog.search("euro area 10Y bond yield", limit=1)
 print(hits[0].code)   # YC_10Y
 ```
 

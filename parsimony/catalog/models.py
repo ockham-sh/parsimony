@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -10,13 +10,14 @@ from parsimony.entity import Entity, field_text, field_values, normalize_entity_
 from parsimony.errors import ConnectorError, InvalidParameterError
 
 
-class SearchDiagnostic(BaseModel):
-    """Metadata about how a catalog query was executed."""
+class CatalogValueMatch(BaseModel):
+    """One distinct indexed value from :meth:`Catalog.search_values`."""
 
     model_config = ConfigDict(extra="forbid")
 
-    mode: Literal["broad", "structured"]
-    notes: list[str] = Field(default_factory=list)
+    value: str
+    score: float
+    linked_value: str | None = None
 
 
 class UnknownIndexedFieldError(InvalidParameterError):
@@ -86,7 +87,7 @@ __all__ = [
     "BroadSearchConfigError",
     "BroadSearchUnavailableError",
     "CatalogMatch",
-    "SearchDiagnostic",
+    "CatalogValueMatch",
     "UnknownIndexedFieldError",
     "catalog_match_from_entity",
     "field_text",

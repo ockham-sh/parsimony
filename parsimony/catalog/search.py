@@ -117,48 +117,6 @@ def load_or_build_catalog(
     return catalog
 
 
-def load_entities_only_or_build(
-    url: str,
-    *,
-    cache_path: Path | str,
-    build: CatalogBuilder | None = None,
-) -> Catalog:
-    """Like :func:`load_or_build_catalog` but loads entities only (no indexes/SHA).
-
-    For listing/paging a catalog by hand, the vector index is dead weight — this
-    reads just the entries parquet. When the snapshot is missing it falls back to
-    the lazy cache, then to ``build`` (which yields a full catalog; its
-    ``entities`` are used the same way).
-    """
-    cache = Path(cache_path)
-    load_exc: Exception | None = None
-    try:
-        return Catalog.load_entities_only(url)
-    except ImportError as exc:
-        _raise_catalog_dependency_error(exc, provider="catalog")
-    except Exception as exc:
-        if not _catalog_missing(exc):
-            raise
-        load_exc = exc
-
-    lazy_meta = cache / "meta.json"
-    if lazy_meta.is_file():
-        try:
-            return Catalog.load_entities_only(f"file://{cache}")
-        except Exception as lazy_exc:
-            logger.warning("Lazy catalog at %s unreadable (%s); rebuilding", cache, lazy_exc)
-
-    if build is None:
-        if load_exc is None:
-            raise CatalogNotFoundError(f"Catalog bundle not present at {url}")
-        raise _to_catalog_not_found(load_exc, url=url) from load_exc
-
-    logger.info("Building catalog for %s into %s", url, cache)
-    catalog = build()
-    catalog.save(f"file://{cache}", builder="lazy")
-    return catalog
-
-
 class CatalogLRU:
     """Bounded in-process cache of hydrated :class:`Catalog` instances keyed by URL."""
 
@@ -175,30 +133,14 @@ class CatalogLRU:
         *,
         cache_path: Path | str | None = None,
         build: CatalogBuilder | None = None,
-        entities_only: bool = False,
     ) -> Catalog:
-        # An entities-only catalog cannot ``search``, so it must never be handed
-        # back to a search caller — key it separately from the full load of the
-        # same URL so the two coexist in the cache without poisoning each other.
-        key = f"{url}#entities-only" if entities_only else url
+        key = url
         with self._lock:
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
 
-            if entities_only:
-                if cache_path is not None:
-                    catalog = load_entities_only_or_build(url, cache_path=cache_path, build=build)
-                else:
-                    try:
-                        catalog = Catalog.load_entities_only(url)
-                    except ImportError as exc:
-                        _raise_catalog_dependency_error(exc, provider="catalog")
-                    except Exception as exc:
-                        if _catalog_missing(exc):
-                            raise _to_catalog_not_found(exc, url=url) from exc
-                        raise
-            elif build is not None and cache_path is not None:
+            if build is not None and cache_path is not None:
                 catalog = load_or_build_catalog(url, cache_path=cache_path, build=build)
             else:
                 try:
@@ -295,7 +237,7 @@ def make_local_search_connector(
         except ValidationError as exc:
             raise InvalidParameterError(provider=provider, message=str(exc)) from exc
         catalog = _load_catalog(params)
-        matches, _ = catalog.search(params.query, limit=params.limit)
+        matches = catalog.search(params.query, limit=params.limit)
         if not matches:
             msg = empty_message or f"No catalog matches for query={params.query!r}."
             raise EmptyDataError(provider=provider, message=msg)

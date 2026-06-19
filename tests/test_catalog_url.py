@@ -186,7 +186,7 @@ def test_file_roundtrip_preserves_catalog_default_field(tmp_path: Path) -> None:
 
     loaded = Catalog.load(f"file://{tmp_path}/snapshot")
     assert loaded.default_field == "description"
-    hits, _ = loaded.search("alpha", limit=1)
+    hits = loaded.search("alpha", limit=1)
 
     assert hits[0].code == "B"
 
@@ -206,11 +206,10 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
     ``_load_hf`` with ``root='org/repo'`` and ``sub='bundle'``."""
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None, entities_only: bool = False) -> Any:
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
         captured["root"] = root
         captured["sub"] = sub
         captured["revision"] = revision
-        captured["entities_only"] = entities_only
         return object()  # Catalog isn't actually constructed here.
 
     from parsimony.catalog import catalog as catalog_module
@@ -219,17 +218,16 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
 
     Catalog.load("hf://org/repo/bundle")
 
-    assert captured == {"root": "org/repo", "sub": "bundle", "revision": None, "entities_only": False}
+    assert captured == {"root": "org/repo", "sub": "bundle", "revision": None}
 
 
 def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None, entities_only: bool = False) -> Any:
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
         captured["root"] = root
         captured["sub"] = sub
         captured["revision"] = revision
-        captured["entities_only"] = entities_only
         return object()
 
     from parsimony.catalog import catalog as catalog_module
@@ -238,7 +236,7 @@ def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
 
     Catalog.load("hf://org/repo")
 
-    assert captured == {"root": "org/repo", "sub": "", "revision": None, "entities_only": False}
+    assert captured == {"root": "org/repo", "sub": "", "revision": None}
 
 
 def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -246,7 +244,7 @@ def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) 
     revision so the remote load is reproducible and tamper-resistant."""
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None, entities_only: bool = False) -> Any:
+    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
         captured["root"] = root
         captured["sub"] = sub
         captured["revision"] = revision

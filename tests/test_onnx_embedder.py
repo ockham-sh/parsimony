@@ -109,7 +109,7 @@ def test_onnx_catalog_end_to_end(tmp_path: Path) -> None:
     cat.set_entities(entries)
     cat.build()
 
-    hits, _ = cat.search("euro area 10Y bond yield", 1)
+    hits = cat.search("euro area 10Y bond yield", 1)
     assert hits
     assert hits[0].code == "YC_10Y"
 

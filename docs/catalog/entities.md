@@ -227,6 +227,14 @@ rows from a frame: the low-level `entities_from_dataframe`, and the higher-level
 `OutputConfig.build_entities`, which an [enumerator](../connectors/loaders-and-enumerators.md)
 uses to feed a catalog.
 
+!!! tip "Just want to search a frame you already hold?"
+    The helpers below build a *curated* catalog — explicit column roles, key grouping,
+    metadata-consistency checks, ready to persist. If instead you have a DataFrame in
+    hand and only want to find rows in it, reach for
+    [`auto_catalog(df)`](search.md#ad-hoc-runtime-catalogs): every row becomes an
+    entity, every column becomes searchable, and you get back an already-built catalog.
+    It is a convenience over the runtime path, not the way catalogs are built.
+
 ### `entities_from_dataframe`
 
 `entities_from_dataframe` (in `parsimony.entity`) takes explicit column roles and

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         Entity,
         HybridIndex,
         VectorIndex,
+        auto_catalog,
     )
     from parsimony.ranking import (
         RRF,
@@ -99,6 +100,7 @@ __all__ = [
     "VectorIndex",
     "HybridIndex",
     "CatalogIndex",
+    "auto_catalog",
     "InMemoryDataStore",
     "LoadResult",
     "RRF",
@@ -120,6 +122,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "CatalogMatch": ("parsimony.catalog", "CatalogMatch"),
     "HybridIndex": ("parsimony.catalog", "HybridIndex"),
     "VectorIndex": ("parsimony.catalog", "VectorIndex"),
+    "auto_catalog": ("parsimony.catalog", "auto_catalog"),
     "InMemoryDataStore": ("parsimony.stores", "InMemoryDataStore"),
     "LoadResult": ("parsimony.stores", "LoadResult"),
     "RRF": ("parsimony.ranking", "RRF"),

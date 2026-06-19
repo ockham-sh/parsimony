@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`auto_catalog(df)`** — a top-level convenience that wraps a DataFrame in an
+  already-built, BM25-searchable `Catalog` in memory: one entity per row (`code` is the row
+  position, so `df.iloc[int(match.code)]` recovers the row), the joined cell text as `title` for
+  broad search, and every column as metadata for structured `column: value` search. For finding
+  rows in data you already hold — not a way to build curated catalogs; for those, use the
+  `Catalog` lifecycle with `entities_from_dataframe`. BM25 only (needs the `catalog` extra); no
+  vector mode, since a runtime frame ships no prebuilt vectors.
+
 ## [0.7.3] - 2026-06-18
 
 ### Changed

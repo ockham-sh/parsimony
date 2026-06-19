@@ -13,6 +13,7 @@ from parsimony.catalog.models import (
     normalize_entity_code,
 )
 from parsimony.catalog.query import StructuredQuery, parse_query
+from parsimony.catalog.runtime import auto_catalog
 from parsimony.entity import Entity, code_token, entity_key, normalize_namespace
 
 __all__ = [
@@ -36,4 +37,5 @@ __all__ = [
     "normalize_entity_code",
     "normalize_namespace",
     "parse_query",
+    "auto_catalog",
 ]

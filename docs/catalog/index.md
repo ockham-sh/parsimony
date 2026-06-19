@@ -16,9 +16,9 @@ from parsimony.catalog import BM25Index, Catalog, Entity
 
 !!! note "Optional dependencies"
     The catalog runtime is lazy. `import parsimony` and constructing a `Catalog` pull in no
-    heavy dependencies. The actual index backends do: `BM25Index` needs `rank-bm25`, and the
-    vector/hybrid backends need FAISS and an embedder. Install the canonical catalog stack with
-    the `catalog` extra: `pip install "parsimony-core[catalog]"`. See
+    heavy dependencies. `BM25Index` keyword search works on the base install (`rank-bm25` is a
+    base dependency). Only the vector/hybrid backends need the heavy stack — FAISS and an
+    embedder — via the `catalog` extra: `pip install "parsimony-core[catalog]"`. See
     [Installation](../getting-started/installation.md).
 
 ## The lifecycle
@@ -65,8 +65,8 @@ error. Re-run `catalog.build()` after any mutation.
 ## A minimal catalog
 
 This example constructs a catalog with a single BM25 index over the `title` field, loads two
-entities, builds, and runs a plain-text (broad) search. Building a `BM25Index` requires the
-`catalog` extra (`rank-bm25`), so install it first: `pip install "parsimony-core[catalog]"`.
+entities, builds, and runs a plain-text (broad) search. `BM25Index` (`rank-bm25`) is in the base
+install, so a plain `pip install parsimony-core` is enough — no extra needed.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity

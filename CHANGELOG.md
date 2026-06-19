@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-06-19
+
+### Fixed
+
+- **BM25 search now works on a bare `pip install parsimony-core`.** `rank-bm25` moved from the
+  `[catalog]` extra to the base dependencies — it is pure-Python on top of numpy (already a base
+  dep), and the base, top-level `auto_catalog` / `BM25Index` features must not require an extra.
+  They previously failed with `ModuleNotFoundError: No module named 'rank_bm25'` anywhere
+  `parsimony-core` was installed without `[catalog]` (e.g. the sandboxed agent kernel). The
+  `[catalog]` extra now covers only the vector stack (FAISS, sentence-transformers,
+  huggingface_hub).
+
 ## [0.7.4] - 2026-06-19
 
 ### Added

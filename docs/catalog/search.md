@@ -297,6 +297,33 @@ that index. A broad search over a `description` index therefore returns only ent
 actually have a non-empty description, and an entirely empty index builds fine and returns
 `[]`. See [Entities](entities.md) for the exact extraction rules.
 
+## Ad-hoc runtime catalogs
+
+Everything above is the lifecycle for building a catalog: construct, load entities, build,
+search, save. For the opposite case — a DataFrame you produced this moment and just want to
+find rows in — `auto_catalog` (a top-level `parsimony` import) collapses the whole
+lifecycle into one call and hands back an *already-built* catalog:
+
+```python
+from parsimony import auto_catalog
+
+cat = auto_catalog(df)                    # one Entity per row, every column indexed
+matches = cat.search("unemployment", limit=20)  # already built — no build() needed
+row = df.iloc[int(matches[0].code)]             # code is the row position
+```
+
+Each row becomes one entity: `code` is the row's positional index (so
+`df.iloc[int(match.code)]` recovers the full row), `title` is the joined non-null cell text
+(broad search), and every column is stored as metadata (structured `column: value` search).
+Indexing is BM25 only under the [default index policy](index.md#index-policy-default-versus-explicit) —
+there is no vector mode, because a runtime frame ships no prebuilt vectors and the typical
+caller (a sandboxed agent) has no embedder.
+
+This is a convenience for searching data you already hold, **not** the way catalogs are built.
+When you need column roles, key grouping, a vector index, or a persistable snapshot, use the
+`Catalog` lifecycle directly with [`entities_from_dataframe`](entities.md#entities_from_dataframe).
+Building the BM25 index needs the `catalog` extra (`pip install "parsimony-core[catalog]"`).
+
 ## See also
 
 - [The Catalog](index.md) — the catalog lifecycle at a glance

@@ -26,7 +26,7 @@ kernel footprint for validation, data carriers, HTTP, and cache-directory resolu
 | Dependency | Role |
 | --- | --- |
 | `pydantic` (>=2.11.1, <3) | Schema validation for entities, output configs, and errors |
-| `pandas` (>=2.3.0, <3) | The DataFrame/Series carried by a `TabularResult` |
+| `pandas` (>=2.3.0, <3) | The DataFrame/Series carried by a tabular `Result` |
 | `pyarrow` (>=23.0.1) | Arrow / Parquet round-tripping of tabular results and snapshots |
 | `httpx` (>=0.28.1) | The HTTP layer connector authors build on |
 | `platformdirs` (>=4.0.0, <5) | Resolves the on-disk [cache](../caching.md) root |

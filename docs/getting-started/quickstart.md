@@ -1,6 +1,6 @@
 # Quickstart
 
-This page walks you through three hands-on flows with `parsimony-core` 0.7.0 (Python `>=3.11`): define and call your own [connector](../connectors/index.md), compose two connectors into a [collection](../connectors/calling-binding-composing.md), and build a tiny searchable [Catalog](../catalog/index.md). The first two flows run with only the base install; the catalog flow needs one optional extra, which is called out below.
+This page walks you through three hands-on flows with `parsimony-core` (Python `>=3.11`): define and call your own [connector](../connectors/index.md), compose two connectors into a [collection](../connectors/calling-binding-composing.md), and build a tiny searchable [Catalog](../catalog/index.md). The first two flows run with only the base install; the catalog flow needs one optional extra, which is called out below.
 
 If you have not installed the package yet, start with [Installation](installation.md):
 
@@ -17,14 +17,14 @@ pip install parsimony-core
 
 ## 1. Define and call a connector
 
-A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result` / `TabularResult`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves.
+A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves. When `Result.data` is a DataFrame the result is *tabular* (`result.is_tabular`).
 
 The `@connector` decorator turns a plain `def` into a frozen `Connector`. When you attach an [`OutputConfig`](../connectors/results.md), the framework applies the declared schema to the returned DataFrame — renaming, coercing dtypes, and tagging each column with a role.
 
 ```python
 import pandas as pd
 
-from parsimony import Column, ColumnRole, OutputConfig, TabularResult, connector
+from parsimony import Column, ColumnRole, OutputConfig, Result, connector
 
 PRICE_OUTPUT = OutputConfig(
     columns=[
@@ -48,11 +48,12 @@ def daily_close(symbol: str) -> pd.DataFrame:
 
 result = daily_close(symbol="ACME")
 
-assert isinstance(result, TabularResult)
-print(result.df)                       # the schema-applied DataFrame
-print(result.df["close"].dtype)        # float64 — coerced from strings by dtype="numeric"
-print(result.provenance.source)        # "daily_close" (defaults to the function name)
-print(result.provenance.params)        # {"symbol": "ACME"}
+assert isinstance(result, Result)
+assert result.is_tabular                   # data is a DataFrame
+print(result.data)                         # the schema-applied DataFrame
+print(result.data["close"].dtype)          # float64 — coerced from strings by dtype="numeric"
+print(result.provenance.source)            # "daily_close" (defaults to the function name)
+print(result.provenance.params)            # {"symbol": "ACME"}
 print([c.name for c in result.data_columns])  # ["close"]
 ```
 
@@ -64,7 +65,7 @@ A few things this example demonstrates, all enforced by the framework:
 - **`dtype="numeric"` coerced the string column to `float64`.** The `date` column declared `dtype="date"` and was normalized to midnight timestamps.
 
 !!! warning "Connectors must return raw data"
-    Returning a `Result`, a `TabularResult`, or a `(data, properties)` tuple
+    Returning a `Result` or a `(data, properties)` tuple
     raises `TypeError`. The framework builds the output envelope; your job is
     to return the data. A schema or coercion failure during wrapping surfaces as
     a typed [`ParseError`](../connectors/errors.md), not a bare `ValueError`.
@@ -106,7 +107,7 @@ print(list(wired["fetch_series"].exposed_signature.parameters))  # ["series_id"]
 
 # Invoke by name.
 titles = wired["search_titles"](query="GDP")
-print(len(titles.df))  # 2
+print(len(titles.data))  # 2
 
 series = wired["fetch_series"](series_id="UNRATE")
 print(series.provenance.params)  # {"series_id": "UNRATE"} — api_key is stripped

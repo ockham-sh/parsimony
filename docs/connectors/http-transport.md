@@ -18,13 +18,20 @@ from parsimony.transport import (
     DEFAULT_HTTP_RETRY_POLICY,
     map_http_error,
     map_timeout_error,
+    map_transport_error,
     parse_retry_after,
     pooled_client,
     redact_url,
     redact_params_for_logging,
     redact_sensitive_text,
 )
-from parsimony.transport.helpers import fetch_json, make_http_client, make_api_key_client
+from parsimony.transport.helpers import (
+    fetch_json,
+    fetch_text,
+    fetch_csv,
+    make_http_client,
+    make_api_key_client,
+)
 ```
 
 The layer is built on [`httpx`](https://www.python-httpx.org/), a base dependency
@@ -149,7 +156,7 @@ class HttpRetryPolicy:
     max_delay_s: float = 8.0
     jitter_s: float = 0.1
     retryable_methods: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})
-    retryable_statuses: frozenset[int] = frozenset({429, 500, 502, 503, 504})
+    retryable_statuses: frozenset[int] = frozenset({500, 502, 503, 504})
 ```
 
 | Field | Default | Meaning |
@@ -159,7 +166,7 @@ class HttpRetryPolicy:
 | `max_delay_s` | `8.0` | Hard cap on any single delay. Must be `> 0`. |
 | `jitter_s` | `0.1` | Upper bound of the uniform random jitter added per delay. |
 | `retryable_methods` | `{GET, HEAD, OPTIONS}` | Only these idempotent methods are retried. |
-| `retryable_statuses` | `{429, 500, 502, 503, 504}` | Response statuses that trigger a retry. |
+| `retryable_statuses` | `{500, 502, 503, 504}` | Response statuses that trigger a retry. |
 
 `DEFAULT_HTTP_RETRY_POLICY` is the module-level validated instance with exactly
 these defaults; it is the default value of `HttpClient(retry_policy=...)`.
@@ -176,9 +183,10 @@ The retry rules:
   re-raises immediately.
 - **Backoff.** For a normal retryable status the delay is
   `base_delay_s * 2 ** (attempt - 1)` plus uniform jitter in `[0, jitter_s)`,
-  capped at `max_delay_s`. For a **429**, the delay instead comes from the
-  server's `Retry-After` via [`parse_retry_after`](#parse_retry_after), still
-  clamped to `max_delay_s`.
+  capped at `max_delay_s`. When a **429** is itself retried — only if you add
+  `429` to `retryable_statuses`, which the default set does **not** — the delay
+  instead comes from the server's `Retry-After` via
+  [`parse_retry_after`](#parse_retry_after), still clamped to `max_delay_s`.
 - **Disabling.** `retry_policy=None` collapses `max_attempts` to 1 and turns off
   both exception and status retries.
 
@@ -206,26 +214,39 @@ assert policy.backoff_seconds(1, retry_after=2.0) == 2.0
 ## Mapping errors
 
 `request()` returns the raw response and surfaces raw `httpx` exceptions on
-transport failure; it is your job to turn those into typed errors. Three free
+transport failure; it is your job to turn those into typed errors. The mapper
 functions translate them into the typed `parsimony.errors` hierarchy so the rest
 of your connector — and any agent consuming it — sees consistent, class-aware
-errors. (The [`fetch_json`](#fetch_json) helper applies these mappers for you, so
-it raises the typed errors directly rather than raw `httpx` exceptions.) Each
+errors: `map_http_error` for a non-2xx status, `map_timeout_error` for a
+timeout, and `map_transport_error` for any other transport failure (connection
+refused, DNS failure, protocol error). (The [`fetch_json`](#fetch_json) helper —
+and its `fetch_text` / `fetch_csv` siblings — apply all three mappers for you, so
+they raise the typed errors directly rather than raw `httpx` exceptions.) Each
 function is `NoReturn` (it always raises) and chains the original via
 `raise ... from exc`, so the traceback and `__cause__` are preserved.
 
 ### `map_http_error`
 
 ```python
-def map_http_error(exc: httpx.HTTPStatusError, *, provider: str, op_name: str) -> NoReturn: ...
+def map_http_error(
+    exc: httpx.HTTPStatusError,
+    *,
+    provider: str,
+    op_name: str,
+    env_var: str | None = None,
+) -> NoReturn: ...
 ```
 
 | Upstream status | Raised error |
 |---|---|
-| 401, 403 | `UnauthorizedError` |
+| 401, 403 | `UnauthorizedError` (carries `env_var` when supplied) |
 | 402 | `PaymentRequiredError` |
 | 429 | `RateLimitError` with `retry_after` from `parse_retry_after` |
 | any other | `ProviderError` carrying `status_code` |
+
+The optional `env_var=` names the environment variable a missing credential
+would come from; it is threaded into the `UnauthorizedError` so the agent-facing
+message can name it.
 
 ```python
 import httpx
@@ -274,6 +295,32 @@ except ProviderError as err:
     assert err.status_code == 408
 ```
 
+### `map_transport_error`
+
+```python
+def map_transport_error(exc: httpx.TransportError, *, provider: str, op_name: str) -> NoReturn: ...
+```
+
+The catch-all for a transport failure that never produced a response — a
+connection refused, DNS failure, read/write error, or protocol error (everything
+under `httpx.TransportError` that is **not** a timeout). It raises `ProviderError`
+with `status_code=503` ("the provider could not be reached" — transient, treat
+like a 5xx). Only the exception *type name* is embedded in the message, never its
+string, which can carry the request URL and its secrets. Because
+`httpx.TimeoutException` is itself a `TransportError` subclass, catch it (with
+`map_timeout_error`) **before** falling through to this handler.
+
+```python
+import httpx
+from parsimony.errors import ProviderError
+from parsimony.transport import map_transport_error
+
+try:
+    map_transport_error(httpx.ConnectError("refused"), provider="example", op_name="get_data")
+except ProviderError as err:
+    assert err.status_code == 503
+```
+
 ### `parse_retry_after`
 
 ```python
@@ -320,7 +367,7 @@ for you to use when you build messages or log statements yourself.
 A parameter is "sensitive" when its name (lowercased, with hyphens normalized to
 underscores) matches the built-in set: `api_key`, `apikey`, `api_token`, `token`,
 `access_token`, `refresh_token`, `id_token`, `client_secret`, `secret`,
-`password`, `authorization`.
+`password`, `authorization`, `registrationkey`.
 
 ```python
 from parsimony.transport import redact_url, redact_params_for_logging, redact_sensitive_text
@@ -438,6 +485,7 @@ def fetch_json(
     params: dict[str, Any] | None = None,
     provider: str,
     op_name: str,
+    env_var: str | None = None,
 ) -> Any: ...
 ```
 
@@ -447,9 +495,11 @@ def fetch_json(
    "omit this query param" rather than "send `None`");
 2. issues `GET /{path}` through `http.request`;
 3. calls `response.raise_for_status()`;
-4. maps `httpx.HTTPStatusError` via `map_http_error` and `httpx.TimeoutException`
-   via `map_timeout_error` — turning transport failures into typed errors;
-5. returns `response.json()`.
+4. maps `httpx.HTTPStatusError` via `map_http_error`, `httpx.TimeoutException`
+   via `map_timeout_error`, and any other `httpx.TransportError` via
+   `map_transport_error` — turning every transport failure into a typed error;
+5. returns `response.json()`, or raises a typed
+   [`ParseError`](errors.md) if the 200 body is not valid JSON.
 
 ```python
 import httpx
@@ -479,10 +529,18 @@ result = fetch_json(
 print(result)  # {'series_id': 'UNRATE', 'value': 3.9}
 ```
 
+`fetch_json` has two siblings on the same submodule that share its request path
+and error mapping but parse the body differently: `fetch_text` returns the raw
+response body as a `str`, and `fetch_csv` parses it into a `pandas.DataFrame`
+(extra keyword arguments pass through to `pandas.read_csv`, an unparseable body
+raises [`ParseError`](errors.md), and a body with no rows raises
+[`EmptyDataError`](errors.md)). Reach for `fetch_csv` whenever a provider serves
+CSV instead of JSON.
+
 In a real provider plugin you would build the client once with
 `make_api_key_client`, pass the live API key, and call `fetch_json` from inside
 your `@connector` body — letting the framework wrap the returned data in a
-[`Result`/`TabularResult`](results.md) and surfacing any transport failure as a
+[`Result`](results.md) and surfacing any transport failure as a
 [typed error](errors.md).
 
 ## Logging
@@ -500,4 +558,4 @@ directly — all tuning is per `HttpClient` / `HttpRetryPolicy` instance.
 - [Errors](errors.md) — the typed exception hierarchy these mappers raise, and the `message=` override caveat.
 - [Authoring a provider plugin](../plugins/authoring.md) — building a `parsimony-<name>` distribution that uses this transport layer.
 - [Calling, binding, and composing](calling-binding-composing.md) — `bind` an API key once so it stays off the connector's call surface.
-- [Results and output schemas](results.md) — how the framework wraps connector return values into `Result`/`TabularResult`.
+- [Results and output schemas](results.md) — how the framework wraps connector return values into a `Result`.

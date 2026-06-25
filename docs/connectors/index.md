@@ -3,7 +3,7 @@
 A **connector** is a small Python callable plus metadata. You write a
 `def` that fetches data and returns a plain `pandas` object (or a scalar
 or dict); the `@connector` decorator turns it into a frozen `Connector`, and the
-framework wraps whatever you return into a [`Result`/`TabularResult`](results.md)
+framework wraps whatever you return into a [`Result`](results.md)
 with framework-built [`Provenance`](results.md). The function's parameters *are*
 the connector's parameters — there is no wrapper request object — which is what
 makes connectors directly callable by agents.
@@ -35,19 +35,18 @@ def demo_search(query: str) -> pd.DataFrame:
 result = demo_search(query="GDP")
 print(result.provenance.source)   # demo_search
 print(result.provenance.params)   # {'query': 'GDP'}
-print(len(result.df))             # 2
+print(len(result.data))           # 2
 ```
 
 Calling a connector returns its result directly. The return value is always a
-`Result` (or its `TabularResult` subclass when the connector returns a
-DataFrame or Series).
+`Result`. When the connector returns a DataFrame or Series the result is
+*tabular* (`result.is_tabular` is `True`); otherwise `data` carries the scalar
+or dict unchanged.
 
 !!! note "Import path"
     `connector`, `loader`, `enumerator`, `Connector`, and `Connectors` are
     re-exported at the package root, so `from parsimony import connector` also
-    works. The `ResultCallback` type alias (covered under
-    [calling, binding, and composing](calling-binding-composing.md)) is **not**
-    re-exported — import it from `parsimony.connector`.
+    works.
 
 ## The decorator at a glance
 
@@ -135,15 +134,14 @@ except ValueError as exc:
 ### Return raw data — never a Result
 
 A connector returns raw data: a `pandas.DataFrame`/`Series`, a scalar, or a
-dict. The framework builds the output envelope (the `Result`/`TabularResult` and
-its `Provenance`); a connector that tries to build it itself fails at call time.
+dict. The framework builds the output envelope (the `Result` and its
+`Provenance`); a connector that tries to build it itself fails at call time.
 
 !!! warning "Returning the wrong shape raises `TypeError`"
-    Returning a `Result`/`TabularResult`, or a `(data, properties)` tuple,
-    raises `TypeError` from inside the call — put provider facts in DataFrame
-    columns and let the framework wrap them. When an `output` schema is set, a
-    schema/coercion `ValueError` during wrapping is re-raised as a typed
-    [`ParseError`](errors.md).
+    Returning a `Result`, or a `(data, properties)` tuple, raises `TypeError`
+    from inside the call — put provider facts in DataFrame columns and let the
+    framework wrap them. When an `output` schema is set, a schema/coercion
+    `ValueError` during wrapping is re-raised as a typed [`ParseError`](errors.md).
 
 Why raw data? It keeps the connector author's job to one thing — fetch and shape
 the data — while the framework owns provenance, secret stripping, and the
@@ -195,7 +193,7 @@ result = bundle["demo_fetch"](series_id="X1")
 
 print(result.provenance.source)             # demo_fetch
 print(result.provenance.params)             # {'series_id': 'X1'} — api_key stripped
-print(result.df["value"].tolist())          # [1, 2] — coerced to numeric
+print(result.data["value"].tolist())        # [1, 2] — coerced to numeric
 ```
 
 A few things to notice:
@@ -218,14 +216,14 @@ collection-wide `bind`, and the `describe()` / `to_llm()` prompt projections.
 | --- | --- |
 | [Defining connectors](defining-connectors.md) | The `@connector` decorator in depth: defaults, validation timings, namespace hints, and the `describe()` / `to_llm()` projections. |
 | [Loaders and enumerators](loaders-and-enumerators.md) | The two stricter verbs — fetching observation values vs discovering entities — and their output-schema contracts. |
-| [Calling, binding, and composing](calling-binding-composing.md) | Invoking connectors, `bind`, `with_callback`, and the immutable `Connectors` collection. |
-| [Results and output schemas](results.md) | `Result` / `TabularResult`, `OutputConfig` / `Column` / `ColumnRole`, `Provenance`, and the dtype coercion rules. |
+| [Calling, binding, and composing](calling-binding-composing.md) | Invoking connectors, `bind`, and the immutable `Connectors` collection. |
+| [Results and output schemas](results.md) | `Result` (tabular when `data` is a DataFrame), `OutputConfig` / `Column` / `ColumnRole`, `Provenance`, and the dtype coercion rules. |
 | [Errors](errors.md) | The typed, agent-facing exception taxonomy connector authors raise. |
 | [HTTP transport](http-transport.md) | The HTTP layer (`HttpClient`, retry policy, redaction) that connector authors build on. |
 
 ## See also
 
 - [Defining connectors](defining-connectors.md) — the decorator and its rules in full
-- [Calling, binding, and composing](calling-binding-composing.md) — `bind`, observers, and the `Connectors` collection
+- [Calling, binding, and composing](calling-binding-composing.md) — `bind` and the `Connectors` collection
 - [Results and output schemas](results.md) — what a connector's return value becomes
 - [Plugins and providers](../plugins/index.md) — how connectors ship as `parsimony-<name>` distributions

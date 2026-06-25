@@ -2,7 +2,7 @@
 
 A data store is the "load" half of Parsimony's fetch/load split. After a
 [loader](../connectors/loaders-and-enumerators.md) returns a
-[`TabularResult`](../connectors/results.md), a data store extracts the `DATA`
+[`Result`](../connectors/results.md), a data store extracts the `DATA`
 columns and persists one DataFrame per entity, keyed by a canonical
 `(namespace, code)` tuple. Where the [catalog](index.md) is the *discovery* layer
 over [entities](entities.md), the data store is the *observation* layer that holds
@@ -35,7 +35,7 @@ from parsimony.stores import InMemoryDataStore, LoadResult
 | `get` | `get(namespace, code) -> pd.DataFrame \| None` | Return a copy of the stored frame, or `None` if the key is absent. |
 | `delete` | `delete(namespace, code) -> None` | Idempotently remove an entity. No error if the key is absent. |
 | `exists` | `exists(keys) -> set[tuple[str, str]]` | Given a list of `(namespace, code)` pairs, return the canonicalized subset that is present. |
-| `load_result` | `load_result(table, *, force=False) -> LoadResult` | Extract `DATA` columns from a `TabularResult` and persist each entity. |
+| `load_result` | `load_result(table, *, force=False) -> LoadResult` | Extract `DATA` columns from a `Result` and persist each entity. |
 
 Every method routes its key through `entity_key(namespace, code)`, which
 normalizes the namespace to lowercase snake_case (`^[a-z][a-z0-9_]*$`) and strips
@@ -88,7 +88,7 @@ frame.
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 SCHEMA = OutputConfig(
     columns=[
@@ -98,7 +98,7 @@ SCHEMA = OutputConfig(
 )
 
 store = InMemoryDataStore()
-table = TabularResult(
+table = Result(
     data=pd.DataFrame(
         {
             "series_id": ["GDP", "GDP", "CPI"],
@@ -151,7 +151,7 @@ extracted entity unconditionally.
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 SCHEMA = OutputConfig(
     columns=[
@@ -163,7 +163,7 @@ SCHEMA = OutputConfig(
 store = InMemoryDataStore()
 store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
 
-table = TabularResult(
+table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
     provenance=Provenance(source="fred", source_description="FRED"),
     output_schema=SCHEMA,
@@ -188,7 +188,7 @@ assert gdp is not None and gdp["value"].iloc[0] == 9.0
 ## End to end: loader output into a store
 
 A [loader](../connectors/loaders-and-enumerators.md) already returns a
-`TabularResult` carrying its `output` schema, so wiring its output into a store is
+`Result` carrying its `output` schema, so wiring its output into a store is
 a two-line call. The loader's schema satisfies the extraction contract by
 construction — exactly one namespaced `KEY` column and at least one `DATA` column,
 and no `TITLE`/`METADATA` columns.
@@ -215,7 +215,7 @@ def gdp_observations(series_id: str = "GDP") -> pd.DataFrame:
 
 
 store = InMemoryDataStore()
-result = gdp_observations(series_id="GDP")  # a TabularResult
+result = gdp_observations(series_id="GDP")  # a Result
 stats = store.load_result(result)
 assert stats.loaded == 1
 
@@ -244,10 +244,10 @@ it is never counted in `errors`. The table's schema must be well-formed:
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
 store = InMemoryDataStore()
-table = TabularResult(
+table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [1.0]}),
     provenance=Provenance(source="x", source_description="x"),
     output_schema=OutputConfig(
@@ -278,7 +278,7 @@ continues with the remaining entities. A single bad entity does not abort a load
 
 ## See also
 
-- [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — the loader verb that produces the `TabularResult` a store consumes.
-- [Results and output schemas](../connectors/results.md) — `TabularResult`, `OutputConfig`, `Column`, and `ColumnRole`.
+- [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — the loader verb that produces the `Result` a store consumes.
+- [Results and output schemas](../connectors/results.md) — `Result`, `OutputConfig`, `Column`, and `ColumnRole`.
 - [Entities](entities.md) — namespace/code normalization and the `entity_key` canonical key.
 - [The Catalog](index.md) — the discovery layer; an enumerator's output feeds a catalog, a loader's feeds a data store.

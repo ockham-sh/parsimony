@@ -183,7 +183,7 @@ def demo_search(query: str) -> pd.DataFrame:
     return pd.DataFrame({"id": ["A", "B"], "title": [query, "Other"]})
 
 result = demo_search(query="GDP")
-print(result.df)                      # the DataFrame you returned
+print(result.data)                    # the DataFrame you returned (also result.frame / result.df)
 print(result.provenance.source)       # 'demo_search'
 print(result.provenance.params)       # {'query': 'GDP'}
 ```
@@ -194,17 +194,19 @@ connector-named error rather than a raw binding failure.
 
 ## How return values are wrapped
 
-You return **raw data**; the framework builds the result envelope. The rules:
+You return **raw data**; the framework builds the result envelope. There is one
+result type, `Result`; a DataFrame return is simply a `Result` whose `data` is the
+frame (`result.is_tabular` is then `True`). The rules:
 
 | Return value | `output=` set? | Result |
 |---|---|---|
-| `DataFrame` / `Series` | yes | `TabularResult` with the schema applied via `OutputConfig.build_table_result` |
-| `DataFrame` / `Series` | no | bare `TabularResult` (no schema) |
+| `DataFrame` / `Series` | yes | `Result` with the schema applied via `OutputConfig.build_table_result` (`is_tabular`) |
+| `DataFrame` / `Series` | no | bare `Result` carrying the frame, no schema (`is_tabular`) |
 | scalar / `dict` / any other | — | `Result` (the value lands on `result.data`) |
 | `tuple` | — | **`TypeError`** |
-| `Result` / `TabularResult` | — | **`TypeError`** |
+| `Result` | — | **`TypeError`** |
 
-Returning a `(data, properties)` tuple, a `Result`, or a `TabularResult` is rejected with
+Returning a `(data, properties)` tuple or a `Result` is rejected with
 `TypeError(... must return raw data ...)`. The framework — not your connector — owns the
 execution envelope and the [provenance](results.md#provenance) on it. Put provider facts in
 DataFrame columns, not in a side-channel tuple.
@@ -228,7 +230,7 @@ provenance params — only call-time arguments are.
 
 When `output=` is an [`OutputConfig`](results.md) and you return a DataFrame/Series, the schema
 maps your columns into roles (`KEY`/`TITLE`/`DATA`/`METADATA`), coerces dtypes, and produces a
-schema-applied `TabularResult`. For a plain `@connector` (and a `@loader`), any DataFrame column
+schema-applied `Result`. For a plain `@connector` (and a `@loader`), any DataFrame column
 not named in the schema is folded in as a `DATA` column. (An `@enumerator` is the exception — it
 enforces an exact column match instead.)
 
@@ -308,7 +310,7 @@ parameters (including bound secrets) are invisible in both.
 print(fred_fetch.to_llm())
 # ### fred_fetch
 # Fetch FRED time series observations by series_id. Returns: date (KEY ns:fred_series), value (DATA).
-# - series_id: Annotated [ns:fred_series]
+# - series_id: str [ns:fred_series]
 
 print(fred_fetch.describe())
 # Connector: fred_fetch
@@ -317,7 +319,7 @@ print(fred_fetch.describe())
 # Fetch FRED time series observations by series_id.
 #
 # Parameters:
-#   series_id: Annotated (required)  —  namespace='fred_series'
+#   series_id: str (required)  —  namespace='fred_series'
 #
 # Output Schema:
 #   date   KEY         namespace='fred_series'
@@ -344,8 +346,8 @@ print(fred_fetch.describe())
 | `exposed_signature` | property | The post-binding `inspect.Signature` callers and cards see. |
 | `describe()` / `to_llm()` | method | Human and LLM projections. |
 
-Because the dataclass is frozen, you never mutate a connector; `bind()` and `with_callback()`
-return new instances. Those, plus composing connectors into a collection, are covered in
+Because the dataclass is frozen, you never mutate a connector; `bind()` returns a new
+instance. That, plus composing connectors into a collection, is covered in
 [Calling, binding, and composing](calling-binding-composing.md).
 
 ## See also

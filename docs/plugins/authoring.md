@@ -104,9 +104,9 @@ Three rules govern every connector you write:
   idiom (the check fires on any public parameter literally named `params` annotated as a
   pydantic `BaseModel`).
 - **Return raw data.** A connector returns a `DataFrame`, `Series`, scalar, or `dict`; the
-  framework wraps it in a [`Result`/`TabularResult`](../connectors/results.md) with
-  framework-built [`Provenance`](../connectors/results.md). Returning a `Result`, a
-  `TabularResult`, or a `(data, props)` tuple raises `TypeError`.
+  framework wraps it in a [`Result`](../connectors/results.md) with framework-built
+  [`Provenance`](../connectors/results.md). Returning a `Result` or a `(data, props)` tuple
+  raises `TypeError`.
 
 Pick the decorator that matches the verb:
 

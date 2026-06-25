@@ -6,7 +6,7 @@ push. Everything here is derived from the repository's `Makefile`, `pyproject.to
 GitHub Actions workflows — run the same commands locally before opening a pull request and CI
 will have nothing left to complain about.
 
-Parsimony is **`parsimony-core` 0.7.0**, Apache-2.0 licensed, and supports **Python >=3.11**
+Parsimony is **`parsimony-core`**, Apache-2.0 licensed, and supports **Python >=3.11**
 (tested on 3.11, 3.12, and 3.13). The build backend is `hatchling`; the package builds from the
 `parsimony` directory.
 

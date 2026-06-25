@@ -1,48 +1,64 @@
 # Results and output schemas
 
-A connector returns **raw data** — a DataFrame, Series, scalar, or dict. The framework wraps that return value in a result envelope (`Result` or `TabularResult`) carrying framework-built [`Provenance`](#provenance), and — when the connector declares an [`OutputConfig`](#outputconfig) — applies a declarative column schema. This page covers the data carriers and the schema system that shapes tabular output.
+A connector returns **raw data** — a DataFrame, Series, scalar, or dict. The framework wraps that return value in a single result envelope, `Result`, carrying framework-built [`Provenance`](#provenance), and — when the connector declares an [`OutputConfig`](#outputconfig) — applies a declarative column schema. This page covers the unified result carrier and the schema system that shapes tabular output.
 
 These types live in `parsimony.result` and are all re-exported at the top level, so either import path works:
 
 ```python
-from parsimony import Result, TabularResult, OutputConfig, Column, ColumnRole, Provenance
+from parsimony import Result, OutputConfig, Column, ColumnRole, Provenance
 # equivalently, the explicit submodule path:
-from parsimony.result import Result, TabularResult, OutputConfig, Column, ColumnRole, Provenance
+from parsimony.result import Result, OutputConfig, Column, ColumnRole, Provenance
 ```
 
 !!! note "You rarely construct these directly"
-    The framework builds `Result` / `TabularResult` and `Provenance` for you when a [connector](defining-connectors.md) returns. A connector that returns a `Result`, `TabularResult`, or a `(data, properties)` tuple raises `TypeError` — provider facts belong in DataFrame columns, not in the result envelope. You *do* construct `OutputConfig` and `Column` to declare a connector's `output=` schema, and you may build a `TabularResult` by hand for tests or for the catalog / data-store flows.
+    The framework builds `Result` and `Provenance` for you when a [connector](defining-connectors.md) returns. A connector that returns a `Result` or a `(data, properties)` tuple raises `TypeError` — provider facts belong in DataFrame columns, not in the result envelope. You *do* construct `OutputConfig` and `Column` to declare a connector's `output=` schema, and you may build a `Result` by hand for tests or for the catalog / data-store flows.
 
 ## Result
 
-`Result` is the opaque base envelope: any payload plus provenance. It is the carrier the framework uses when a connector returns a scalar or a `dict`.
+`Result` is the one envelope for every payload: any `data` plus provenance, optionally tabular. There is no separate type for DataFrames — a result is *tabular* exactly when its `data` is a `pandas.DataFrame`, and the tabular-only accessors (`frame`, `output_schema`, the schema-derived views, Arrow/Parquet serialization) apply only then.
 
 | Field | Type | Default |
 |---|---|---|
 | `data` | `Any` | required |
 | `provenance` | `Provenance` | `Provenance(source="", source_description="")` |
-
-The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. Two members are worth knowing:
-
-- `text` (property) — returns `data` unchanged if it is already a `str`, otherwise `str(data)`.
-- `_with_properties(**properties)` — internal helper for serialization/tests; merges keyword arguments into `provenance.properties` on a **new** `Result`. Connector code should not call this.
-
-## TabularResult
-
-`TabularResult` subclasses `Result`, narrows `data` to a `pandas.DataFrame`, and adds an optional `output_schema`.
-
-| Field | Type | Default |
-|---|---|---|
-| `data` | `pd.DataFrame` | required |
 | `output_schema` | `OutputConfig \| None` | `None` |
 
-### Schema-derived views
+The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. `data` is the canonical payload accessor — a DataFrame for tabular fetches, but it may equally be a Series, scalar, `dict`, `str`, or `bytes`. The members worth knowing:
 
-When an `output_schema` is present, these read-only properties project it by [role](#columnrole):
+| Member | Kind | Returns |
+|---|---|---|
+| `data` | field | the raw payload, whatever its type |
+| `is_tabular` | property | `True` when `data` is a `pandas.DataFrame` |
+| `frame` | property | the DataFrame payload; raises `TypeError` if not tabular |
+| `df` | property | a live alias of `frame` (the tabular convenience accessor) |
+| `text` | property | `data` unchanged if already a `str`, otherwise `str(data)` |
+| `to_llm()` | method | a governed, length-bounded text preview — the right thing to print for an agent |
+
+Use `is_tabular` to branch on payload shape — never `isinstance(result, ...)`:
+
+```python
+import pandas as pd
+from parsimony.result import Result
+
+tabular = Result(data=pd.DataFrame({"v": [1, 2]}))
+scalar = Result(data=4.25)
+
+print(tabular.is_tabular)   # True
+print(scalar.is_tabular)    # False
+print(tabular.frame.shape)  # (2, 1)  — frame works on tabular payloads
+print(scalar.text)          # 4.25    — stringified opaque payload
+```
+
+`_with_properties(**properties)` is an internal helper for serialization/tests; it merges keyword arguments into `provenance.properties` on a **new** `Result`. Connector code should not call this.
+
+### Schema-derived views (tabular)
+
+When `data` is a DataFrame and an `output_schema` is present, these read-only properties project it by [role](#columnrole):
 
 | Property | Returns |
 |---|---|
-| `df` | the underlying `pd.DataFrame` (alias for `data`) |
+| `frame` | the underlying `pd.DataFrame` (raises `TypeError` if not tabular) |
+| `df` | a live alias of `frame` |
 | `columns` | `list[Column]` from the schema, or `[]` when there is no schema |
 | `data_columns` | columns whose role is `DATA` |
 | `metadata_columns` | columns whose role is `METADATA` |
@@ -52,7 +68,7 @@ When an `output_schema` is present, these read-only properties project it by [ro
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Result
 
 df = pd.DataFrame({"sym": ["A", "B"], "title": ["Alpha", "Beta"], "v": [1, 2]})
 schema = OutputConfig(columns=[
@@ -60,7 +76,7 @@ schema = OutputConfig(columns=[
     Column(name="title", role=ColumnRole.TITLE),
     Column(name="v", role=ColumnRole.DATA),
 ])
-result = TabularResult(data=df, output_schema=schema)
+result = Result(data=df, output_schema=schema)
 
 print(list(result.entity_keys.columns))           # ['sym']
 print([c.name for c in result.data_columns])       # ['v']
@@ -69,14 +85,14 @@ print([c.name for c in result.metadata_columns])   # []
 
 ### Constructors and re-application
 
-- `TabularResult.from_dataframe(df)` — wraps a DataFrame (or a Series, coerced first) with **no schema**. Raises `ValueError("Returned an empty DataFrame.")` on empty input.
-- `to_table(output)` — re-applies a new `OutputConfig` to the existing data with `merge_unmapped_as_data=True`, preserving the current provenance. Unmapped columns become `DATA`.
+- `Result.from_dataframe(df)` — wraps a DataFrame (or a Series, coerced first) with **no schema**. Raises `ValueError("Returned an empty DataFrame.")` on empty input.
+- `to_table(output)` — re-applies a new `OutputConfig` to the existing tabular data with `merge_unmapped_as_data=True`, preserving the current provenance. Unmapped columns become `DATA`.
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
-raw = TabularResult(
+raw = Result(
     data=pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]}),
     provenance=Provenance(source="s", source_description="demo source"),
 )
@@ -91,7 +107,7 @@ print(shaped.provenance.source)  # "s"  (provenance preserved)
 
 ### Arrow and Parquet serialization
 
-`TabularResult` round-trips through Arrow and Parquet with provenance and schema embedded in the table metadata (under the binary key `b"parsimony.result"`):
+A tabular `Result` round-trips through Arrow and Parquet with provenance and schema embedded in the table metadata (under the binary key `b"parsimony.result"`):
 
 | Method | Behavior |
 |---|---|
@@ -102,9 +118,9 @@ print(shaped.provenance.source)  # "s"  (provenance preserved)
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
 
-result = TabularResult(
+result = Result(
     data=pd.DataFrame({"code": ["UNRATE"], "title": ["Unemployment"]}),
     provenance=Provenance(source="fred", source_description="FRED", params={"q": "unemployment"}),
     output_schema=OutputConfig(columns=[
@@ -114,7 +130,7 @@ result = TabularResult(
 )
 
 table = result.to_arrow()
-restored = TabularResult.from_arrow(table)
+restored = Result.from_arrow(table)
 print([c.name for c in restored.output_schema.columns])  # ['code', 'title']
 print(restored.output_schema.columns[0].namespace)        # 'fred'
 print(restored.provenance.params)                          # {'q': 'unemployment'}
@@ -122,47 +138,47 @@ print(restored.provenance.params)                          # {'q': 'unemployment
 
 ## The `to_llm()` view
 
-`to_llm()` renders a compact, **schema-in-context** view of a result for an LLM prompt — type and shape, not the full payload. It is the framework-owned counterpart to dumping `result.data`: the size it adds to context is O(schema) for tables and O(structure) for opaque payloads, not O(rows) or O(bytes). Every `Result` has it; `TabularResult` overrides it with a governed, schema-aware rendering.
+`to_llm()` renders a compact, **schema-in-context** view of a result for an LLM prompt — type and shape, not the full payload. It is the framework-owned counterpart to dumping `result.data`: the size it adds to context is O(schema) for tables and O(structure) for opaque payloads, not O(rows) or O(bytes). A single `Result.to_llm()` covers both cases, branching internally on `is_tabular`.
 
 `to_llm()` is the data layer's single convention for "the governed string an LLM may see of this object" — the same method name carries the connector card (`Connector.to_llm()`), the bundle listing (`Connectors.to_llm()`), and this result view. (A runtime such as `parsimony-agents` has its own, separate `to_llm(mode) -> blocks` convention for *assembling* a message; it delegates the *content* of a governed object back to these methods.)
 
-The signature is shared across both types, so a caller holding any `Result` can call it blindly:
+The signature is uniform, so a caller holding any `Result` can call it blindly:
 
 ```python
 to_llm(*, max_rows: int = 10, max_chars: int = 2000) -> str
 ```
 
-`TabularResult` honors `max_rows`; the opaque `Result` honors `max_chars`. Each ignores the other's knob.
+A tabular result honors `max_rows`; an opaque one honors `max_chars`. Each ignores the other's knob.
 
-### TabularResult preview
+### Tabular preview
 
-Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) + namespace**), and a small head/tail CSV sample. Columns flagged [`exclude_from_llm_view`](#column) are dropped from **both** the schema block and the sample.
+Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) + namespace**), and the first `max_rows` rows as CSV — never a head/tail sample masquerading as the whole. Columns flagged [`exclude_from_llm_view`](#column) are dropped from **both** the schema block and the rows.
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, TabularResult
+from parsimony.result import Column, ColumnRole, OutputConfig, Result
 
 df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-01-02"]), "value": [1.0, 2.0]})
-result = TabularResult(data=df, output_schema=OutputConfig(columns=[
+result = Result(data=df, output_schema=OutputConfig(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
     Column(name="value", role=ColumnRole.DATA),
 ]))
 print(result.to_llm())
-# TabularResult: 2 rows × 2 columns
+# Result (table): 2 rows × 2 columns
 # Columns:
 # - date: datetime64[ns] (KEY ns:fred_series)
 # - value: float64 (DATA)
-# Sample (2 rows):
+# Rows (2):
 # date,value
-# 2020-01-01,1.0
-# 2020-01-02,2.0
+# 2020-01-01 00:00:00,1.0
+# 2020-01-02 00:00:00,2.0
 ```
 
-With no `output_schema` the schema lines carry dtype only (no role annotation). For frames longer than `max_rows` the sample shows a head and a tail separated by a `...` line, and wide cell values are truncated.
+With no `output_schema` the schema lines carry dtype only (no role annotation). For a frame longer than `max_rows` the header counts stay honest (the *real* row total) and the row label becomes `Rows (showing N of M):`, showing only the first `N` rows; wide cell values are truncated.
 
-### Result preview (opaque payloads)
+### Opaque preview
 
-For non-tabular `data` (dict/JSON, list, str, scalar, bytes, pydantic model) the base method emits a depth-limited structural summary — one level of expansion, with nested values collapsed to a `type[shape]` token:
+For non-tabular `data` (dict/JSON, list, str, scalar, bytes, pydantic model) `to_llm()` emits a depth-limited structural summary — one level of expansion, with nested values collapsed to a `type[shape]` token:
 
 ```python
 from parsimony.result import Result
@@ -187,7 +203,7 @@ print(Result(data=4.25).to_llm())   # Result (float): 4.25
 
 ## OutputConfig
 
-`OutputConfig` is the declarative schema you attach to a connector via `output=`. It is an ordered `list[Column]` that maps a raw DataFrame into a schema-applied `TabularResult`.
+`OutputConfig` is the declarative schema you attach to a connector via `output=`. It is an ordered `list[Column]` that maps a raw DataFrame into a schema-applied `Result`.
 
 ```python
 class OutputConfig(BaseModel):
@@ -215,7 +231,7 @@ OutputConfig(columns=[
 ### build_table_result
 
 ```python
-build_table_result(df: pd.DataFrame | pd.Series, *, merge_unmapped_as_data: bool = True) -> TabularResult
+build_table_result(df: pd.DataFrame | pd.Series, *, merge_unmapped_as_data: bool = True) -> Result
 ```
 
 This is the core transform. It walks the declared columns **in order** and, for each, matches a DataFrame column by `Column.name` (or claims all remaining columns for the `"*"` wildcard), copies the series, [coerces its dtype](#dtype-coercion), and renames it. The result:
@@ -223,7 +239,7 @@ This is the core transform. It walks the declared columns **in order** and, for 
 - A column is **consumed at most once**, so an explicit name always wins over a later `"*"` wildcard.
 - When `mapped_name` is set, the output column is renamed to that literal string; otherwise the source name is kept.
 - When `merge_unmapped_as_data=True` (the default), every still-unconsumed DataFrame column is appended as a fresh `DATA` `Column(dtype="auto")`.
-- The returned `TabularResult` carries a **resolved** `OutputConfig` whose `Column.name`s are the final output names (post-rename).
+- The returned `Result` is tabular and carries a **resolved** `OutputConfig` whose `Column.name`s are the final output names (post-rename).
 
 It raises `TypeError` on a non-DataFrame/Series input, and `ValueError` if the frame is empty with no columns. If **no** declared column matches anything it raises `ValueError("Column config matched no input columns.")` — but first it logs a `WARNING` (logger `parsimony.result`) naming the absent columns, so a caller that swallows the exception still sees the diagnostic.
 
@@ -239,8 +255,8 @@ cfg = OutputConfig(columns=[
 ])
 result = cfg.build_table_result(raw)
 
-print(list(result.df.columns))                # ['d', 'value', 'meta']  ('v' renamed)
-print(str(result.df["value"].dtype))          # 'float64'  (numeric coercion)
+print(list(result.data.columns))              # ['d', 'value', 'meta']  ('v' renamed)
+print(str(result.data["value"].dtype))        # 'float64'  (numeric coercion)
 print([c.name for c in result.metadata_columns])  # ['meta']
 ```
 
@@ -252,7 +268,7 @@ from parsimony.result import Column, ColumnRole, OutputConfig
 
 cfg = OutputConfig(columns=[Column(name="*", dtype="numeric", role=ColumnRole.DATA)])
 result = cfg.build_table_result(pd.DataFrame({"a": [1], "b": [2]}))
-print(set(result.df.columns))  # {'a', 'b'}
+print(set(result.data.columns))  # {'a', 'b'}
 ```
 
 !!! tip "Connectors do this for you"

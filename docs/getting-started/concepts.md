@@ -12,7 +12,7 @@ Parsimony has two pillars:
 - **The [Catalog](../catalog/index.md)** — a portable, searchable index over normalized
   entity records, used to discover *what* you can fetch.
 
-The core package (`parsimony-core`, version 0.7.0, Python `>=3.11`) ships the framework and
+The core package (`parsimony-core`, Python `>=3.11`) ships the framework and
 the catalog. It ships **no connectors** — every connector is published as its own
 `parsimony-<name>` plugin and discovered at runtime.
 
@@ -47,8 +47,8 @@ Three rules are worth internalizing now, because everything else follows from th
   is no docstring you must pass `description=`. An empty description raises `ValueError`. The
   description is what an LLM reads when deciding whether to call the connector.
 - **It returns raw data.** A connector returns a DataFrame, Series, scalar, or dict — never a
-  `Result`. The *framework* builds the output envelope (see below). Returning a `Result`,
-  `TabularResult`, or a `(data, properties)` tuple raises `TypeError`.
+  `Result`. The *framework* builds the output envelope (see below). Returning a `Result` or a
+  `(data, properties)` tuple raises `TypeError`.
 
 !!! note "Why return raw data?"
     Keeping connectors to "fetch and return a DataFrame" makes them trivial to write, test,
@@ -59,8 +59,10 @@ Three rules are worth internalizing now, because everything else follows from th
 ## The framework wraps the return value into a Result
 
 When you call a connector, the framework calls your function, then wraps the raw return value
-into a [`Result` or `TabularResult`](../connectors/results.md) and attaches a
-[`Provenance`](../connectors/results.md) record describing the fetch:
+into a single [`Result`](../connectors/results.md) and attaches a
+[`Provenance`](../connectors/results.md) record describing the fetch. There is one result
+type: when `data` is a DataFrame the result is *tabular* (`result.is_tabular`) and may carry
+an `output_schema`; any other payload simply lands on `result.data`:
 
 ```text
 connector(**kwargs)
@@ -70,7 +72,7 @@ connector(**kwargs)
         │
         ▼
    framework wraps:
-     DataFrame/Series ──> TabularResult(data=…, output_schema=…)
+     DataFrame/Series ──> Result(data=<frame>, output_schema=…)   # is_tabular
      scalar/dict      ──> Result(data=…)
    and builds Provenance(source, source_description, params, fetched_at)
 ```
@@ -156,7 +158,7 @@ print(bundle.names())            # -> ['demo_search', 'keyed']  (sorted)
 print("demo_search" in bundle)   # -> True
 
 result = bundle["demo_search"](query="cpi")
-print(len(result.df))            # -> 2
+print(len(result.data))          # -> 2
 ```
 
 Construction (and `+`) raises `ValueError` on duplicate connector names. `__getitem__` looks
@@ -309,7 +311,7 @@ observations refer to the same thing.
 
 !!! tip "Import paths"
     The framework essentials — `connector`, `loader`, `enumerator`, `Connector`, `Connectors`,
-    `Result`, `TabularResult`, `OutputConfig`, `Column`, `ColumnRole`, the error types,
+    `Result`, `OutputConfig`, `Column`, `ColumnRole`, `Provenance`, the error types,
     `Catalog`, `Entity`, `BM25Index`, `InMemoryDataStore`, `discover` — are importable from the
     top-level `parsimony` package. The catalog names are lazy re-exports, so for catalog-heavy
     code `from parsimony.catalog import Catalog, Entity, BM25Index, …` is the clearest

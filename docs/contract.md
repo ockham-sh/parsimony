@@ -38,7 +38,7 @@ class to subclass.
 |---|---|
 | **Synchronous** | `def`, not `async def` — `async def` raises `TypeError` at decoration time |
 | **Description required** | Docstring or `description=` on the decorator (20–800 chars for conformance) |
-| **Return raw data** | `pd.DataFrame`, `Series`, scalar, or `dict` — never `Result`, `TabularResult`, or `(data, props)` tuples |
+| **Return raw data** | `pd.DataFrame`, `Series`, scalar, or `dict` — never a `Result` or `(data, props)` tuple |
 | **Flat parameters** | Top-level scalar parameters are the call surface; no bundled `params: BaseModel` |
 | **Secrets in provenance** | Declare credential parameters via `secrets=(...)`; bound or call-time secret values are stripped from provenance and LLM cards |
 

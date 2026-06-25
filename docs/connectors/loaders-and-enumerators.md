@@ -45,10 +45,10 @@ def load_observations(series_id: str) -> pd.DataFrame:
 
 result = load_observations(series_id="batch")
 assert load_observations.tags == ("loader", "demo")
-assert list(result.df.columns) == ["series_code", "date", "value"]
+assert list(result.data.columns) == ["series_code", "date", "value"]
 ```
 
-`@loader` prepends `"loader"` to your tags, so `load_observations.tags == ("loader", "demo")`. The function still returns **raw data** — a DataFrame — and the framework wraps it into a [`TabularResult`](results.md), applies the schema (coercing `value` to numeric, `date` to dates), and attaches framework-built [`Provenance`](results.md). You never construct a `Result` yourself.
+`@loader` prepends `"loader"` to your tags, so `load_observations.tags == ("loader", "demo")`. The function still returns **raw data** — a DataFrame — and the framework wraps it into a [`Result`](results.md) (a tabular one, since `data` is a DataFrame), applies the schema (coercing `value` to numeric, `date` to dates), and attaches framework-built [`Provenance`](results.md). You never construct a `Result` yourself.
 
 ### The loader output contract
 
@@ -126,7 +126,7 @@ def list_series(prefix: str = "") -> pd.DataFrame:
     })
 
 result = list_series(prefix="g")
-assert list(result.df.columns) == ["code", "title", "frequency"]
+assert list(result.data.columns) == ["code", "title", "frequency"]
 ```
 
 `@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and sets `role="enumerator"` on the returned :class:`~parsimony.connector.Connector`. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
@@ -220,7 +220,7 @@ def list_series() -> pd.DataFrame:
     })
 
 result = list_series()
-entities = ENUMERATE_OUTPUT.build_entities(result.df)
+entities = ENUMERATE_OUTPUT.build_entities(result.data)
 for e in entities:
     print(e.namespace, e.code, e.title, e.metadata)
 # demo_series unrate Unemployment {'frequency': 'monthly'}
@@ -254,7 +254,7 @@ def discover_mixed() -> pd.DataFrame:
     })
 
 result = discover_mixed()
-for e in MULTI_NS.build_entities(result.df):
+for e in MULTI_NS.build_entities(result.data):
     print(e.namespace, e.code)
 # fred_series unrate
 # stock_ticker aapl
@@ -274,14 +274,14 @@ Knowing *when* each rule fires saves debugging time — most failures surface at
 | `secrets=` names match real parameters | decoration | `ValueError` |
 | Function must be synchronous | decoration | `TypeError` |
 | Enumerator returned-frame exact column match | every call | `ValueError` → [`ParseError`](errors.md) |
-| Connector returned `Result`/`TabularResult`/tuple | every call | `TypeError` |
+| Connector returned `Result`/tuple | every call | `TypeError` |
 
 Everything `@connector` does — [binding](calling-binding-composing.md), `secrets=` stripping from provenance, [`Connectors`](calling-binding-composing.md) composition with `+`, `describe()` / `to_llm()` cards — applies unchanged to loaders and enumerators. The verbs only add the schema contract on top.
 
 ## See also
 
 - [Defining connectors](defining-connectors.md) — the base `@connector` decorator the verbs specialize
-- [Results and output schemas](results.md) — `OutputConfig`, `Column`, `ColumnRole`, and `TabularResult`
+- [Results and output schemas](results.md) — `OutputConfig`, `Column`, `ColumnRole`, and `Result`
 - [Entities](../catalog/entities.md) — `build_entities`, the `Entity` model, and namespace rules
 - [Data stores](../catalog/data-store.md) — persisting loader output with `InMemoryDataStore`
 - [Errors](errors.md) — `ParseError` and the typed exception taxonomy

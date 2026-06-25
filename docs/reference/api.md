@@ -1,23 +1,23 @@
 # Public API & import map
 
 This page is the canonical map of what to import from where. Parsimony exposes a small,
-curated **top-level** surface (`from parsimony import ...`) of 35 names, plus a larger set of
+curated **top-level** surface (`from parsimony import ...`) of 36 names, plus a larger set of
 symbols that live only in submodules. When a name is not in the top-level list below, import it
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
 
-The distribution is `parsimony-core` `0.7.0`; the import name is `parsimony`; Python `>=3.11`.
+The distribution is `parsimony-core`; the import name is `parsimony`; Python `>=3.11`.
 
 ```python
 import parsimony
 
-print(parsimony.__version__)  # "0.7.0"
-print(len(parsimony.__all__))  # 35
+print(parsimony.__version__)  # the installed parsimony-core version
+print(len(parsimony.__all__))  # number of top-level exports
 ```
 
 ## Top-level names
 
-These 35 names are re-exported from the package root and make up `parsimony.__all__`. They are
+These 36 names are re-exported from the package root and make up `parsimony.__all__`. They are
 grouped below by concern; the grouping is editorial — at runtime they are a flat namespace.
 
 ### Connectors
@@ -29,6 +29,7 @@ grouped below by concern; the grouping is editorial — at runtime they are a fl
 | `connector` | decorator — turn a `def` into a `Connector` | `from parsimony import connector` |
 | `loader` | decorator — connector verb that feeds a data store | `from parsimony import loader` |
 | `enumerator` | decorator — connector verb that feeds a catalog | `from parsimony import enumerator` |
+| `Namespace` | class — `Annotated` marker tying a parameter to a symbology namespace | `from parsimony import Namespace` |
 
 See [The connector model](../connectors/index.md), [Defining connectors](../connectors/defining-connectors.md),
 and [Loaders and enumerators](../connectors/loaders-and-enumerators.md).
@@ -37,8 +38,7 @@ and [Loaders and enumerators](../connectors/loaders-and-enumerators.md).
 
 | Name | Kind | Import |
 |---|---|---|
-| `Result` | class — scalar/dict result envelope (`data` + `provenance`) | `from parsimony import Result` |
-| `TabularResult` | class — DataFrame result envelope | `from parsimony import TabularResult` |
+| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_schema`); tabular when `data` is a DataFrame | `from parsimony import Result` |
 | `OutputConfig` | class — declarative output schema | `from parsimony import OutputConfig` |
 | `Column` | class — one schema column | `from parsimony import Column` |
 | `ColumnRole` | enum — `DATA` / `KEY` / `TITLE` / `METADATA` | `from parsimony import ColumnRole` |
@@ -72,6 +72,7 @@ See [Errors](../connectors/errors.md). Note `CatalogNotFoundError` is **not** to
 | `BM25Index` | class — lexical (BM25) field index | `from parsimony import BM25Index` |
 | `VectorIndex` | class — dense-vector field index | `from parsimony import VectorIndex` |
 | `HybridIndex` | class — BM25 + vector fusion field index | `from parsimony import HybridIndex` |
+| `auto_catalog` | function — wrap a DataFrame in an in-memory BM25 catalog (one entity per row) | `from parsimony import auto_catalog` |
 
 See [The Catalog](../catalog/index.md), [Indexes](../catalog/indexes.md), and
 [Building and searching](../catalog/search.md).
@@ -122,18 +123,6 @@ See [Caching](../caching.md) and [Discovering installed providers](../plugins/di
 
 The following symbols are public and supported, but they are **not** re-exported at the package
 root. Import them from the module shown.
-
-### `parsimony.connector`
-
-| Name | Kind |
-|---|---|
-| `ResultCallback` | type alias — `Callable[[Result], Any]`; the `with_callback` observer contract |
-
-```python
-from parsimony.connector import ResultCallback
-```
-
-See [Calling, binding, and composing](../connectors/calling-binding-composing.md).
 
 ### `parsimony.errors`
 

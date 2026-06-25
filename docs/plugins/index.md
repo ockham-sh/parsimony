@@ -138,15 +138,16 @@ from parsimony import discover
 connectors = discover.load("fred")  # LookupError if "fred" is not installed
 print(connectors.names())           # connector names contributed by the provider
 result = connectors["fred_fetch"](series_id="GDP")
-print(result.df)  # a tabular connector returns a TabularResult
+print(result.data)  # the connector's payload (a DataFrame for a tabular fetch)
 ```
 
 !!! note
     This example needs the `parsimony-fred` distribution installed and a FRED API key, so it
-    will not run on a bare `parsimony-core` install. `result.df` is available because the real
-    `fred_fetch` returns a DataFrame, which the framework wraps in a
-    [`TabularResult`](../connectors/results.md); a connector that returns a scalar or dict
-    yields a plain `Result` with no `.df`.
+    will not run on a bare `parsimony-core` install. `result.data` holds the payload the
+    framework wrapped in a [`Result`](../connectors/results.md). Because the real `fred_fetch`
+    returns a DataFrame, `result.is_tabular` is `True` and the tabular accessors
+    (`result.frame` / `result.df`) apply; a connector that returns a scalar or dict yields a
+    `Result` whose `data` is that value and for which the tabular accessors raise.
 
 A loaded `Connectors` is a normal collection: index it by connector name with `[]`, check
 membership with `in`, list `.names()`, `bind` shared parameters across it, and call any

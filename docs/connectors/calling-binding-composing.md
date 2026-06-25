@@ -9,8 +9,10 @@ search connector bundles. This page covers all three.
 ## Calling a connector
 
 Call a connector with keyword (or positional) arguments; the framework wraps
-the connector's raw return value in a [`Result` or `TabularResult`](results.md)
-with framework-built [`Provenance`](results.md).
+the connector's raw return value in a [`Result`](results.md) with
+framework-built [`Provenance`](results.md). There is one result type: when the
+return is a DataFrame the result is tabular (`result.is_tabular`), otherwise the
+value lands on `result.data` as-is.
 
 ```python
 import pandas as pd
@@ -24,7 +26,7 @@ def demo_search(query: str) -> pd.DataFrame:
 
 
 result = demo_search(query="GDP")
-print(result.df)                      # the returned DataFrame (no output= schema here)
+print(result.data)                    # the returned DataFrame (no output= schema here; also .frame / .df)
 print(result.provenance.source)       # "demo_search"
 print(result.provenance.params)       # {"query": "GDP"}
 ```
@@ -39,11 +41,10 @@ required parameter is omitted.
 
 !!! warning "Connectors must return raw data"
     A connector returns a DataFrame, Series, scalar, or dict — never a
-    pre-built envelope. Returning a `Result`, a `TabularResult`, or a
-    `(data, properties)` tuple raises `TypeError` at call time, because the
-    framework builds the execution envelope. If a schema or coercion failure
-    surfaces a `ValueError` while wrapping the result, it is re-raised as a
-    typed [`ParseError`](errors.md).
+    pre-built envelope. Returning a `Result` or a `(data, properties)` tuple
+    raises `TypeError` at call time, because the framework builds the execution
+    envelope. If a schema or coercion failure surfaces a `ValueError` while
+    wrapping the result, it is re-raised as a typed [`ParseError`](errors.md).
 
 ### The exposed signature
 
@@ -61,7 +62,7 @@ print(list(demo_search.exposed_signature.parameters))   # ['query']
 ### Calling without wrapping: `call_raw`
 
 `connector.call_raw(**kwargs)` invokes the underlying function and returns
-its **raw** value — no `Result`, no `Provenance`, no callbacks. Note that
+its **raw** value — no `Result`, no `Provenance`. Note that
 `call_raw` does not bind against the exposed signature or apply defaults; you
 pass the full merged argument set yourself. Use it when you want the data only,
 for example inside another connector or a test.
@@ -130,58 +131,6 @@ Calling `bind()` with no keyword arguments returns the same connector
 unchanged. Because `Connector` is a frozen dataclass, `bind()` never mutates in
 place — it always returns a fresh instance.
 
-## Post-fetch observers: `with_callback`
-
-`Connector.with_callback(callback)` returns a new connector with an **observer**
-appended. After a successful fetch, every registered callback is invoked with
-the produced `Result`. A callback is any `(result) -> None`. The type alias is
-`ResultCallback`.
-
-!!! warning "Import `ResultCallback` from the submodule"
-    `ResultCallback` is **not** exported from the top-level `parsimony`
-    package. Import it from `parsimony.connector`:
-    ```python
-    from parsimony.connector import ResultCallback
-    ```
-
-Observers run **after** the connector has already produced a valid `Result`, so
-their failures must not corrupt the caller's view. Any exception raised by a
-callback is logged (via `logger.exception`) and **swallowed** — the `Result` is
-still returned intact.
-
-```python
-from parsimony.connector import connector
-
-
-@connector
-def ping() -> dict:
-    """Return a tiny payload."""
-    return {"ok": True}
-
-
-seen: list[str] = []
-
-
-def record(result) -> None:
-    seen.append(result.provenance.source)
-
-
-observed = ping.with_callback(record)
-
-
-observed()
-print(seen)        # ['ping']
-```
-
-!!! tip "Use observers for telemetry, not for persistence you depend on"
-    Observer semantics mean a failing callback never propagates. If you need
-    fail-closed behavior — the caller must not see a successful `Result` when a
-    write fails — call the persistence function directly inside the connector or
-    wrap the call site, rather than relying on a post-fetch hook.
-
-Callbacks persist across `bind()`, because binding copies the connector with its
-hooks intact.
-
 ## Composing with `Connectors`
 
 `Connectors` is an immutable, composable collection of `Connector` instances
@@ -189,7 +138,14 @@ keyed by name. Construct one from a sequence of connectors; the constructor
 freezes the input and raises `ValueError` if two connectors share a name.
 
 ```python
-from parsimony.connector import Connectors
+from parsimony.connector import connector, Connectors
+
+
+@connector
+def ping() -> dict:
+    """Return a tiny payload."""
+    return {"ok": True}
+
 
 bundle = Connectors([demo_search, ping])
 print(bundle.names())        # ['demo_search', 'ping'] (sorted)
@@ -209,7 +165,7 @@ bundle = Connectors([demo_search, ping])
 
 
 result = bundle["demo_search"](query="GDP")
-print(len(result.df))
+print(len(result.data))
 ```
 
 !!! warning "Indexing is by name, not by integer"
@@ -252,9 +208,6 @@ a heterogeneous bundle in one call.
 # Suppose every FRED connector takes api_key but the demo ones do not.
 wired = all_tools.bind(api_key="shared-key")   # binds api_key only where it exists
 ```
-
-`Connectors.with_callback(callback)` works the same way — it returns a new
-collection where every connector has the observer appended.
 
 ### Inspecting and filtering
 
@@ -317,6 +270,6 @@ and [The connector model](index.md) for the bigger picture.
 
 - [Defining connectors](defining-connectors.md) — the `@connector` decorator, `secrets=`, and namespace hints
 - [Loaders and enumerators](loaders-and-enumerators.md) — the two stricter connector verbs you compose into bundles
-- [Results and output schemas](results.md) — the `Result` / `TabularResult` envelope every call returns
+- [Results and output schemas](results.md) — the `Result` envelope every call returns
 - [Errors](errors.md) — the typed exceptions connectors raise
 - [Discovering installed providers](../plugins/discovery.md) — loading plugin `CONNECTORS` bundles to compose with `+`

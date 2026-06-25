@@ -6,7 +6,7 @@ through a typed, synchronous call surface, and a portable in-memory catalog that
 searches over the entities those connectors discover.
 
 The distribution is published to PyPI as `parsimony-core` (import name `parsimony`,
-version `0.7.0`, Apache-2.0). It runs on Python `>=3.11` (3.11, 3.12, 3.13).
+Apache-2.0). It runs on Python `>=3.11` (3.11, 3.12, 3.13).
 
 ## The two pillars
 
@@ -18,8 +18,9 @@ Parsimony is built around two complementary ideas.
   `def` into a frozen `Connector`. The function's parameters *are* the connector's
   call surface — there is no bundled `params` object. A connector returns **raw data** (a
   DataFrame, Series, scalar, or dict); the framework wraps it in a
-  [`Result` / `TabularResult`](connectors/results.md) carrying framework-built
-  [`Provenance`](connectors/results.md). The immutable
+  [`Result`](connectors/results.md) carrying framework-built
+  [`Provenance`](connectors/results.md). When `data` is a DataFrame the result
+  is *tabular* (`result.is_tabular`). The immutable
   [`Connectors`](connectors/calling-binding-composing.md) collection composes connectors
   and is invoked with `connectors[name](**kwargs)`.
 
@@ -63,7 +64,7 @@ See [Installation](getting-started/installation.md) for the full optional-extras
 ## A 60-second taste
 
 This runs with only `parsimony-core` installed. Define a `@connector`, attach an output
-schema, call it, and read the typed `TabularResult`.
+schema, call it, and read the typed `Result`.
 
 ```python
 import pandas as pd
@@ -85,7 +86,7 @@ def demo_fetch(series_id: str) -> pd.DataFrame:
 
 
 result = demo_fetch(series_id="GDP")
-print(result.df)                       # the validated DataFrame
+print(result.data)                     # the validated DataFrame
 print(result.provenance.source)        # 'demo_fetch'
 print(result.provenance.params)        # {'series_id': 'GDP'}
 ```
@@ -96,7 +97,7 @@ A few things this shows:
 - The docstring becomes the connector's required `description` — omit both and decoration
   raises `ValueError`.
 - The function returns a **raw** DataFrame. The framework applies the
-  [`OutputConfig`](connectors/results.md) schema and wraps the result in a `TabularResult`
+  [`OutputConfig`](connectors/results.md) schema and wraps the result in a `Result`
   with `Provenance`. Returning a `Result` or a `(data, properties)` tuple instead would
   raise `TypeError`.
 - `result.provenance` is built by the framework — connectors never construct it. Its
@@ -111,7 +112,7 @@ A few things this shows:
 
     bundle = Connectors([demo_fetch]) + Connectors([another_connector])
     result = bundle["demo_fetch"](series_id="GDP")
-    print(result.df)
+    print(result.data)
     ```
 
     There is no `.merge` method — `+` is the composition primitive. See
@@ -169,7 +170,7 @@ installed from the shell with [`parsimony list`](cli.md).
 ## Where to go next
 
 - **[Installation](getting-started/installation.md)** — the optional-extras matrix
-  (`standard`, `standard-onnx`, `litellm`, `s3`, `all`) and what each pulls in.
+  (`catalog`, `standard-onnx`, `litellm`, `all`) and what each pulls in.
 - **[Quickstart](getting-started/quickstart.md)** — hands-on flows: a custom connector, a
   composed collection, and a small in-memory catalog.
 - **[Core concepts](getting-started/concepts.md)** — the mental model that ties connectors,

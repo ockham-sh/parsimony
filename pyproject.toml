@@ -101,7 +101,10 @@ line-length = 120
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
 [tool.mypy]
-python_version = "3.11"
+# Target 3.12 (not the 3.11 floor) so mypy can parse numpy's PEP 695 `type`-statement
+# stubs, which it rejects under a <3.12 target. The 3.11 pytest matrix backstops
+# actual runtime-version compatibility.
+python_version = "3.12"
 warn_return_any = true
 warn_unused_ignores = true
 ignore_missing_imports = true

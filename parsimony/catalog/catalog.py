@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import tempfile
 import threading
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -39,6 +38,7 @@ from parsimony.catalog.models import (
     catalog_match_from_entity,
 )
 from parsimony.catalog.query import parse_query
+from parsimony.catalog.remote import _save_hf, resolve_catalog_dir
 from parsimony.catalog.storage import (
     ENTRIES_FILENAME,
     INDEXES_DIRNAME,
@@ -50,7 +50,7 @@ from parsimony.catalog.storage import (
     _read_parquet,
     read_meta,
 )
-from parsimony.catalog.urls import REPO_TYPE, parse_catalog_url
+from parsimony.catalog.urls import parse_catalog_url
 from parsimony.catalog.validation import compute_manifest_contract_sha256, validate_catalog_snapshot
 from parsimony.entity import Entity, entity_key, field_value, normalize_namespace
 from parsimony.errors import InvalidParameterError
@@ -524,7 +524,7 @@ class Catalog:
         dataset URLs (``hf://``). Caching loaded catalogs is the caller's
         responsibility.
         """
-        return _dispatch_load(str(url))
+        return cls._load_from_path(resolve_catalog_dir(str(url)))
 
     @classmethod
     def _load_from_path(cls, path: Path) -> Catalog:
@@ -725,74 +725,10 @@ def _load_indexes(path: Path, *, index_fields: dict[str, str]) -> dict[str, Cata
 
 
 # ---------------------------------------------------------------------------
-# Snapshot load/save dispatch
+# Local snapshot save (hf:// transport lives in catalog.remote)
 # ---------------------------------------------------------------------------
-
-
-def _load_file(root: str, sub: str) -> Catalog:
-    path = Path(root) / sub if sub else Path(root)
-    if not path.exists():
-        raise FileNotFoundError(f"Catalog directory does not exist: {path}")
-    return Catalog._load_from_path(path)
 
 
 def _save_file(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
     target = Path(root) / sub if sub else Path(root)
     catalog._save_to_path(target, builder=builder)
-
-
-def _load_hf(root: str, sub: str, *, revision: str | None = None) -> Catalog:
-    from huggingface_hub import snapshot_download
-
-    from parsimony import cache
-
-    cache_dir = cache.catalogs_dir()
-    patterns: list[str] | None = [f"{sub}/*"] if sub else None
-    if sub:
-        local = Path(
-            snapshot_download(
-                repo_id=root,
-                repo_type=REPO_TYPE,
-                revision=revision,
-                cache_dir=cache_dir,
-                allow_patterns=patterns,
-            )
-        )
-        target = local / sub
-    else:
-        local = Path(
-            snapshot_download(
-                repo_id=root,
-                repo_type=REPO_TYPE,
-                revision=revision,
-                cache_dir=cache_dir,
-                allow_patterns=patterns,
-            )
-        )
-        target = local
-    return Catalog._load_from_path(target)
-
-
-def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
-    from huggingface_hub import HfApi
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        staging = Path(tmpdir) / "snapshot"
-        catalog._save_to_path(staging, builder=builder)
-        api = HfApi()
-        api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
-        api.upload_folder(
-            folder_path=str(staging),
-            repo_id=root,
-            repo_type=REPO_TYPE,
-            path_in_repo=sub or None,
-        )
-
-
-def _dispatch_load(url: str) -> Catalog:
-    parsed = parse_catalog_url(url)
-    if parsed.scheme == "file":
-        return _load_file(parsed.root, parsed.sub)
-    if parsed.scheme == "hf":
-        return _load_hf(parsed.root, parsed.sub, revision=parsed.revision)
-    raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")

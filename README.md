@@ -161,23 +161,47 @@ Connectors **must** be synchronous (`def`, not `async def`) and **must** have a 
 
 ### Compose connectors into a bundle
 
-`Connectors` is an immutable, composable collection. Combine bundles with `+` and scope a credential across only the connectors that accept it:
+`Connectors` is an immutable, composable collection. Combine bundles with `+`, then run the real **discover → search → fetch** idiom: search returns candidate ids, you pick one, then fetch — never hand-type an opaque code. `bind()` scopes a credential to only the connectors that accept it (`conns.bind(api_key=…)` reaches `fred_*`; `sdmx` ignores it — `fred` also reads `FRED_API_KEY` from the environment).
 
 ```python
 from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
-# api_key is scoped to the connectors that accept it (fred_*); sdmx ignores it
-bundle = (FRED + SDMX).bind(api_key="…")
-print(bundle.names())
+conns = FRED + SDMX
+print(conns.names())
 
-us = bundle["fred_fetch"](series_id="UNRATE")
-ecb = bundle["sdmx_fetch"](
-    dataset_ref="ECB-EXR",
-    series_ref="D.USD.EUR.SP00.A",
+# US — FRED: search → fetch
+hits = conns["fred_search"](search_text="US consumer price index all items city average")
+print(hits.data[["id", "title"]].head())     # inspect candidates, pick the id -> CPIAUCNS
+us = conns["fred_fetch"](
+    series_id="CPIAUCNS",                     # the id you picked from the search
+    observation_start="2013-01-01",
+    observation_end="2025-12-31",
+).data                                        # date + value (monthly index), plus series metadata
+
+# Euro area — SDMX (ECB): datasets_search → series_search → fetch
+flows = conns["sdmx_datasets_search"](
+    query="harmonised index of consumer prices HICP inflation",
+    agency="ECB", limit=10,
 )
-print(us.data.tail())
-print(ecb.data.tail())
+print(flows.data[["flow_id", "title"]])       # -> ECB/ICP
+
+series = conns["sdmx_series_search"](
+    agency="ECB", dataset_id="ICP",
+    query="euro area changing composition overall HICP annual average rate of change",
+    limit=10,
+)
+print(series.data[["key", "title"]])          # -> ICP.A.U2.N.000000.4.AVR
+#   U2 = euro area (changing composition) -> one continuous series, no fixed-membership stitch
+#   AVR = annual average rate of change (already a %, not an index)
+ea = conns["sdmx_fetch"](
+    dataset_ref="ECB-ICP",                    # agency-flow
+    series_ref="A.U2.N.000000.4.AVR",         # the series key with the flow id (ICP.) stripped
+    start_period="2014", end_period="2026",
+).data                                        # TIME_PERIOD, value, + decoded dimension columns
+
+print(us.tail())
+print(ea.tail())
 ```
 
 ### Build an HTTP connector with the transport helpers

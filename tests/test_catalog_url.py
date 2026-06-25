@@ -201,22 +201,25 @@ def test_file_missing_path_raises(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+class _StopAfterResolve(Exception):
+    """Sentinel: a routing spy raises this to stop before the (real) download."""
+
+
 def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``Catalog.load("hf://org/repo/bundle")`` must reach
-    ``_load_hf`` with ``root='org/repo'`` and ``sub='bundle'``."""
+    """``Catalog.load("hf://org/repo/bundle")`` must reach the scoped sub-path
+    download with ``root='org/repo'`` and ``sub='bundle'``."""
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
-        captured["root"] = root
-        captured["sub"] = sub
-        captured["revision"] = revision
-        return object()  # Catalog isn't actually constructed here.
+    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+        captured.update(root=root, sub=sub, revision=revision)
+        raise _StopAfterResolve
 
-    from parsimony.catalog import catalog as catalog_module
+    from parsimony.catalog import remote as catalog_remote
 
-    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
+    monkeypatch.setattr(catalog_remote, "download_hf_subpath", _spy)
 
-    Catalog.load("hf://org/repo/bundle")
+    with pytest.raises(_StopAfterResolve):
+        Catalog.load("hf://org/repo/bundle")
 
     assert captured == {"root": "org/repo", "sub": "bundle", "revision": None}
 
@@ -224,37 +227,35 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
 def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
-        captured["root"] = root
-        captured["sub"] = sub
-        captured["revision"] = revision
-        return object()
+    def _spy(root: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+        captured.update(root=root, revision=revision)
+        raise _StopAfterResolve
 
-    from parsimony.catalog import catalog as catalog_module
+    from parsimony.catalog import remote as catalog_remote
 
-    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
+    monkeypatch.setattr(catalog_remote, "_download_hf_repo", _spy)
 
-    Catalog.load("hf://org/repo")
+    with pytest.raises(_StopAfterResolve):
+        Catalog.load("hf://org/repo")
 
-    assert captured == {"root": "org/repo", "sub": "", "revision": None}
+    assert captured == {"root": "org/repo", "revision": None}
 
 
 def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A pinned ``hf://org/repo@<rev>`` URL must reach ``_load_hf`` with the
-    revision so the remote load is reproducible and tamper-resistant."""
+    """A pinned ``hf://org/repo@<rev>`` URL must thread the revision through so
+    the remote load is reproducible and tamper-resistant."""
     captured: dict[str, Any] = {}
 
-    def _spy_load_hf(root: str, sub: str, *, revision: str | None = None) -> Any:
-        captured["root"] = root
-        captured["sub"] = sub
-        captured["revision"] = revision
-        return object()
+    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+        captured.update(root=root, sub=sub, revision=revision)
+        raise _StopAfterResolve
 
-    from parsimony.catalog import catalog as catalog_module
+    from parsimony.catalog import remote as catalog_remote
 
-    monkeypatch.setattr(catalog_module, "_load_hf", _spy_load_hf)
+    monkeypatch.setattr(catalog_remote, "download_hf_subpath", _spy)
 
-    Catalog.load("hf://org/repo@deadbeef/bundle")
+    with pytest.raises(_StopAfterResolve):
+        Catalog.load("hf://org/repo@deadbeef/bundle")
 
     assert captured == {"root": "org/repo", "sub": "bundle", "revision": "deadbeef"}
 

@@ -76,11 +76,25 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Emit JSON instead of a table.",
     )
-    cc_clear = cc_sub.add_parser("clear", help="Remove a cache subdirectory (or all of them).")
-    cc_clear.add_argument(
+    cc_info.add_argument(
+        "--repos",
+        action="store_true",
+        help="Break the catalogs subdir down by Hugging Face repo (largest first).",
+    )
+    cc_clear = cc_sub.add_parser(
+        "clear",
+        help="Remove a cache subdirectory, a single catalog repo, or everything.",
+    )
+    cc_clear_target = cc_clear.add_mutually_exclusive_group()
+    cc_clear_target.add_argument(
         "--subdir",
         metavar="NAME",
         help=f"Clear only this subdir ({', '.join(cache._SUBDIRS)}).",
+    )
+    cc_clear_target.add_argument(
+        "--repo",
+        metavar="ORG/NAME",
+        help="Clear only the cached catalogs for this Hugging Face repo (e.g. parsimony-dev/sdmx).",
     )
     cc_clear.add_argument(
         "--yes",
@@ -248,13 +262,15 @@ def _run_cache(args: argparse.Namespace) -> int:
         return 0
     if args.cache_action == "info":
         report = cache.info()
+        if args.repos:
+            report["catalog_repos"] = cache.catalog_repos()
         if args.json_output:
             print(json.dumps(report, indent=2))
         else:
             _render_cache_info(report, sys.stdout)
         return 0
     if args.cache_action == "clear":
-        return _run_cache_clear(subdir=args.subdir, assume_yes=args.yes)
+        return _run_cache_clear(subdir=args.subdir, repo=args.repo, assume_yes=args.yes)
     return 2
 
 
@@ -295,8 +311,25 @@ def _render_cache_info(report: dict[str, Any], stream: TextIO) -> None:
     print(file=stream)
     print(f"root: {report['root']}", file=stream)
 
+    repos = report.get("catalog_repos")
+    if repos is not None:
+        print(file=stream)
+        rheader = ["CATALOG REPO", "FILES", "SIZE"]
+        rbody: list[list[str]] = [rheader]
+        for entry in repos:
+            rbody.append([entry["repo_id"], str(entry["files"]), _human_size(entry["size_bytes"])])
+        if len(rbody) == 1:
+            rbody.append(["(none cached)", "-", "-"])
+        rwidths = [max(len(row[i]) for row in rbody) for i in range(len(rheader))]
+        for i, row in enumerate(rbody):
+            print("  ".join(cell.ljust(rwidths[j]) for j, cell in enumerate(row)), file=stream)
+            if i == 0:
+                print("  ".join("-" * w for w in rwidths), file=stream)
 
-def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
+
+def _run_cache_clear(*, subdir: str | None, repo: str | None, assume_yes: bool) -> int:
+    if repo is not None:
+        return _run_cache_clear_repo(repo=repo, assume_yes=assume_yes)
     report = cache.info()
     known = sorted(report["subdirs"])
     if subdir is not None and subdir not in report["subdirs"]:
@@ -327,6 +360,34 @@ def _run_cache_clear(*, subdir: str | None, assume_yes: bool) -> int:
 
     cache.clear(subdir=subdir)
     print(f"Cleared {label} ({total_files} file(s), {_human_size(total_bytes)}).")
+    return 0
+
+
+def _run_cache_clear_repo(*, repo: str, assume_yes: bool) -> int:
+    try:
+        dirname = cache._catalog_dirname(repo)
+    except ValueError as exc:
+        print(f"error: invalid repo {repo!r}: {exc}", file=sys.stderr)
+        return 2
+
+    entry = next((r for r in cache.catalog_repos() if r["dirname"] == dirname), None)
+    if entry is None:
+        print(f"Nothing to clear (no cached catalogs for repo {repo!r}).")
+        return 0
+
+    label = f"catalogs for repo {entry['repo_id']!r}"
+    if not assume_yes:
+        prompt = f"Remove {label} ({entry['files']} file(s), {_human_size(entry['size_bytes'])})? [y/N] "
+        try:
+            answer = input(prompt).strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return 0
+
+    cache.clear_catalog_repo(repo)
+    print(f"Cleared {label} ({entry['files']} file(s), {_human_size(entry['size_bytes'])}).")
     return 0
 
 

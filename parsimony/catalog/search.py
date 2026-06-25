@@ -133,9 +133,15 @@ class CatalogLRU:
         *,
         cache_path: Path | str | None = None,
         build: CatalogBuilder | None = None,
+        refresh: bool = False,
     ) -> Catalog:
         key = url
         with self._lock:
+            if refresh:
+                # Drop the in-memory copy so the load below re-runs. The HF
+                # downloader revalidates the remote etag, so a republished
+                # catalog is picked up without restarting the process.
+                self._cache.pop(key, None)
             if key in self._cache:
                 self._cache.move_to_end(key)
                 return self._cache[key]
@@ -174,6 +180,14 @@ class CatalogSearchParams(BaseModel):
     ]
     limit: int = Field(default=10, ge=1, le=50, description="Top-N results.")
     catalog_url: str | None = Field(default=None, description="Override catalog URL.")
+    refresh: bool = Field(
+        default=False,
+        description=(
+            "Re-fetch the catalog from its source instead of the in-process cached copy. "
+            "Set true once after the catalog has been republished to pick up the new "
+            "version in a running session; leave false otherwise."
+        ),
+    )
 
 
 def _matches_to_dataframe(
@@ -225,15 +239,17 @@ def make_local_search_connector(
             url,
             cache_path=cache_path,
             build=build_catalog,
+            refresh=params.refresh,
         )
 
     def _search(
         query: str,
         limit: int = 10,
         catalog_url: str | None = None,
+        refresh: bool = False,
     ) -> pd.DataFrame:
         try:
-            params = CatalogSearchParams(query=query, limit=limit, catalog_url=catalog_url)
+            params = CatalogSearchParams(query=query, limit=limit, catalog_url=catalog_url, refresh=refresh)
         except ValidationError as exc:
             raise InvalidParameterError(provider=provider, message=str(exc)) from exc
         catalog = _load_catalog(params)

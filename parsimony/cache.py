@@ -21,8 +21,10 @@ from __future__ import annotations
 
 __all__ = [
     "TTLDiskCache",
+    "catalog_repos",
     "catalogs_dir",
     "clear",
+    "clear_catalog_repo",
     "connectors_dir",
     "info",
     "models_dir",
@@ -56,6 +58,12 @@ _VALID_SUBKEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_\-.]*$")
 # Named subdirectories under the cache root. Keep in lockstep with the
 # helper functions below — :func:`info` and :func:`clear` iterate this.
 _SUBDIRS: tuple[str, ...] = ("catalogs", "models", "connectors", "staging")
+
+# HuggingFace hub cache layout: catalog snapshots download under
+# ``$ROOT/catalogs/datasets--<org>--<name>`` (slashes in the repo id become
+# ``--``), because they are fetched with ``cache_dir=catalogs_dir()``. The
+# per-repo helpers below target that directory directly.
+_CATALOG_REPO_PREFIX = "datasets--"
 
 
 # ---------------------------------------------------------------------------
@@ -191,11 +199,38 @@ def connectors_dir(provider: str | None = None) -> Path:
 # ---------------------------------------------------------------------------
 
 
+def _disk_usage(path: Path) -> tuple[int, int]:
+    """Return ``(size_bytes, file_count)`` of real files under *path*.
+
+    Symlinks are skipped, not followed. The HuggingFace hub cache stores each
+    snapshot file as a symlink into a shared ``blobs/`` store, so following
+    symlinks would count every blob once per snapshot that references it —
+    inflating the total several-fold. Counting only the real files (the blobs)
+    reports the true on-disk footprint, matching ``du``.
+    """
+    size = 0
+    files = 0
+    for dirpath, _, filenames in os.walk(path):
+        for fname in filenames:
+            fp = Path(dirpath) / fname
+            try:
+                st = fp.lstat()
+            except OSError:
+                continue
+            if stat.S_ISLNK(st.st_mode):
+                continue
+            size += st.st_size
+            files += 1
+    return size, files
+
+
 def info() -> dict[str, Any]:
     """Return cache occupancy as a JSON-shaped dict for the CLI / operators.
 
     Walks each named subdirectory once. Does not create missing dirs —
     a non-existent subdir reports ``exists=False, size_bytes=0, files=0``.
+    Sizes reflect real on-disk bytes (HF blob symlinks are not double-counted;
+    see :func:`_disk_usage`).
     """
     r = _resolve_root()
     out: dict[str, Any] = {"root": str(r), "subdirs": {}}
@@ -209,16 +244,7 @@ def info() -> dict[str, Any]:
                 "exists": False,
             }
             continue
-        size = 0
-        files = 0
-        for dirpath, _, filenames in os.walk(p):
-            for fname in filenames:
-                fp = Path(dirpath) / fname
-                try:
-                    size += fp.stat().st_size
-                    files += 1
-                except OSError:
-                    pass
+        size, files = _disk_usage(p)
         out["subdirs"][name] = {
             "path": str(p),
             "size_bytes": size,
@@ -226,6 +252,72 @@ def info() -> dict[str, Any]:
             "exists": True,
         }
     return out
+
+
+def _catalog_dirname(repo_id: str) -> str:
+    """Map an HF dataset repo id (``org/name``) to its catalogs cache dir name.
+
+    Reuses :func:`_sanitize_subkey` per path segment as a traversal guard, so
+    ``../`` and absolute components can't escape ``$ROOT/catalogs``.
+    """
+    cleaned = repo_id.strip().strip("/")
+    if not cleaned:
+        raise ValueError("repo id must be non-empty")
+    parts = cleaned.split("/")
+    for part in parts:
+        _sanitize_subkey(part)
+    return _CATALOG_REPO_PREFIX + "--".join(parts)
+
+
+def _catalog_repo_id(dirname: str) -> str:
+    """Inverse of :func:`_catalog_dirname` for display (``datasets--a--b`` -> ``a/b``)."""
+    body = dirname[len(_CATALOG_REPO_PREFIX) :]
+    return body.replace("--", "/")
+
+
+def catalog_repos() -> list[dict[str, Any]]:
+    """List cached catalog repos under ``$ROOT/catalogs``, largest first.
+
+    Each entry is ``{repo_id, dirname, path, size_bytes, files}``. Read-only —
+    does not create the catalogs dir; returns ``[]`` when nothing is cached.
+    Lets an operator see *which* provider's catalogs dominate disk before
+    clearing one with :func:`clear_catalog_repo`.
+    """
+    base = _resolve_root() / "catalogs"
+    out: list[dict[str, Any]] = []
+    if not base.exists():
+        return out
+    for child in sorted(base.iterdir()):
+        if not child.is_dir() or not child.name.startswith(_CATALOG_REPO_PREFIX):
+            continue
+        size, files = _disk_usage(child)
+        out.append(
+            {
+                "repo_id": _catalog_repo_id(child.name),
+                "dirname": child.name,
+                "path": str(child),
+                "size_bytes": size,
+                "files": files,
+            }
+        )
+    out.sort(key=lambda e: e["size_bytes"], reverse=True)
+    return out
+
+
+def clear_catalog_repo(repo_id: str) -> bool:
+    """Remove the cached catalog snapshots for one HF dataset repo.
+
+    Returns ``True`` when a cache dir existed and was removed, ``False`` when
+    nothing was cached for *repo_id*. Raises :class:`ValueError` on an invalid
+    repo id. The next search that needs this repo re-downloads it (scoped, so
+    cheap) — use this to bust a stale or corrupt published catalog without
+    nuking every other provider's cache.
+    """
+    target = _resolve_root() / "catalogs" / _catalog_dirname(repo_id)
+    if target.exists():
+        shutil.rmtree(target)
+        return True
+    return False
 
 
 def clear(subdir: str | None = None) -> None:

@@ -23,16 +23,16 @@
 
 Parsimony is the kernel of a connector ecosystem for financial and economic data. It gives you two things:
 
-1. **A connector model.** A connector is a plain Python function plus metadata. You fetch by calling it (`result = conn(series_id="GDP")`); the framework wraps the raw `DataFrame` your function returns into a typed `Result`/`TabularResult` with automatic provenance. Operational failures surface through a small, agent-facing error taxonomy (`UnauthorizedError`, `RateLimitError`, `ProviderError`, …) instead of raw HTTP exceptions.
+1. **A connector model.** A connector is a plain Python function plus metadata. You fetch by calling it (`result = conn(series_id="GDP")`); the framework wraps the raw `DataFrame` your function returns into a typed `Result` with automatic provenance. Operational failures surface through a small, agent-facing error taxonomy (`UnauthorizedError`, `RateLimitError`, `ProviderError`, …) instead of raw HTTP exceptions.
 
 2. **A hybrid-search catalog.** When you need to *discover* what data exists — search across thousands of series codes, titles, and descriptions — Parsimony ships a portable `Catalog` that combines BM25 keyword indexes and FAISS vector indexes, fused into a single ranked result and snapshot-able to disk or a Hugging Face dataset.
 
-The kernel ships **zero connectors in-tree**. Each connector (e.g. `parsimony-fred`, `parsimony-sdmx`) is a separate `parsimony-<name>` distribution, discovered at runtime through the `parsimony.providers` entry-point group. `import parsimony` stays cheap: the heavy catalog stack (torch, FAISS, sentence-transformers) is an **optional** install and loads lazily on first use.
+The kernel ships **zero connectors in-tree**. Each connector (e.g. `parsimony-fred`, `parsimony-sdmx`) is a separate `parsimony-<name>` distribution, discovered at runtime through the `parsimony.providers` entry-point group; the official library of them is **[parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)**. `import parsimony` stays cheap: the heavy catalog stack (torch, FAISS, sentence-transformers) is an **optional** install and loads lazily on first use.
 
 ## Key features
 
 - **Connectors are just functions.** The function's own parameters *are* the connector's call surface — no separate params schema to wire up.
-- **Typed, provenance-tagged results.** Return a raw `pandas` `DataFrame`; the framework builds the `Result`/`TabularResult` and a `Provenance` record (source, description, UTC fetch time, call params).
+- **Typed, provenance-tagged results.** Return a raw `pandas` `DataFrame`; the framework builds the `Result` and a `Provenance` record (source, description, UTC fetch time, call params).
 - **Declarative output schemas.** `OutputConfig` + `Column` + `ColumnRole` (`DATA`/`KEY`/`TITLE`/`METADATA`) shape results *and* drive catalog-entity extraction.
 - **Agent-facing error taxonomy.** A single `ConnectorError` base with subclasses whose default messages embed retry directives — built for autonomous agent loops, not just humans.
 - **Credential injection by composition.** `bind(api_key=...)` fixes a parameter, removes it from the call surface, and keeps it out of provenance.
@@ -64,24 +64,40 @@ Requires Python 3.11+.
 
 ## Quickstart
 
-### Use an installed connector
+The intended first run is through your coding agent. Install parsimony and the connectors you want, then install the **agent skill** — a single `SKILL.md` that teaches Claude Code / Cursor / Codex how to drive the library: the discover/search/fetch idiom, runtime connector discovery, the catalog query DSL, the typed errors, and the silent-truncation traps. Because the library isn't in any model's training data, the skill is how an off-the-shelf agent learns it.
 
-Connectors are separate distributions. With `parsimony-riksbank` installed (keyless — no API key required):
+```bash
+pip install parsimony-core parsimony-fred parsimony-sdmx
+
+npx skills add ockham-sh/parsimony          # installs the agent skill
+```
+
+> No Node? `uvx npx-skills add ockham-sh/parsimony` does the same without a global Node install. It's a standard Agent Skills repo — the skill lives at [`skills/parsimony/SKILL.md`](skills/parsimony/SKILL.md), so any installer works (`gh skill install`, etc.).
+
+Or just tell your agent *"install the parsimony skill from ockham-sh/parsimony"*. Then ask for data — *"compare euro-area and US inflation since 2015"* — and it searches the catalog, fetches the right series truncation-guarded, and hands back typed results instead of hand-rolling `requests`.
+
+### Use an installed connector directly
+
+You don't need an agent — every connector is a plain importable function. Connectors are separate distributions; with `parsimony-fred` installed:
 
 ```python
-from parsimony_riksbank import riksbank_fetch, riksbank_search
+from parsimony_fred import fred_fetch, fred_search
 
-search_result = riksbank_search(query="euro Swedish krona exchange rate", limit=5)
-print(search_result.df[["code", "title", "source"]].head())
+# fred reads FRED_API_KEY from the environment (or bind it: fred_fetch.bind(api_key=...))
+hits = fred_search(search_text="US unemployment rate")
+print(hits.to_llm())             # governed, bounded preview — columns vary by connector
+print(hits.data.head())          # .data is the canonical payload (a DataFrame here)
 
-result = riksbank_fetch(series_id="SEKEURPMI")  # -> TabularResult
-print(result.df[["date", "value"]].tail())
-print(result.provenance.source)                  # 'riksbank_fetch'
+result = fred_fetch(series_id="UNRATE")   # -> Result
+print(result.data.tail())        # tabular payload; .frame / .df are convenience aliases
+print(result.provenance.source)  # 'fred_fetch'
 ```
 
 ### Define your own connector
 
 A connector is a plain `def` decorated with `@connector`. Return raw data — the framework builds the typed envelope.
+
+> `parsimony-core` is just the framework. Production connectors live in **[parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)** — to ship your own, package it as a `parsimony-<name>` distribution that registers under the `parsimony.providers` entry point (see the [authoring guide](docs/plugins/authoring.md)). The snippets below show the mechanism.
 
 ```python
 import pandas as pd
@@ -99,7 +115,7 @@ def my_data_source(category: str) -> pd.DataFrame:
     )
 
 result = my_data_source(category="widgets")
-print(result.df)
+print(result.data)               # the canonical payload (a DataFrame here)
 print(result.provenance.source)  # 'my_data_source'
 ```
 
@@ -141,27 +157,27 @@ def my_data_source_schematized(category: str) -> pd.DataFrame:
     )
 ```
 
-Connectors **must** be synchronous (`def`, not `async def`) and **must** have a description (docstring or `description=`). They **must** return raw data — returning a `Result`, `TabularResult`, or `(data, properties)` tuple raises `TypeError`. Provider facts belong in `DataFrame` columns, never in `provenance.properties` (which is framework-only).
+Connectors **must** be synchronous (`def`, not `async def`) and **must** have a description (docstring or `description=`). They **must** return raw data — returning a `Result` or `(data, properties)` tuple raises `TypeError`. Provider facts belong in `DataFrame` columns, never in `provenance.properties` (which is framework-only).
 
 ### Compose connectors into a bundle
 
 `Connectors` is an immutable, composable collection. Combine bundles with `+` and scope a credential across only the connectors that accept it:
 
 ```python
-from parsimony import Connectors
-from parsimony_riksbank import CONNECTORS as RIKSBANK
+from parsimony_fred import CONNECTORS as FRED
 from parsimony_sdmx import CONNECTORS as SDMX
 
-bundle = RIKSBANK + SDMX
+# api_key is scoped to the connectors that accept it (fred_*); sdmx ignores it
+bundle = (FRED + SDMX).bind(api_key="…")
 print(bundle.names())
 
-fx = bundle["riksbank_fetch"](series_id="SEKEURPMI")
+us = bundle["fred_fetch"](series_id="UNRATE")
 ecb = bundle["sdmx_fetch"](
-    dataset_key="ECB-EXR",
-    series_key="D.USD.EUR.SP00.A",
+    dataset_ref="ECB-EXR",
+    series_ref="D.USD.EUR.SP00.A",
 )
-print(fx.df.tail())
-print(ecb.df.tail())
+print(us.data.tail())
+print(ecb.data.tail())
 ```
 
 ### Build an HTTP connector with the transport helpers
@@ -268,10 +284,9 @@ A `Connector` is a frozen dataclass wrapping a synchronous function plus metadat
 
 - `conn(**kwargs)` → `Result` (raw `__call__`; `call_raw(**kwargs)` returns the unwrapped function output).
 - `conn.bind(**kwargs)` → a new connector with parameters fixed and removed from `exposed_signature`.
-- `conn.with_callback(cb)` → adds a post-fetch observer (exceptions are logged and swallowed, never propagated).
 - `conn.describe()` / `conn.to_llm()` → human- and LLM-readable cards.
 
-`Connectors([...])` is the immutable collection: `+` to combine (rejects duplicate names), `bundle[name]` / `bundle.get(name)` to index, `names()`, `filter(pred)`, `search(query, *, tags=None, **properties)`, `bind(**kwargs)`, `with_callback(cb)`, `describe()`, `to_llm()`. There is no `merge` classmethod — use `+`.
+`Connectors([...])` is the immutable collection: `+` to combine (rejects duplicate names), `bundle[name]` / `bundle.get(name)` to index, `names()`, `filter(pred)`, `search(query, *, tags=None, **properties)`, `bind(**kwargs)`, `describe()`, `to_llm()`. There is no `merge` classmethod — use `+`.
 
 ### Three decorators
 
@@ -281,9 +296,15 @@ A `Connector` is a frozen dataclass wrapping a synchronous function plus metadat
 | `@enumerator(output=...)` | Entity/series discovery | exactly one `KEY` (with `namespace`), at least one `TITLE`, **no** `DATA`; function must annotate a `pd.DataFrame` return; returned columns strictly validated |
 | `@loader(output=...)` | Observation-data fetch | exactly one `KEY` (with `namespace`), at least one `DATA`, **no** `TITLE`/`METADATA` |
 
-### Result / TabularResult / Provenance
+### Result / Provenance
 
-`Result(data, provenance)` is the opaque envelope; `TabularResult` adds `.df` and an optional `output_schema`, and round-trips through Arrow/Parquet (`to_arrow`/`from_arrow`/`to_parquet`/`from_parquet`) embedding provenance and the column schema in table metadata. `Provenance` is framework-only — connectors never construct it.
+`Result` is the single envelope for every connector output. Its canonical payload is `result.data: Any` — a `pandas` `DataFrame` for tabular fetches, but it may also be a `Series`, scalar, `dict`, `str`, or `bytes`. `result.is_tabular` is `True` exactly when `data` is a `DataFrame`; in that case `result.frame` (alias `result.df`) returns it (and raises if the result is not tabular), and an optional `result.output_schema` (an `OutputConfig`) carries column roles, namespaces, and `exclude_from_llm_view` governance.
+
+- `result.to_llm()` renders a governed, bounded preview — honest row/column counts and the first rows for tabular payloads, a structural type/shape preview for opaque ones. Use it for LLM context.
+- `result.text` coerces the payload to a string.
+- Tabular results round-trip through Arrow/Parquet (`to_arrow`/`from_arrow`/`to_parquet`/`from_parquet`), embedding provenance and the column schema in table metadata; `Result.from_dataframe(df)` builds a tabular result with no schema applied.
+
+`result.provenance` is a framework-built `Provenance` (`source`, `source_description`, `params`, `fetched_at`, plus a framework-only `properties` map) — connectors never construct it.
 
 ### Error taxonomy
 
@@ -351,7 +372,7 @@ The same checks run from the shell via `parsimony list --strict`.
 
 ## The `parsimony` CLI
 
-The package installs a `parsimony` console script (`parsimony = parsimony.cli:main`) with two verbs:
+The package installs a `parsimony` console script (`parsimony = parsimony.cli:main`) with three verbs:
 
 ```bash
 # Enumerate installed plugins (name, version, connector count)
@@ -381,8 +402,8 @@ parsimony-core   →   parsimony-<name> connectors   →   parsimony-agents   �
 ```
 
 - This package (`parsimony-core`) depends on nothing else in the ecosystem.
-- Each connector distribution depends on `parsimony-core` and registers through the `parsimony.providers` entry point.
-- Higher-level packages (e.g. `parsimony-agents`) build on top, consuming connectors and the catalog through the public API here.
+- The connectors are **[parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors)** — one `parsimony-<name>` distribution per provider, each depending on `parsimony-core` and registering through the `parsimony.providers` entry point.
+- The agent layer is **[parsimony-agents](https://github.com/ockham-sh/parsimony-agents)** — an AI agent framework that, given these connectors, answers data questions by writing and executing Python and returns typed artifacts (datasets, charts, reports), not prose.
 
 ## Development
 

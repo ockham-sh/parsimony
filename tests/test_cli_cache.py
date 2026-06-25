@@ -162,3 +162,61 @@ def test_cache_clear_prompt_treats_eof_as_no(
     assert rc == 0
     assert "Aborted." in out
     assert (_pin_parsimony_cache_dir / "models" / "foo" / "x.bin").exists()
+
+
+# ---------------------------------------------------------------------------
+# parsimony cache info --repos  /  clear --repo  (per-repo targeting)
+# ---------------------------------------------------------------------------
+
+
+def test_cache_info_repos_breaks_down_catalogs(
+    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(_pin_parsimony_cache_dir / "catalogs" / "datasets--acme--fred" / "rows.parquet", n_bytes=4096)
+
+    rc = main(["cache", "info", "--repos"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "CATALOG REPO" in out
+    assert "acme/fred" in out
+
+
+def test_cache_info_repos_json_carries_catalog_repos(
+    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(_pin_parsimony_cache_dir / "catalogs" / "datasets--acme--fred" / "rows.parquet", n_bytes=256)
+    rc = main(["cache", "info", "--repos", "--json"])
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert payload["catalog_repos"][0]["repo_id"] == "acme/fred"
+    assert payload["catalog_repos"][0]["size_bytes"] == 256
+
+
+def test_cache_clear_repo_removes_only_that_repo(
+    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _seed(_pin_parsimony_cache_dir / "catalogs" / "datasets--parsimony-dev--sdmx" / "a.parquet")
+    _seed(_pin_parsimony_cache_dir / "catalogs" / "datasets--acme--fred" / "b.parquet")
+
+    rc = main(["cache", "clear", "--repo", "parsimony-dev/sdmx", "--yes"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "catalogs for repo 'parsimony-dev/sdmx'" in out
+    assert not (_pin_parsimony_cache_dir / "catalogs" / "datasets--parsimony-dev--sdmx").exists()
+    assert (_pin_parsimony_cache_dir / "catalogs" / "datasets--acme--fred" / "b.parquet").exists()
+
+
+def test_cache_clear_repo_absent_is_noop(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["cache", "clear", "--repo", "never/cached", "--yes"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Nothing to clear" in out
+
+
+def test_cache_clear_repo_and_subdir_are_mutually_exclusive(
+    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        main(["cache", "clear", "--repo", "a/b", "--subdir", "catalogs", "--yes"])
+    assert exc.value.code == 2
+    assert "not allowed with" in capsys.readouterr().err

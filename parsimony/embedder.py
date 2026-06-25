@@ -114,18 +114,65 @@ def _load_shared_model(model_name: str, device: str | None) -> SentenceTransform
         cached = _MODEL_CACHE.get(key)
         if cached is not None:
             return cached
-        from sentence_transformers import SentenceTransformer
-
-        # local_files_only=True prevents HuggingFace Hub update checks that can
-        # block on CLOSE-WAIT sockets in long-running parent processes.
-        # Falls back to network download when the model is not cached.
-        model: SentenceTransformer
-        try:
-            model = SentenceTransformer(model_name, device=device, local_files_only=True)
-        except Exception:
-            model = SentenceTransformer(model_name, device=device)
+        model = _load_sentence_transformer(model_name, device)
         _MODEL_CACHE[key] = model
         return model
+
+
+def _load_sentence_transformer(model_name: str, device: str | None) -> SentenceTransformer:
+    """Load a SentenceTransformer from the local cache without touching the Hub.
+
+    ``SentenceTransformer(repo_id, local_files_only=True)`` does NOT reliably stay
+    offline: the underlying transformers auto-resolution still fires blocking
+    ``HEAD`` requests to huggingface.co (e.g. ``processor_config.json``), which
+    stall for tens of seconds on a slow network even when the model is fully
+    cached. Resolving the cached snapshot to a local directory with
+    ``snapshot_download(..., local_files_only=True)`` — whose ``local_files_only``
+    *is* honoured — and constructing from that path bypasses Hub resolution
+    entirely. The Hub is contacted only on a genuine cache miss (first run), to
+    download the model once.
+    """
+    from sentence_transformers import SentenceTransformer
+
+    model: SentenceTransformer
+    # A model given as a local path is already resolved — load it directly.
+    if Path(model_name).is_dir():
+        model = SentenceTransformer(model_name, device=device)
+        return model
+
+    local_dir = _resolve_cached_model_dir(model_name)
+    if local_dir is None:
+        # Hub unavailable / repo unresolvable — let SentenceTransformer resolve it.
+        model = SentenceTransformer(model_name, device=device)
+        return model
+    model = SentenceTransformer(local_dir, device=device)
+    return model
+
+
+def _resolve_cached_model_dir(model_name: str) -> str | None:
+    """Resolve *model_name* to a local model directory, downloading once if missing.
+
+    ``snapshot_download``'s ``local_files_only`` *is* honoured (unlike the same
+    kwarg on ``SentenceTransformer``), so the cached path resolves with zero
+    network. Returns ``None`` when the Hub is unavailable or the repo can't be
+    resolved, so the caller falls back to SentenceTransformer's own resolution.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        return None
+    # Catch OSError, not bare Exception: a cache miss raises LocalEntryNotFoundError
+    # (a FileNotFoundError) and every network failure (HfHubHTTPError, ConnectionError,
+    # Timeout) is a requests IOError/OSError — so OSError covers the "can't resolve,
+    # fall back" cases while letting a real bug (TypeError, bad-id ValueError) surface.
+    try:
+        return snapshot_download(model_name, local_files_only=True)  # cached → offline
+    except OSError:
+        pass
+    try:
+        return snapshot_download(model_name)  # first run: download once
+    except OSError:
+        return None
 
 
 class SentenceTransformerEmbedder:

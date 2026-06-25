@@ -67,6 +67,24 @@ def test_catalog_lru_reuses_memory(tmp_path: Path, sample_entries: list[Entity])
     assert first is second
 
 
+def test_catalog_lru_refresh_bypasses_memory(tmp_path: Path, sample_entries: list[Entity]) -> None:
+    lru = CatalogLRU(size=2)
+    url = f"file://{tmp_path / 'missing'}"
+    cache = tmp_path / "lazy"
+
+    def build() -> Catalog:
+        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
+        catalog.set_entities(sample_entries)
+        catalog.build()
+        return catalog
+
+    first = lru.get_or_load(url, cache_path=cache, build=build)
+    assert lru.get_or_load(url, cache_path=cache, build=build) is first  # served from memory
+    refreshed = lru.get_or_load(url, cache_path=cache, build=build, refresh=True)
+    assert refreshed is not first  # refresh dropped the in-memory copy and re-loaded
+    assert len(refreshed) == 2
+
+
 def test_lazy_catalog_dir_under_connectors(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(tmp_path))
     path = lazy_catalog_dir("treasury", "treasury")

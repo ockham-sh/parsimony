@@ -99,6 +99,17 @@ ids = hits.data              # the full result frame; columns vary by connector 
 A fetch parameter shown with a `namespace=` hint in `.describe()` means its legal values come
 from that catalog namespace — search there first.
 
+The **first** search against a provider downloads its catalog (a few seconds, sometimes up to a
+minute on a large one); it is then cached locally and every later search is instant. A slow first
+call is expected — don't treat it as a hang or retry it. The cache persists across sessions. If a
+catalog has been republished (or a cached copy is corrupt), bust it from the shell and re-run —
+the next search re-downloads it. Clearing is targeted: list what's cached, then drop one repo:
+
+```bash
+parsimony cache info --repos                       # cached catalogs, by Hugging Face repo + size
+parsimony cache clear --repo parsimony-dev/sdmx    # drop just that provider's catalogs
+```
+
 ## Errors (every failure is typed; messages carry the next action)
 
 All operational failures derive from `ConnectorError` (has `.provider`); default messages embed

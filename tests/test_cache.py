@@ -285,6 +285,84 @@ def test_clear_is_idempotent_when_subdir_missing(_pin_parsimony_cache_dir: Path)
 
 
 # ---------------------------------------------------------------------------
+# Honest sizing — HF snapshot symlinks into blobs/ must not be double-counted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(os.name != "posix", reason="symlink semantics")
+def test_info_does_not_double_count_blob_symlinks(_pin_parsimony_cache_dir: Path) -> None:
+    """A blob referenced by N snapshot symlinks counts once, not N+1 times."""
+    repo = cache.catalogs_dir() / "datasets--org--name"
+    blobs = repo / "blobs"
+    snaps = repo / "snapshots" / "abc123"
+    blobs.mkdir(parents=True)
+    snaps.mkdir(parents=True)
+    (blobs / "deadbeef").write_bytes(b"x" * 1000)
+    # two snapshot references to the same blob (the HF cache layout)
+    os.symlink(blobs / "deadbeef", snaps / "rows.parquet")
+    os.symlink(blobs / "deadbeef", snaps / "rows2.parquet")
+
+    catalogs = cache.info()["subdirs"]["catalogs"]
+    assert catalogs["files"] == 1  # only the real blob
+    assert catalogs["size_bytes"] == 1000  # not 3000
+
+
+# ---------------------------------------------------------------------------
+# catalog_repos() + clear_catalog_repo() — per-repo introspection / eviction
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_dirname_maps_and_guards() -> None:
+    assert cache._catalog_dirname("parsimony-dev/sdmx") == "datasets--parsimony-dev--sdmx"
+    assert cache._catalog_dirname("bare-name") == "datasets--bare-name"
+    for hostile in ("", "..", "../etc", "org/../escape", "org/.hidden"):
+        with pytest.raises(ValueError):
+            cache._catalog_dirname(hostile)
+
+
+def test_catalog_repos_lists_only_hf_repo_dirs_largest_first(_pin_parsimony_cache_dir: Path) -> None:
+    cat = cache.catalogs_dir()
+    (cat / "datasets--parsimony-dev--sdmx").mkdir()
+    (cat / "datasets--parsimony-dev--sdmx" / "small.parquet").write_bytes(b"x" * 100)
+    (cat / "datasets--acme--fred").mkdir()
+    (cat / "datasets--acme--fred" / "big.parquet").write_bytes(b"x" * 5000)
+    (cat / "not-a-repo").mkdir()  # stray dir — must be ignored
+
+    repos = cache.catalog_repos()
+    assert [r["repo_id"] for r in repos] == ["acme/fred", "parsimony-dev/sdmx"]  # largest first
+    assert repos[0]["size_bytes"] == 5000
+    assert repos[1]["files"] == 1
+
+
+def test_catalog_repos_empty_when_no_catalogs(_pin_parsimony_cache_dir: Path) -> None:
+    assert cache.catalog_repos() == []
+    # read-only: must not create the catalogs dir
+    assert not (_pin_parsimony_cache_dir / "catalogs").exists()
+
+
+def test_clear_catalog_repo_removes_only_that_repo(_pin_parsimony_cache_dir: Path) -> None:
+    cat = cache.catalogs_dir()
+    (cat / "datasets--parsimony-dev--sdmx").mkdir()
+    (cat / "datasets--parsimony-dev--sdmx" / "a.parquet").write_bytes(b"x")
+    (cat / "datasets--acme--fred").mkdir()
+    (cat / "datasets--acme--fred" / "b.parquet").write_bytes(b"x")
+
+    assert cache.clear_catalog_repo("parsimony-dev/sdmx") is True
+
+    assert not (cat / "datasets--parsimony-dev--sdmx").exists()
+    assert (cat / "datasets--acme--fred" / "b.parquet").exists()
+
+
+def test_clear_catalog_repo_returns_false_when_absent(_pin_parsimony_cache_dir: Path) -> None:
+    assert cache.clear_catalog_repo("never/cached") is False
+
+
+def test_clear_catalog_repo_rejects_traversal(_pin_parsimony_cache_dir: Path) -> None:
+    with pytest.raises(ValueError):
+        cache.clear_catalog_repo("../escape")
+
+
+# ---------------------------------------------------------------------------
 # TTLDiskCache — JSON KV with per-call TTL
 # ---------------------------------------------------------------------------
 

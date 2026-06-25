@@ -3,23 +3,20 @@
 This module owns every interaction with ``huggingface_hub`` so the core
 :class:`~parsimony.catalog.catalog.Catalog` stays free of remote-fetch plumbing.
 ``resolve_catalog_dir`` maps any catalog URL to a local directory; the loader in
-:mod:`parsimony.catalog.catalog` reads that directory. ``_save_hf`` is the upload
-counterpart used by :meth:`Catalog.save`.
+:mod:`parsimony.catalog.catalog` reads that directory. ``_upload_hf`` is the
+upload counterpart: :meth:`Catalog.save` serializes itself to a staging
+directory and hands that path here. This module works in paths, never in
+``Catalog`` objects, so it carries no dependency back on ``catalog.py``.
 """
 
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
 
 from parsimony.catalog.storage import META_FILENAME
 from parsimony.catalog.urls import REPO_TYPE, parse_catalog_url
 from parsimony.errors import CatalogNotFoundError
-
-if TYPE_CHECKING:
-    from parsimony.catalog.catalog import Catalog
 
 logger = logging.getLogger(__name__)
 
@@ -166,17 +163,15 @@ def _log_first_pull(root: str, sub: str, *, revision: str | None, cache_dir: Pat
     logger.info("Fetching catalog %s from Hugging Face (first load; cached locally after this)", label)
 
 
-def _save_hf(catalog: Catalog, root: str, sub: str, *, builder: str | None = None) -> None:
+def _upload_hf(local_dir: Path, root: str, sub: str) -> None:
+    """Upload a serialized catalog snapshot directory to ``hf://root/sub``."""
     from huggingface_hub import HfApi
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        staging = Path(tmpdir) / "snapshot"
-        catalog._save_to_path(staging, builder=builder)
-        api = HfApi()
-        api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
-        api.upload_folder(
-            folder_path=str(staging),
-            repo_id=root,
-            repo_type=REPO_TYPE,
-            path_in_repo=sub or None,
-        )
+    api = HfApi()
+    api.create_repo(repo_id=root, repo_type=REPO_TYPE, exist_ok=True)
+    api.upload_folder(
+        folder_path=str(local_dir),
+        repo_id=root,
+        repo_type=REPO_TYPE,
+        path_in_repo=sub or None,
+    )

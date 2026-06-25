@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import tempfile
 import threading
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -38,7 +39,7 @@ from parsimony.catalog.models import (
     catalog_match_from_entity,
 )
 from parsimony.catalog.query import parse_query
-from parsimony.catalog.remote import _save_hf, resolve_catalog_dir
+from parsimony.catalog.remote import _upload_hf, resolve_catalog_dir
 from parsimony.catalog.storage import (
     ENTRIES_FILENAME,
     INDEXES_DIRNAME,
@@ -482,7 +483,13 @@ class Catalog:
         if parsed.scheme == "file":
             _save_file(self, parsed.root, parsed.sub, builder=builder)
         elif parsed.scheme == "hf":
-            _save_hf(self, parsed.root, parsed.sub, builder=builder)
+            # Serialize here (the Catalog owns its own format), then hand the
+            # staged directory to the transport — remote.py works in paths, not
+            # Catalogs, so it carries no dependency back on this module.
+            with tempfile.TemporaryDirectory() as tmpdir:
+                staging = Path(tmpdir) / "snapshot"
+                self._save_to_path(staging, builder=builder)
+                _upload_hf(staging, parsed.root, parsed.sub)
         else:
             raise ValueError(f"Unsupported catalog URL scheme {parsed.scheme!r}. Supported: ['file', 'hf']")
 

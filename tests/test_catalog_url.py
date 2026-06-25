@@ -263,13 +263,13 @@ def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) 
 def test_hf_save_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _spy_save_hf(catalog: Any, root: str, sub: str, *, builder: str | None = None) -> None:
+    def _spy_upload_hf(local_dir: Any, root: str, sub: str) -> None:
         captured["root"] = root
         captured["sub"] = sub
 
     from parsimony.catalog import catalog as catalog_module
 
-    monkeypatch.setattr(catalog_module, "_save_hf", _spy_save_hf)
+    monkeypatch.setattr(catalog_module, "_upload_hf", _spy_upload_hf)
 
     catalog = Catalog(name="x")
     catalog.set_entities([_entry("x", "A", "alpha")])

@@ -206,9 +206,7 @@ def test_cache_clear_repo_removes_only_that_repo(
     assert (_pin_parsimony_cache_dir / "catalogs" / "datasets--acme--fred" / "b.parquet").exists()
 
 
-def test_cache_clear_repo_absent_is_noop(
-    _pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_cache_clear_repo_absent_is_noop(_pin_parsimony_cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["cache", "clear", "--repo", "never/cached", "--yes"])
     out = capsys.readouterr().out
     assert rc == 0

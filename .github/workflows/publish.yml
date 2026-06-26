@@ -45,10 +45,39 @@ jobs:
           name: dist
           path: dist/
 
+  smoke:
+    name: Published-resolution smoke
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install the built wheel with deps from PyPI and smoke it
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Gate publish on the artifact a user actually installs: a venv with no
+          # source tree resolves parsimony-core's deps from PyPI, then we install
+          # the freshly-built wheel and exercise import + the discovery entry
+          # point. Mirrors the release gate in parsimony-connectors / parsimony-agents
+          # — PR CI tracks trunk, the release gate tracks PyPI.
+          venv="$RUNNER_TEMP/smoke"
+          python3 -m venv "$venv"
+          "$venv/bin/python" -m pip install --quiet --upgrade pip
+          "$venv/bin/python" -m pip install "$(ls dist/*.whl)"
+          "$venv/bin/python" -c "import parsimony; from parsimony.discover import load_all; load_all(); print('published-resolution smoke OK: parsimony-core')"
+
   publish-pypi:
     name: Publish to PyPI
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -68,7 +97,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    needs: build
+    needs: [build, smoke]
     runs-on: ubuntu-latest
     environment:
       name: testpypi

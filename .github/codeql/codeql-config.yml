@@ -1,0 +1,23 @@
+name: "parsimony CodeQL config"
+
+# Inherit the default security-and-quality query suite (set on the action via
+# `queries: security-and-quality`) and prune the rules below.
+#
+# Suppressions:
+# - `py/call/wrong-arguments`: redundant with mypy/pyright, which run in CI and
+#   understand `pytest.raises(TypeError)` context (so they don't false-positive
+#   on intentional bad-input tests like `Catalog(embedder=...)` verifying the
+#   param moved to VectorIndex). CodeQL's version is path-agnostic and would
+#   flag legitimate test patterns. Note: `query-filters` doesn't support
+#   per-path scoping — it's all-or-nothing per query id.
+
+query-filters:
+  - exclude:
+      id: py/call/wrong-named-argument
+  - exclude:
+      id: py/call/wrong-named-class-argument
+
+paths-ignore:
+  - "**/.venv/**"
+  - "**/dist/**"
+  - "**/build/**"

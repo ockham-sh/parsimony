@@ -1,0 +1,107 @@
+site_name: parsimony
+site_url: https://docs.parsimony.dev
+site_description: Typed, composable data connectors with searchable catalogs for Python
+site_author: Ockham.sh
+repo_url: https://github.com/ockham-sh/parsimony
+repo_name: ockham-sh/parsimony
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  font:
+    text: Ubuntu
+    code: Ubuntu Mono
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: deep orange
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - content.code.copy
+    - content.code.annotate
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - toc.follow
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - stylesheets/terminal.css
+
+nav:
+  - Home: index.md
+  - Getting started:
+      - Installation: getting-started/installation.md
+      - Quickstart: getting-started/quickstart.md
+      - Core concepts: getting-started/concepts.md
+  - Connectors:
+      - The connector model: connectors/index.md
+      - Defining connectors: connectors/defining-connectors.md
+      - Loaders and enumerators: connectors/loaders-and-enumerators.md
+      - Calling, binding, composing: connectors/calling-binding-composing.md
+      - Results and output schemas: connectors/results.md
+      - Errors: connectors/errors.md
+      - HTTP transport: connectors/http-transport.md
+  - Plugins:
+      - Plugin contract: contract.md
+      - Plugins and providers: plugins/index.md
+      - Discovering providers: plugins/discovery.md
+      - Authoring a provider: plugins/authoring.md
+      - Conformance testing: plugins/conformance.md
+  - Catalog:
+      - The Catalog: catalog/index.md
+      - Entities: catalog/entities.md
+      - Building and searching: catalog/search.md
+      - Indexes: catalog/indexes.md
+      - Ranking and fusion: catalog/ranking-and-fusion.md
+      - Embedders: catalog/embedders.md
+      - Snapshots and persistence: catalog/snapshots.md
+      - Data stores: catalog/data-store.md
+  - CLI: cli.md
+  - Caching: caching.md
+  - Reference:
+      - Public API & import map: reference/api.md
+      - Environment variables: reference/environment.md
+  - Development: development.md
+  - Connector packages: '!import https://github.com/ockham-sh/parsimony-connectors?branch=main&docs_dir=docs'
+  - Agents: '!import https://github.com/ockham-sh/parsimony-agents?branch=main&docs_dir=docs'
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+plugins:
+  - search
+  - multirepo
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/ockham-sh/parsimony
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/parsimony-core/

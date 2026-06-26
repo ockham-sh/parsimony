@@ -1,0 +1,145 @@
+"""Tests for InMemoryDataStore and load_result."""
+
+from __future__ import annotations
+
+import pandas as pd
+import pytest
+
+from parsimony.connector import Connectors, loader
+from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
+
+LOAD_SCHEMA = OutputConfig(
+    columns=[
+        Column(name="code_col", role=ColumnRole.KEY, namespace="test_ns"),
+        Column(name="obs", role=ColumnRole.DATA),
+    ]
+)
+
+
+@loader(output=LOAD_SCHEMA)
+def demo_loader(q: str = "x") -> pd.DataFrame:
+    """Load test observations."""
+    return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
+
+
+def test_data_from_result_extracts_data_columns_only() -> None:
+    table = Result(
+        data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
+        provenance=Provenance(source="t", source_description="t"),
+        output_schema=LOAD_SCHEMA,
+    )
+    rows = _data_from_result(table)
+    assert len(rows) == 1
+    ns, code, df = rows[0]
+    assert ns == "test_ns"
+    assert code == "X"
+    assert list(df.columns) == ["obs"]
+    assert df["obs"].iloc[0] == 42.0
+
+
+def test_data_from_result_groups_by_key() -> None:
+    table = Result(
+        data=pd.DataFrame(
+            {
+                "code_col": ["A", "B", "A"],
+                "obs": [1.0, 2.0, 3.0],
+            }
+        ),
+        provenance=Provenance(source="t", source_description="t"),
+        output_schema=LOAD_SCHEMA,
+    )
+    rows = _data_from_result(table)
+    assert len(rows) == 2
+    by_code = {code: df for _, code, df in rows}
+    assert len(by_code["A"]) == 2
+    assert len(by_code["B"]) == 1
+    assert list(by_code["A"].columns) == ["obs"]
+
+
+def test_data_from_result_requires_key_namespace() -> None:
+    table = Result(
+        data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
+        provenance=Provenance(source="t", source_description="t"),
+        output_schema=OutputConfig(
+            columns=[
+                Column(name="code_col", role=ColumnRole.KEY),
+                Column(name="obs", role=ColumnRole.DATA),
+            ]
+        ),
+    )
+    with pytest.raises(ValueError, match="namespace"):
+        _data_from_result(table)
+
+
+def test_load_result_skips_existing_keys() -> None:
+    store = InMemoryDataStore()
+    store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
+
+    table = Result(
+        data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
+        provenance=Provenance(source="t", source_description="t"),
+        output_schema=LOAD_SCHEMA,
+    )
+    r = store.load_result(table, force=False)
+    assert r.total == 2
+    assert r.loaded == 1
+    assert r.skipped == 1
+    b = store.get("test_ns", "B")
+    assert b is not None and b["obs"].iloc[0] == 2.0
+    a = store.get("test_ns", "A")
+    assert a is not None and a["obs"].iloc[0] == 0.0
+
+
+def test_load_result_force_upserts_existing() -> None:
+    store = InMemoryDataStore()
+    store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
+
+    table = Result(
+        data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
+        provenance=Provenance(source="t", source_description="t"),
+        output_schema=LOAD_SCHEMA,
+    )
+    r = store.load_result(table, force=True)
+    assert r.total == 1
+    assert r.loaded == 1
+    assert r.skipped == 0
+    a = store.get("test_ns", "A")
+    assert a is not None and a["obs"].iloc[0] == 9.0
+
+
+def test_load_result_directly() -> None:
+    """Userland pattern: call store.load_result(result) after the connector returns."""
+    store = InMemoryDataStore()
+    result = demo_loader(q="x")
+    store.load_result(result)
+    df = store.get("test_ns", "A")
+    assert df is not None
+    assert list(df.columns) == ["obs"]
+    assert df["obs"].iloc[0] == 1.0
+
+
+def test_load_result_via_connectors() -> None:
+    store = InMemoryDataStore()
+    c = Connectors([demo_loader])
+    result = c["demo_loader"](q="x")
+    store.load_result(result)
+    df = store.get("test_ns", "A")
+    assert df is not None
+
+
+def test_data_store_crud() -> None:
+    store = InMemoryDataStore()
+    df = pd.DataFrame({"x": [1, 2]})
+    store.upsert("ns", "c1", df)
+    assert store.exists([("ns", "c1")]) == {("ns", "c1")}
+    got = store.get("ns", "c1")
+    assert got is not None
+    pd.testing.assert_frame_equal(got.reset_index(drop=True), df.reset_index(drop=True))
+    store.delete("ns", "c1")
+    assert store.get("ns", "c1") is None
+
+
+def test_load_result_model() -> None:
+    r = LoadResult(total=2, loaded=1, skipped=1, errors=0)
+    assert r.total == 2

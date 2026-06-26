@@ -1,0 +1,198 @@
+/* Terminal-inspired palette — mirrors terminal/web/design/tokens.css.
+   Surfaces near-black, foreground near-white, Ockham blue accent,
+   sharp corners, no transitions. */
+
+:root,
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  /* Surfaces */
+  --md-default-bg-color:           hsl(0 0% 3%);
+  --md-default-bg-color--light:    hsl(0 0% 5%);
+  --md-default-bg-color--lighter:  hsl(0 0% 8%);
+  --md-default-bg-color--lightest: hsl(0 0% 12%);
+
+  /* Foreground — body sits below peak white so <strong> can pop. */
+  --md-default-fg-color:            hsl(0 0% 88%);
+  --md-default-fg-color--light:     hsl(0 0% 65%);
+  --md-default-fg-color--lighter:   hsl(0 0% 45%);
+  --md-default-fg-color--lightest:  hsl(0 0% 20%);
+
+  /* Header / brand chrome */
+  --md-primary-fg-color:        hsl(0 0% 3%);
+  --md-primary-fg-color--light: hsl(0 0% 8%);
+  --md-primary-fg-color--dark:  hsl(0 0% 0%);
+  --md-primary-bg-color:        hsl(0 0% 98%);
+  --md-primary-bg-color--light: hsl(0 0% 70%);
+
+  /* Links + accent — Ockham blue, slightly brighter than the prompt
+     blue so it pops against the soft body color. */
+  --md-accent-fg-color:              hsl(217 91% 65%);
+  --md-accent-fg-color--transparent: hsla(217 91% 65% / 0.1);
+  --md-accent-bg-color:              hsl(0 0% 98%);
+  --md-typeset-a-color:              hsl(217 91% 65%);
+
+  /* Code surfaces */
+  --md-code-bg-color:           hsl(0 0% 8%);
+  --md-code-fg-color:           hsl(0 0% 92%);
+  --md-code-hl-color:           hsla(217 91% 53% / 0.18);
+
+  /* Pygments token palette — pulled from terminal/web/design/tokens.css
+     (terminal-blue / cyan / purple / green / amber / red) so syntax
+     highlighting rhymes with the rest of the design system. */
+  --md-code-hl-keyword-color:    hsl(270 60% 75%);   /* purple */
+  --md-code-hl-function-color:   hsl(217 65% 72%);   /* blue   */
+  --md-code-hl-constant-color:   hsl(185 60% 67%);   /* cyan   */
+  --md-code-hl-string-color:     hsl(145 55% 62%);   /* green  */
+  --md-code-hl-number-color:     hsl(38 70% 65%);    /* amber  */
+  --md-code-hl-special-color:    hsl(0 60% 68%);     /* red    */
+  --md-code-hl-name-color:       hsl(0 0% 92%);
+  --md-code-hl-variable-color:   hsl(0 0% 92%);
+  --md-code-hl-comment-color:    hsl(0 0% 50%);
+  --md-code-hl-operator-color:   hsl(0 0% 70%);
+  --md-code-hl-punctuation-color: hsl(0 0% 70%);
+  --md-code-hl-generic-color:    hsl(0 0% 70%);
+
+  /* Footer */
+  --md-footer-bg-color:          hsl(0 0% 3%);
+  --md-footer-bg-color--dark:    hsl(0 0% 2%);
+  --md-footer-fg-color:          hsl(0 0% 70%);
+  --md-footer-fg-color--light:   hsl(0 0% 50%);
+  --md-footer-fg-color--lighter: hsl(0 0% 35%);
+}
+
+/* Sharp corners, no rounding — terminals are square. */
+.md-typeset code,
+.md-typeset pre,
+.md-typeset pre > code,
+.md-typeset .highlight,
+.md-typeset .highlighttable,
+.md-typeset .admonition,
+.md-typeset details,
+.md-typeset table:not([class]),
+.md-typeset .tabbed-set,
+.md-typeset .tabbed-content,
+.md-button,
+.md-search__input,
+.md-search__output,
+.md-search-result__article,
+.md-tabs__link,
+.md-nav__title,
+.md-typeset blockquote,
+.md-clipboard {
+  border-radius: 0 !important;
+}
+
+/* Single border on the outermost code element only — no nested boxes.
+   `.highlight` wraps `<pre>` for syntax-highlighted blocks; both are
+   covered by these two rules without doubling up because `.highlight`
+   has no border itself and `<pre>` always renders a single 1px frame. */
+.md-typeset pre {
+  border: 1px solid hsl(0 0% 18%);
+  background-color: hsl(0 0% 8%);
+}
+.md-typeset .highlight,
+.md-typeset pre > code {
+  border: none;
+  background-color: transparent;
+}
+
+/* Inline code: distinct background, larger size, subtle blue tint so
+   identifiers in prose ("`Result`", "`fred_fetch`") read clearly
+   without competing with body copy. */
+.md-typeset :not(pre) > code {
+  border: none;
+  background-color: hsl(0 0% 14%);
+  color: hsl(217 65% 78%);
+  padding: 0.15em 0.4em;
+  font-size: 0.9em;
+  font-weight: 500;
+}
+
+/* Bold: explicit pure-white at 700 weight gives <strong> room above
+   the softened body copy. */
+.md-typeset strong,
+.md-typeset b {
+  color: hsl(0 0% 100%);
+  font-weight: 700;
+}
+
+/* Tables: sharp, terminal-style. */
+.md-typeset table:not([class]) {
+  border: 1px solid hsl(0 0% 18%);
+}
+.md-typeset table:not([class]) th {
+  background-color: hsl(0 0% 8%);
+  border-bottom: 1px solid hsl(0 0% 18%);
+  color: hsl(0 0% 100%);
+}
+.md-typeset table:not([class]) td {
+  border-bottom: 1px solid hsl(0 0% 12%);
+}
+
+/* Heading rhythm: a thin underline below H2 echoes terminal section
+   dividers and breaks up the page without adding color. H1 stays
+   plain (it's already large). */
+.md-typeset h2 {
+  border-bottom: 1px solid hsl(0 0% 14%);
+  padding-bottom: 0.3em;
+  color: hsl(0 0% 100%);
+}
+.md-typeset h1,
+.md-typeset h3 {
+  color: hsl(0 0% 100%);
+}
+
+/* Header underline matches terminal accent. */
+.md-header {
+  border-bottom: 1px solid hsl(0 0% 18%);
+}
+.md-tabs {
+  border-bottom: 1px solid hsl(0 0% 18%);
+}
+
+/* Admonition blocks: muted backgrounds, square corners, slightly
+   brighter title for hierarchy. */
+.md-typeset .admonition,
+.md-typeset details {
+  border-left-width: 3px;
+  background-color: hsl(0 0% 6%);
+}
+.md-typeset .admonition-title,
+.md-typeset summary {
+  color: hsl(0 0% 100%);
+}
+
+/* Links in body: brighter blue, no underline by default — Material
+   adds underline on hover. */
+.md-typeset a {
+  color: var(--md-typeset-a-color);
+}
+.md-typeset a:hover {
+  color: hsl(217 91% 75%);
+}
+
+/* Sidebar section titles — uppercase, tracked, bright white, with a
+   thin underline so the eye lands on group boundaries first. Targets
+   both `navigation.sections` items and Material's standalone titles. */
+.md-nav__item--section > .md-nav__link,
+.md-nav--lifted > .md-nav__list > .md-nav__item--section > .md-nav__link,
+.md-nav--primary > .md-nav__title {
+  color: hsl(0 0% 100%) !important;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  border-bottom: 1px solid hsl(0 0% 14%);
+  padding-bottom: 0.4em;
+  margin-top: 0.4em;
+}
+
+/* Leaf nav links: a touch brighter so the section/leaf hierarchy is
+   visible without color. */
+.md-nav__link {
+  color: hsl(0 0% 75%);
+}
+.md-nav__link--active {
+  color: hsl(217 91% 70%);
+  font-weight: 600;
+}

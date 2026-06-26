@@ -1,0 +1,43 @@
+name: New Connector Request
+description: Request support for a new data source
+labels: ["new-connector"]
+body:
+  - type: input
+    id: source-name
+    attributes:
+      label: Data source name
+      placeholder: "e.g. World Bank Open Data, Quandl, Alpha Vantage"
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Why would this be useful?
+      description: What workflows does this connector enable?
+    validations:
+      required: true
+
+  - type: input
+    id: api-docs
+    attributes:
+      label: API documentation URL
+      placeholder: "https://..."
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: Authentication required?
+      options:
+        - None (public API)
+        - Free API key
+        - Paid API key
+        - OAuth / token
+        - Other
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this connector

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv tool run ruff check parsimony/ tests/ examples/
+      - run: uv tool run ruff format --check parsimony/ tests/ examples/
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e ".[dev]"
+      - run: mypy parsimony/
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: uv pip install --system -e ".[dev]"
+      - run: pytest tests/ -v -m "not integration" --cov=parsimony --cov-report=term-missing --cov-fail-under=80
+
+  audit:
+    # Supply-chain audit against the full [standard,litellm] surface (the
+    # dev extra pulls both). Required gate — treat as a hard gate, not
+    # dev-only, because every CVE in torch/faiss/huggingface_hub/litellm
+    # becomes a parsimony CVE.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: uv pip install --system -e ".[dev]"
+      - name: pip-audit on resolved environment
+        # --disable-pip only applies with -r requirements.txt. Audit the
+        # installed environment (which includes the [dev] extra) instead.
+        run: uv tool run pip-audit --strict

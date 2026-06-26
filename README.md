@@ -179,29 +179,32 @@ us = conns["fred_fetch"](
     observation_end="2025-12-31",
 ).data                                        # date + value (monthly index), plus series metadata
 
-# Euro area — SDMX (ECB): datasets_search → series_search → fetch
+# Euro area — SDMX (Eurostat): datasets_search → series_search → fetch
 flows = conns["sdmx_datasets_search"](
-    query="harmonised index of consumer prices HICP inflation",
-    agency="ECB", limit=10,
+    query="HICP all-items monthly annual rate of change inflation",
+    agency="ESTAT", limit=10,
 )
-print(flows.data[["flow_id", "title"]])       # -> ECB/ICP
+print(flows.data[["flow_id", "title"]])       # inspect + pick PRC_HICP_MANR
 
 series = conns["sdmx_series_search"](
-    agency="ECB", dataset_id="ICP",
-    query="euro area changing composition overall HICP annual average rate of change",
+    agency="ESTAT", dataset_id="PRC_HICP_MANR",
+    query="euro area all items annual rate of change",
     limit=10,
 )
-print(series.data[["key", "title"]])          # -> ICP.A.U2.N.000000.4.AVR
-#   U2 = euro area (changing composition) -> one continuous series, no fixed-membership stitch
-#   AVR = annual average rate of change (already a %, not an index)
-ea = conns["sdmx_fetch"](
-    dataset_ref="ECB-ICP",                    # agency-flow
-    series_ref="A.U2.N.000000.4.AVR",         # the series key with the flow id (ICP.) stripped
-    start_period="2014", end_period="2026",
+print(series.data[["key", "title"]])          # -> M.RCH_A.CP00.EA19 (2015-2022), M.RCH_A.CP00.EA20 (2023->)
+# Eurostat gives the euro area only as fixed compositions — stitch EA19 (->2022) + EA20 (2023->)
+# so the composition change (Croatia joined the euro in 2023) stays explicit, not silently chained.
+ea19 = conns["sdmx_fetch"](
+    dataset_ref="ESTAT-PRC_HICP_MANR", series_ref="M.RCH_A.CP00.EA19",
+    start_period="2015", end_period="2022",
+).data
+ea20 = conns["sdmx_fetch"](
+    dataset_ref="ESTAT-PRC_HICP_MANR", series_ref="M.RCH_A.CP00.EA20",
+    start_period="2023", end_period="2026",
 ).data                                        # TIME_PERIOD, value, + decoded dimension columns
 
 print(us.tail())
-print(ea.tail())
+print(ea20.tail())
 ```
 
 ### Build an HTTP connector with the transport helpers

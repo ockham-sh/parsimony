@@ -210,7 +210,7 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
     download with ``root='org/repo'`` and ``sub='bundle'``."""
     captured: dict[str, Any] = {}
 
-    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None, **kwargs: Any) -> Any:
         captured.update(root=root, sub=sub, revision=revision)
         raise _StopAfterResolve
 
@@ -227,7 +227,7 @@ def test_hf_load_threads_sub_into_handler(monkeypatch: pytest.MonkeyPatch) -> No
 def test_hf_load_no_sub(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def _spy(root: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+    def _spy(root: str, *, revision: str | None = None, cache_dir: Any = None, **kwargs: Any) -> Any:
         captured.update(root=root, revision=revision)
         raise _StopAfterResolve
 
@@ -246,7 +246,7 @@ def test_hf_load_threads_revision_into_handler(monkeypatch: pytest.MonkeyPatch) 
     the remote load is reproducible and tamper-resistant."""
     captured: dict[str, Any] = {}
 
-    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None) -> Any:
+    def _spy(root: str, sub: str, *, revision: str | None = None, cache_dir: Any = None, **kwargs: Any) -> Any:
         captured.update(root=root, sub=sub, revision=revision)
         raise _StopAfterResolve
 

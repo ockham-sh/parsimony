@@ -10,7 +10,9 @@ snapshot.
 
 from __future__ import annotations
 
+import json
 import logging
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import huggingface_hub
@@ -19,6 +21,7 @@ import pytest
 
 from parsimony.catalog import BM25Index, Catalog, Entity
 from parsimony.catalog import remote as catalog_remote
+from parsimony.errors import CatalogNotFoundError
 
 
 def _write_catalog(target: Path) -> None:
@@ -26,6 +29,14 @@ def _write_catalog(target: Path) -> None:
     catalog.set_entities([Entity(namespace="ecb", code="EXR", title="exchange rates")])
     catalog.build()
     catalog.save(f"file://{target}")
+
+
+def _backdate_built_at(snapshot_dir: Path, *, age_s: float) -> None:
+    """Rewrite a saved snapshot's ``meta.json`` ``build.built_at`` to look *age_s* seconds old."""
+    meta_path = snapshot_dir / "meta.json"
+    data = json.loads(meta_path.read_text())
+    data["build"]["built_at"] = (datetime.now(UTC) - timedelta(seconds=age_s)).isoformat()
+    meta_path.write_text(json.dumps(data))
 
 
 class _FakeRepoFile:
@@ -198,3 +209,149 @@ def test_load_hf_subpath_no_cache_reraises(monkeypatch: pytest.MonkeyPatch, tmp_
 
     with pytest.raises(OSError, match="network unreachable"):
         Catalog.load("hf://parsimony-dev/sdmx/missing")
+
+
+# ---------------------------------------------------------------------------
+# Freshness policy: max_age_s (offline fallback) + revalidate_ttl_s (online)
+# ---------------------------------------------------------------------------
+
+
+def test_download_hf_subpath_offline_fallback_raises_past_max_age(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Past ``max_age_s``, a stale cached snapshot is refused rather than served."""
+    sub = "sdmx_datasets_ecb"
+    cached_target = tmp_path / "cache_snapshot" / sub
+    _write_catalog(cached_target)
+    _backdate_built_at(cached_target, age_s=3600)
+
+    class BoomApi:
+        def list_repo_tree(self, **kwargs):
+            raise OSError("network unreachable")
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", BoomApi)
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: cached_target / "meta.json")
+
+    with pytest.raises(CatalogNotFoundError, match="exceeding max_age_s"):
+        catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache", max_age_s=60)
+
+
+def test_download_hf_subpath_offline_fallback_within_max_age_serves_and_warns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Within ``max_age_s`` (or with no policy set), the cached snapshot is served and its age is logged."""
+    sub = "sdmx_datasets_ecb"
+    cached_target = tmp_path / "cache_snapshot" / sub
+    _write_catalog(cached_target)
+    _backdate_built_at(cached_target, age_s=120)
+
+    class BoomApi:
+        def list_repo_tree(self, **kwargs):
+            raise OSError("network unreachable")
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", BoomApi)
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: cached_target / "meta.json")
+
+    with caplog.at_level(logging.WARNING, logger="parsimony.catalog.remote"):
+        target = catalog_remote.download_hf_subpath(
+            "parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache", max_age_s=3600
+        )
+
+    assert target == cached_target
+    assert any("120s old" in r.getMessage() for r in caplog.records)
+
+
+def test_download_hf_subpath_revalidate_ttl_skips_second_listing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A second call within ``revalidate_ttl_s`` reuses the snapshot dir without re-listing the Hub."""
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: None)
+    list_calls = {"n": 0}
+    fake_cls = huggingface_hub.HfApi
+    original_list_repo_tree = fake_cls.list_repo_tree
+
+    def counting_list_repo_tree(self, **kwargs):
+        list_calls["n"] += 1
+        return original_list_repo_tree(self, **kwargs)
+
+    monkeypatch.setattr(fake_cls, "list_repo_tree", counting_list_repo_tree)
+
+    cache_dir = tmp_path / "hfcache"
+    first = catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir)
+    second = catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir)
+
+    assert first == second == snap / sub
+    assert list_calls["n"] == 1  # second call served from the revalidation-TTL shortcut
+
+
+def test_download_hf_subpath_revalidate_ttl_none_always_relists(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """``revalidate_ttl_s=None`` disables the shortcut — every call re-lists the Hub."""
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: None)
+    list_calls = {"n": 0}
+    fake_cls = huggingface_hub.HfApi
+    original_list_repo_tree = fake_cls.list_repo_tree
+
+    def counting_list_repo_tree(self, **kwargs):
+        list_calls["n"] += 1
+        return original_list_repo_tree(self, **kwargs)
+
+    monkeypatch.setattr(fake_cls, "list_repo_tree", counting_list_repo_tree)
+
+    cache_dir = tmp_path / "hfcache"
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir, revalidate_ttl_s=None)
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir, revalidate_ttl_s=None)
+
+    assert list_calls["n"] == 2
+
+
+def test_recent_snapshot_dir_round_trip(tmp_path: Path) -> None:
+    """``_remember_snapshot_dir`` + ``_recent_snapshot_dir`` round-trip within the TTL window."""
+    recent = catalog_remote._recent_snapshot_dir
+    snap = tmp_path / "snap"
+    snap.mkdir()
+    cache_dir = tmp_path / "hfcache"
+
+    assert recent("org/repo", "sub", None, cache_dir=cache_dir, revalidate_ttl_s=60) is None
+
+    catalog_remote._remember_snapshot_dir("org/repo", "sub", None, snap, cache_dir=cache_dir)
+
+    assert recent("org/repo", "sub", None, cache_dir=cache_dir, revalidate_ttl_s=60) == snap
+    # Disabling the shortcut always misses, regardless of freshness.
+    assert recent("org/repo", "sub", None, cache_dir=cache_dir, revalidate_ttl_s=None) is None
+
+
+def test_recent_snapshot_dir_missing_dir_falls_through(tmp_path: Path) -> None:
+    """A remembered snapshot dir that no longer exists on disk (e.g. cache cleared) is not trusted."""
+    cache_dir = tmp_path / "hfcache"
+    catalog_remote._remember_snapshot_dir("org/repo", "sub", None, tmp_path / "gone", cache_dir=cache_dir)
+
+    assert (
+        catalog_remote._recent_snapshot_dir("org/repo", "sub", None, cache_dir=cache_dir, revalidate_ttl_s=60) is None
+    )
+
+
+def test_snapshot_age_s_reads_built_at(tmp_path: Path) -> None:
+    """Age is computed from the snapshot's ``build.built_at``, not the file's mtime."""
+    target = tmp_path / "snap"
+    _write_catalog(target)
+    _backdate_built_at(target, age_s=120)
+
+    age = catalog_remote._snapshot_age_s(target)
+
+    assert age is not None
+    assert 115 <= age <= 130
+
+
+def test_snapshot_age_s_missing_meta_returns_none(tmp_path: Path) -> None:
+    """No ``meta.json`` (or a corrupt one) is a soft failure, not an exception."""
+    assert catalog_remote._snapshot_age_s(tmp_path / "nothing-here") is None

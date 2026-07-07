@@ -36,7 +36,7 @@ The kernel ships **zero connectors in-tree**. Each connector (e.g. `parsimony-fr
 - **Declarative output schemas.** `OutputConfig` + `Column` + `ColumnRole` (`DATA`/`KEY`/`TITLE`/`METADATA`) shape results *and* drive catalog-entity extraction.
 - **Agent-facing error taxonomy.** A single `ConnectorError` base with subclasses whose default messages embed retry directives — built for autonomous agent loops, not just humans.
 - **Credential injection by composition.** `bind(api_key=...)` fixes a parameter, removes it from the call surface, and keeps it out of provenance.
-- **HTTP transport helpers.** `HttpClient` plus `fetch_json` / `fetch_csv` / `fetch_text` (and `map_http_error`) translate `httpx` errors into the typed taxonomy — including a non-JSON/non-CSV body surfacing as `ParseError` — with secret redaction in logs and transient retry built in.
+- **HTTP transport helpers.** `HttpClient` plus `fetch_json` / `fetch_csv` / `fetch_text` (and `check_status`) translate `httpx` errors into the typed taxonomy — including a non-JSON/non-CSV body surfacing as `ParseError` — with secret redaction in logs and transient retry built in.
 - **Plugin discovery + conformance.** Plugins register under `parsimony.providers`; `parsimony list` enumerates them and `--strict` runs a conformance suite.
 - **Hybrid search.** BM25 + FAISS vector indexes fused with Z-score / min-max / RRF rankers, with adaptive FAISS index selection by row count.
 - **Swappable embedders.** Local PyTorch, faster ONNX (int8), or hosted (litellm) — each behind its own optional extra.
@@ -226,8 +226,8 @@ OUT = OutputConfig(
 @connector(output=OUT, secrets=("api_key",))
 def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch an ACME time series by id."""
-    http = make_api_key_client("https://api.acme.test", api_key=api_key)
-    payload = fetch_json(http, path=f"series/{series_id}", provider="acme", op_name="series")
+    http = make_api_key_client("https://api.acme.test", provider="acme", api_key=api_key)
+    payload = fetch_json(http, path=f"series/{series_id}", op_name="series")
     return pd.DataFrame(payload["observations"])
 ```
 

@@ -16,9 +16,7 @@ from parsimony.transport import (
     HttpClient,
     HttpRetryPolicy,
     DEFAULT_HTTP_RETRY_POLICY,
-    map_http_error,
-    map_timeout_error,
-    map_transport_error,
+    check_status,
     parse_retry_after,
     pooled_client,
     redact_url,
@@ -51,6 +49,7 @@ class HttpClient:
         self,
         base_url: str,
         *,
+        provider: str,
         timeout: float = 30.0,
         verify_ssl: bool = True,
         headers: dict[str, Any] | None = None,
@@ -66,6 +65,7 @@ class HttpClient:
 | Parameter | Default | Behavior |
 |---|---|---|
 | `base_url` | required | Provider root. Its trailing slash is stripped on construction. |
+| `provider` | required | The provider slug stamped on every typed error this client raises. Exposed back as the `.provider` property. |
 | `timeout` | `30.0` | Per-request timeout in seconds. |
 | `verify_ssl` | `True` | TLS certificate verification. |
 | `headers` | `None` | Default headers merged into every request. |
@@ -82,7 +82,7 @@ removed:
 ```python
 from parsimony.transport import HttpClient
 
-http = HttpClient("https://api.example.com/v1/")
+http = HttpClient("https://api.example.com/v1/", provider="example")
 assert http.base_url == "https://api.example.com/v1"
 ```
 
@@ -101,6 +101,8 @@ def request(
     params: dict[str, Any] | None = None,
     json: dict[str, Any] | None = None,
     headers: dict[str, Any] | None = None,
+    *,
+    op_name: str,
 ) -> httpx.Response: ...
 ```
 
@@ -118,22 +120,25 @@ def handler(request: httpx.Request) -> httpx.Response:
 
 http = HttpClient(
     "https://api.example.com",
+    provider="example",
     timeout=5.0,
     headers={"X-App": "demo"},
     query_params={"apikey": "secret"},  # merged into every request
     retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
     _transport=httpx.MockTransport(handler),
 )
-response = http.request("GET", "/status")
+response = http.request("GET", "/status", op_name="get_status")
 assert response.status_code == 200
 ```
 
-!!! warning "`request()` never calls `raise_for_status()`"
+!!! warning "`request()` never checks the status itself"
     `request()` returns the raw response for **any** status — including 4xx and
     5xx, and even after retries are exhausted. A 503 looks just like a 200 unless
-    you check. Call `response.raise_for_status()` yourself and feed the resulting
-    `httpx.HTTPStatusError` to [`map_http_error`](#mapping-errors), or use the
-    [`fetch_json`](#fetch_json) helper which does both for you.
+    you check. Call [`check_status`](#mapping-errors) yourself on the returned
+    response, or use the [`fetch_json`](#fetch_json) helper which does that for
+    you. Transport failures (timeout, connection refused, DNS, protocol error)
+    are already mapped to a typed error inside `request()` — no raw `httpx`
+    exception ever escapes it, so there is nothing to `try`/`except` there.
 
 ### One client per request, by default
 
@@ -213,113 +218,72 @@ assert policy.backoff_seconds(1, retry_after=2.0) == 2.0
 
 ## Mapping errors
 
-`request()` returns the raw response and surfaces raw `httpx` exceptions on
-transport failure; it is your job to turn those into typed errors. The mapper
-functions translate them into the typed `parsimony.errors` hierarchy so the rest
-of your connector — and any agent consuming it — sees consistent, class-aware
-errors: `map_http_error` for a non-2xx status, `map_timeout_error` for a
-timeout, and `map_transport_error` for any other transport failure (connection
-refused, DNS failure, protocol error). (The [`fetch_json`](#fetch_json) helper —
-and its `fetch_text` / `fetch_csv` siblings — apply all three mappers for you, so
-they raise the typed errors directly rather than raw `httpx` exceptions.) Each
-function is `NoReturn` (it always raises) and chains the original via
-`raise ... from exc`, so the traceback and `__cause__` are preserved.
+`request()` already maps transport failures — a timeout, connection refused,
+DNS failure, or protocol error — to a typed `ProviderError` internally (timeout
+→ `status_code=408`, any other transport failure → `status_code=503`). No raw
+`httpx` exception ever escapes `request()`, so there is no transport-failure
+`try`/`except` for you to write.
 
-### `map_http_error`
+What `request()` does **not** do is check the status of a response it
+successfully got back. That's `check_status`'s job: call it on the response to
+map a non-2xx status to the typed `parsimony.errors` hierarchy, decided from the
+status code — never from a raised `httpx.HTTPStatusError`, so nothing here
+constructs an exception that embeds the request URL. (The
+[`fetch_json`](#fetch_json) helper — and its `fetch_text` / `fetch_csv`
+siblings — call `check_status` for you, so they raise the typed errors directly
+rather than returning a response you'd have to check yourself.)
+
+### `check_status`
 
 ```python
-def map_http_error(
-    exc: httpx.HTTPStatusError,
+def check_status(
+    response: Any,
     *,
     provider: str,
     op_name: str,
     env_var: str | None = None,
-) -> NoReturn: ...
+) -> None: ...
 ```
 
-| Upstream status | Raised error |
+| Status | Raised error |
 |---|---|
+| 2xx | returns `None` |
 | 401, 403 | `UnauthorizedError` (carries `env_var` when supplied) |
 | 402 | `PaymentRequiredError` |
 | 429 | `RateLimitError` with `retry_after` from `parse_retry_after` |
-| any other | `ProviderError` carrying `status_code` |
+| any other non-2xx (5xx, 404, …) | `ProviderError` carrying `status_code` |
 
 The optional `env_var=` names the environment variable a missing credential
 would come from; it is threaded into the `UnauthorizedError` so the agent-facing
-message can name it.
+message can name it. `response` is duck-typed on `.status_code`/`.headers`, so a
+`curl_cffi` response works as well as an `httpx` one.
 
 ```python
-import httpx
-from parsimony.errors import RateLimitError
-from parsimony.transport import map_http_error
+from parsimony.transport import HttpClient, check_status
 
-request = httpx.Request("GET", "https://api.example.com/v1/data?api_key=secret")
-response = httpx.Response(429, headers={"Retry-After": "30"}, request=request)
-exc = httpx.HTTPStatusError("rate limited", request=request, response=response)
+http = HttpClient("https://api.example.com", provider="example", query_params={"apikey": "secret"})
+response = http.request("GET", "/series", params={"id": "UNRATE"}, op_name="get_series")
+check_status(response, provider="example", op_name="get_series")   # NoReturn on non-2xx
+data = response.json()
+```
 
-try:
-    map_http_error(exc, provider="example", op_name="get_data")
-except RateLimitError as err:
-    assert err.provider == "example"
-    assert err.retry_after == 30.0
-    assert err.__cause__ is exc        # original chained
-    assert "secret" not in str(err)    # message never leaks the API key
+A provider whose statuses don't fit that table (e.g. a 403 that means either a
+bad token or a plan restriction) handles the quirk with a plain `if` on the
+response *before* calling `check_status`, then defers every other non-2xx to it:
+
+```python
+response = http.request("GET", path, params=params, op_name=op_name)
+if response.status_code == 403 and "permission" in response.text.lower():
+    raise PaymentRequiredError(http.provider)
+check_status(response, provider=http.provider, op_name=op_name)
 ```
 
 !!! warning "Messages never embed the URL or credentials"
-    The default messages from `map_http_error`/`map_timeout_error` name only the
-    `provider` and `op_name`; they deliberately omit the request URL and any
-    secret. If you want a URL in a message you build yourself, redact it first
-    with [`redact_url`](#redaction). See [Errors](errors.md) for the
-    `message=` override escape hatch and its security caveat.
-
-### `map_timeout_error`
-
-```python
-def map_timeout_error(exc: httpx.TimeoutException, *, provider: str, op_name: str) -> NoReturn: ...
-```
-
-Always raises `ProviderError` with `status_code=408` — the HTTP "request
-timeout" semantic — so downstream code can treat a timeout uniformly with other
-transport failures. There is no dedicated timeout exception class; key off
-`status_code == 408`.
-
-```python
-import httpx
-from parsimony.errors import ProviderError
-from parsimony.transport import map_timeout_error
-
-try:
-    map_timeout_error(httpx.TimeoutException("slow"), provider="example", op_name="get_data")
-except ProviderError as err:
-    assert err.status_code == 408
-```
-
-### `map_transport_error`
-
-```python
-def map_transport_error(exc: httpx.TransportError, *, provider: str, op_name: str) -> NoReturn: ...
-```
-
-The catch-all for a transport failure that never produced a response — a
-connection refused, DNS failure, read/write error, or protocol error (everything
-under `httpx.TransportError` that is **not** a timeout). It raises `ProviderError`
-with `status_code=503` ("the provider could not be reached" — transient, treat
-like a 5xx). Only the exception *type name* is embedded in the message, never its
-string, which can carry the request URL and its secrets. Because
-`httpx.TimeoutException` is itself a `TransportError` subclass, catch it (with
-`map_timeout_error`) **before** falling through to this handler.
-
-```python
-import httpx
-from parsimony.errors import ProviderError
-from parsimony.transport import map_transport_error
-
-try:
-    map_transport_error(httpx.ConnectError("refused"), provider="example", op_name="get_data")
-except ProviderError as err:
-    assert err.status_code == 503
-```
+    The default messages from `check_status` name only the `provider` and
+    `op_name`; they deliberately omit the request URL and any secret. If you
+    want a URL in a message you build yourself, redact it first with
+    [`redact_url`](#redaction). See [Errors](errors.md) for the `message=`
+    override escape hatch and its security caveat.
 
 ### `parse_retry_after`
 
@@ -421,13 +385,14 @@ def handler(request: httpx.Request) -> httpx.Response:
 
 http = HttpClient(
     "https://api.example.com",
+    provider="example",
     query_params={"apikey": "k"},
     _transport=httpx.MockTransport(handler),
 )
 statuses: list[int] = []
 with pooled_client(http) as shared:  # one httpx.Client reused
     for key in ("a", "b", "c"):
-        response = shared.request("GET", f"/data/{key}")
+        response = shared.request("GET", f"/data/{key}", op_name="get_data")
         statuses.append(response.status_code)
 assert statuses == [200, 200, 200]
 ```
@@ -453,6 +418,7 @@ actually touch.
 def make_http_client(
     base_url: str,
     *,
+    provider: str,
     query_params: dict[str, Any] | None = None,
     headers: dict[str, Any] | None = None,
     timeout: float = 15.0,
@@ -462,6 +428,7 @@ def make_http_client(
 def make_api_key_client(
     base_url: str,
     *,
+    provider: str,
     api_key: str,
     api_key_param: str = "apikey",
     timeout: float = 15.0,
@@ -483,7 +450,6 @@ def fetch_json(
     *,
     path: str,
     params: dict[str, Any] | None = None,
-    provider: str,
     op_name: str,
     env_var: str | None = None,
 ) -> Any: ...
@@ -493,12 +459,13 @@ def fetch_json(
 
 1. drops any param whose value is `None` (so optional connector arguments map to
    "omit this query param" rather than "send `None`");
-2. issues `GET /{path}` through `http.request`;
-3. calls `response.raise_for_status()`;
-4. maps `httpx.HTTPStatusError` via `map_http_error`, `httpx.TimeoutException`
-   via `map_timeout_error`, and any other `httpx.TransportError` via
-   `map_transport_error` — turning every transport failure into a typed error;
-5. returns `response.json()`, or raises a typed
+2. issues `GET /{path}` through `http.request` — transport failures are already
+   mapped to a typed error inside `request()`, so no raw `httpx` exception
+   reaches this helper;
+3. calls [`check_status`](#mapping-errors) on the response, which reads the
+   provider slug off `http.provider` and maps any non-2xx status to the typed
+   `parsimony.errors` hierarchy;
+4. returns `response.json()`, or raises a typed
    [`ParseError`](errors.md) if the 200 body is not valid JSON.
 
 ```python
@@ -516,6 +483,7 @@ def handler(request: httpx.Request) -> httpx.Response:
 
 http = HttpClient(
     "https://api.example.com/v1",
+    provider="example",
     retry_policy=HttpRetryPolicy(max_attempts=1),
     _transport=httpx.MockTransport(handler),
 )
@@ -523,7 +491,6 @@ result = fetch_json(
     http,
     path="series",
     params={"series_id": "UNRATE", "start": None},  # None is dropped
-    provider="example",
     op_name="get_series",
 )
 print(result)  # {'series_id': 'UNRATE', 'value': 3.9}

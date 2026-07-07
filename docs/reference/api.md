@@ -241,7 +241,7 @@ The HTTP layer connector authors build on.
 | `HttpClient` | class — client with base URL, default headers/params, redacted logging |
 | `HttpRetryPolicy` | dataclass — transient-retry policy |
 | `DEFAULT_HTTP_RETRY_POLICY` | constant — the default `HttpRetryPolicy()` |
-| `map_http_error` / `map_timeout_error` | function — map `httpx` errors to typed errors |
+| `check_status` | function — map a non-2xx response to a typed error, by status code |
 | `parse_retry_after` | function — extract retry-after seconds from a 429 response |
 | `pooled_client` | context manager — yields a connection-pooled `HttpClient` |
 | `redact_url` / `redact_params_for_logging` / `redact_sensitive_text` | function — secret redaction |
@@ -250,7 +250,7 @@ The HTTP layer connector authors build on.
 
 | Name | Kind |
 |---|---|
-| `fetch_json` | function — GET + `raise_for_status` + map + JSON (drops `None` params) |
+| `fetch_json` | function — GET + `check_status` for non-2xx + JSON (drops `None` params) |
 | `make_http_client` | function — build an `HttpClient` |
 | `make_api_key_client` | function — build an `HttpClient` that injects an API key (default query param `apikey`) |
 

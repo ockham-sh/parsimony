@@ -152,22 +152,21 @@ helpers in `parsimony.transport.helpers` construct a configured `HttpClient`, an
 from parsimony.transport.helpers import fetch_json, make_api_key_client
 
 # default API-key query param is "apikey"; default helper timeout is 15s
-client = make_api_key_client("https://api.example.com", api_key="...", api_key_param="apikey")
+client = make_api_key_client("https://api.example.com", provider="acme", api_key="...", api_key_param="apikey")
 
 def _fetch(series_id: str) -> dict:
     return fetch_json(
         client,
         path="series",
         params={"id": series_id},     # None-valued params are dropped
-        provider="acme",
         op_name="fetch_series",
     )
 ```
 
-`make_http_client(base_url, *, query_params=None, headers=None, timeout=15.0)` builds a
+`make_http_client(base_url, *, provider, query_params=None, headers=None, timeout=15.0)` builds a
 client without a default API key. `HttpClient.request` returns the raw response and does
-**not** call `raise_for_status` — `fetch_json` does that for you and translates failures.
-For enumerator loops and fan-out fetches, reuse one pooled connection via the
+**not** check its status itself — `fetch_json` calls `check_status` for you and translates
+failures. For enumerator loops and fan-out fetches, reuse one pooled connection via the
 `pooled_client` context manager. The full transport surface is documented under
 [HTTP transport](../connectors/http-transport.md).
 

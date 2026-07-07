@@ -70,9 +70,10 @@ Operational failures raise `ConnectorError` subclasses (`UnauthorizedError`,
 `RateLimitError`, `ProviderError`, …). Default messages embed agent-facing retry
 directives. Programmer mistakes (`TypeError`, `ValueError`) are not wrapped.
 
-Use `parsimony.transport.helpers.map_http_error` / `fetch_json` to translate `httpx`
-errors. **Never** let API keys appear in exception messages, provenance, or `to_llm()`
-projections — the connectors repo enforces this with a shared secret-canary test suite.
+Use `parsimony.transport.check_status` / `parsimony.transport.helpers.fetch_json` to
+translate `httpx` errors. **Never** let API keys appear in exception messages,
+provenance, or `to_llm()` projections — the connectors repo enforces this with a
+shared secret-canary test suite.
 
 ## Search connectors (`*_search`)
 

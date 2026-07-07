@@ -8,10 +8,10 @@ as the kernel adds support for additional protocols.
 * :func:`redact_url` — mask sensitive query-param values before logging or
   embedding a URL in an exception message.
 * :func:`parse_retry_after` — extract retry-after seconds from a 429 response.
-* :func:`map_http_error` — translate ``httpx.HTTPStatusError`` into a typed
-  :mod:`parsimony.errors` exception.
-* :func:`map_timeout_error` — translate ``httpx.TimeoutException`` into a
-  typed :class:`~parsimony.errors.ProviderError` (status 408).
+* :func:`check_status` — raise a typed :mod:`parsimony.errors` exception for a
+  non-2xx response, decided from the status code (never from a raised
+  ``httpx.HTTPStatusError``). Transport-agnostic: duck-types on
+  ``status_code``/``headers``.
 * :func:`pooled_client` — sync context manager that yields an
   :class:`HttpClient` backed by a single pooled ``httpx.Client``, for
   enumerator loops and fan-out fetches.
@@ -26,7 +26,7 @@ import random
 import re
 import time
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Any, NoReturn
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -145,83 +145,105 @@ def parse_retry_after(response: httpx.Response, *, default: float = _DEFAULT_RAT
     return default
 
 
-def map_http_error(
-    exc: httpx.HTTPStatusError,
-    *,
-    provider: str,
-    op_name: str,
-    env_var: str | None = None,
-) -> NoReturn:
-    """Translate an :class:`httpx.HTTPStatusError` into a typed connector error.
+def _redact_httpx_error(exc: httpx.HTTPError) -> None:
+    """Strip query-string credentials from *exc* in place before it is chained.
 
-    Mapping (matches the kernel's :mod:`parsimony.errors` hierarchy):
-
-    * 401, 403 → :class:`~parsimony.errors.UnauthorizedError`
-    * 402      → :class:`~parsimony.errors.PaymentRequiredError`
-    * 429      → :class:`~parsimony.errors.RateLimitError` with
-      ``retry_after`` from :func:`parse_retry_after`
-    * else     → :class:`~parsimony.errors.ProviderError` carrying the status
-
-    The original exception is chained via ``raise ... from exc`` so the
-    traceback retains it. Messages do not embed the request URL — callers
-    that want a URL in the message must redact via :func:`redact_url` first.
+    An ``httpx`` error becomes the ``__cause__``/``__context__`` of the typed
+    error we raise, so its secrets reach every traceback, ``logging.exception``,
+    and ``.request.url`` access. ``raise_for_status`` embeds the full request
+    URL in the message; transport errors carry it on ``.request.url`` (which
+    ``.response.url`` aliases). Redacting the message and that one URL object
+    closes both vectors while keeping the chained error intact for debugging.
     """
-    status = exc.response.status_code
-    if status in (401, 403):
-        raise UnauthorizedError(provider=provider, env_var=env_var) from exc
-    if status == 402:
-        raise PaymentRequiredError(
+    exc.args = tuple(redact_sensitive_text(a) if isinstance(a, str) else a for a in exc.args)
+    try:
+        request = exc.request
+    except RuntimeError:
+        # httpx exposes .request as a property that raises when no request was
+        # attached (e.g. a bare timeout constructed without one). Nothing to scrub.
+        return
+    request.url = httpx.URL(redact_url(str(request.url)))
+
+
+def _raise_transport_error(exc: httpx.HTTPError, *, provider: str, op_name: str) -> NoReturn:
+    """Translate a transport-level ``httpx`` failure into a typed connector error.
+
+    A *transport* failure is one that never produced a response: a timeout, a
+    connection refused, a DNS failure, a read/write error, or a protocol error.
+    :class:`~parsimony.transport.HttpClient.request` calls this from inside its
+    retry loop so no raw ``httpx`` exception ever escapes the transport — the
+    only key-bearing ``httpx`` object left in the system is scrubbed here before
+    it becomes a chained ``__cause__``.
+
+    * a :class:`httpx.TimeoutException` → :class:`~parsimony.errors.ProviderError`
+      with ``status_code=408`` (the HTTP semantic for "request timeout");
+    * anything else → :class:`~parsimony.errors.ProviderError` with
+      ``status_code=503`` ("the provider could not be reached" — transient,
+      treat like a 5xx). Only the exception *type name* is embedded.
+
+    The original exception is chained via ``raise ... from exc`` for traceback
+    visibility, after :func:`_redact_httpx_error` strips any credential from it.
+    """
+    _redact_httpx_error(exc)
+    if isinstance(exc, httpx.TimeoutException):
+        raise ProviderError(
             provider=provider,
-            message=f"Your {provider} plan is not eligible for this data request",
+            status_code=408,
+            message=f"{provider} request timed out on endpoint '{op_name}'",
         ) from exc
-    if status == 429:
-        raise RateLimitError(
-            provider=provider,
-            retry_after=parse_retry_after(exc.response),
-            message=f"{provider} rate limit reached on endpoint '{op_name}'",
-        ) from exc
-    raise ProviderError(
-        provider=provider,
-        status_code=status,
-        message=f"{provider} API error {status} on endpoint '{op_name}'",
-    ) from exc
-
-
-def map_timeout_error(exc: httpx.TimeoutException, *, provider: str, op_name: str) -> NoReturn:
-    """Translate an :class:`httpx.TimeoutException` into a typed connector error.
-
-    Raises :class:`~parsimony.errors.ProviderError` with ``status_code=408``
-    (the HTTP semantic for "request timeout") so downstream callers can treat
-    it uniformly with other transport failures. The original exception is
-    chained via ``raise ... from exc`` for traceback visibility.
-    """
-    raise ProviderError(
-        provider=provider,
-        status_code=408,
-        message=f"{provider} request timed out on endpoint '{op_name}'",
-    ) from exc
-
-
-def map_transport_error(exc: httpx.TransportError, *, provider: str, op_name: str) -> NoReturn:
-    """Translate a non-timeout :class:`httpx.TransportError` into a typed error.
-
-    Covers the transport failures that never produced a response at all —
-    connection refused, DNS failure, a read/write error, or a protocol error
-    (``ConnectError``, ``NetworkError``, ``RemoteProtocolError``, …). Timeouts
-    are handled separately by :func:`map_timeout_error`; this is the catch-all
-    that keeps a raw ``httpx`` exception from escaping a fetch helper.
-
-    Raises :class:`~parsimony.errors.ProviderError` with ``status_code=503``
-    ("the provider could not be reached" — transient, treat like a 5xx). Only
-    the exception *type name* is embedded, never its string, which can carry the
-    request URL and its secrets. The original exception is chained for the
-    traceback.
-    """
     raise ProviderError(
         provider=provider,
         status_code=503,
         message=f"{provider} could not be reached on endpoint '{op_name}' ({type(exc).__name__})",
     ) from exc
+
+
+def check_status(response: Any, *, provider: str, op_name: str, env_var: str | None = None) -> None:
+    """Raise a typed connector error for a non-2xx *response*, decided from its status.
+
+    This maps **from the status code**, never from a raised
+    ``httpx.HTTPStatusError`` — so nothing here constructs an exception that
+    embeds the request URL, and there is no chained cause to leak the
+    query-string credential. A 2xx passes through (returns ``None``).
+
+    Mapping (matches the kernel's :mod:`parsimony.errors` hierarchy):
+
+    * 401, 403 → :class:`~parsimony.errors.UnauthorizedError`
+    * 402      → :class:`~parsimony.errors.PaymentRequiredError`
+    * 429      → :class:`~parsimony.errors.RateLimitError` with ``retry_after``
+      from :func:`parse_retry_after`
+    * other non-2xx → :class:`~parsimony.errors.ProviderError` carrying the status
+
+    A provider whose statuses don't fit that table (e.g. a 403 that can mean
+    either a plan restriction or a rolling quota) handles the special case with
+    an ordinary ``if`` on the response *before* calling this, then defers every
+    other non-2xx here.
+
+    *response* is duck-typed: only ``.status_code`` and ``.headers`` (via
+    :func:`parse_retry_after`) are read, so a ``curl_cffi`` response works as
+    well as an ``httpx`` one.
+    """
+    status = response.status_code
+    if 200 <= status < 300:
+        return
+    if status in (401, 403):
+        raise UnauthorizedError(provider=provider, env_var=env_var)
+    if status == 402:
+        raise PaymentRequiredError(
+            provider=provider,
+            message=f"Your {provider} plan is not eligible for this data request",
+        )
+    if status == 429:
+        raise RateLimitError(
+            provider=provider,
+            retry_after=parse_retry_after(response),
+            message=f"{provider} rate limit reached on endpoint '{op_name}'",
+        )
+    raise ProviderError(
+        provider=provider,
+        status_code=status,
+        message=f"{provider} API error {status} on endpoint '{op_name}'",
+    )
 
 
 @dataclass(frozen=True)
@@ -272,6 +294,7 @@ class HttpClient:
         self,
         base_url: str,
         *,
+        provider: str,
         timeout: float = 30.0,
         verify_ssl: bool = True,
         headers: dict[str, Any] | None = None,
@@ -283,6 +306,7 @@ class HttpClient:
         retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
     ) -> None:
         self._base_url = base_url.rstrip("/")
+        self._provider = provider
         self._timeout = timeout
         self._verify_ssl = verify_ssl
         self._default_headers = dict(headers or {})
@@ -297,10 +321,16 @@ class HttpClient:
     def base_url(self) -> str:
         return self._base_url
 
+    @property
+    def provider(self) -> str:
+        """The provider slug used to tag typed errors raised for this client."""
+        return self._provider
+
     def with_shared_client(self, client: httpx.Client) -> HttpClient:
         """Return a new HttpClient that reuses *client* for connection pooling."""
         return HttpClient(
             self._base_url,
+            provider=self._provider,
             timeout=self._timeout,
             verify_ssl=self._verify_ssl,
             headers=self._default_headers or None,
@@ -331,6 +361,8 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
         headers: dict[str, Any] | None = None,
+        *,
+        op_name: str,
     ) -> httpx.Response:
         url = f"{self._base_url}/{path.lstrip('/')}"
         request_params = {**self._default_query_params, **(params or {})}
@@ -363,6 +395,8 @@ class HttpClient:
                 )
             except Exception as exc:
                 if not self._is_retryable_exception(exc, policy=policy) or attempt >= max_attempts:
+                    if isinstance(exc, httpx.HTTPError):
+                        _raise_transport_error(exc, provider=self._provider, op_name=op_name)
                     raise
                 assert policy is not None
                 delay = policy.backoff_seconds(attempt)
@@ -413,6 +447,13 @@ class HttpClient:
                 "http_response_size": len(response.content) if response.content else 0,
             },
         )
+
+        # Scrub the request URL carried on the returned response so no
+        # key-bearing httpx object escapes the transport — even a caller that
+        # (against guidance) calls ``response.raise_for_status()`` itself gets a
+        # redacted URL in the resulting HTTPStatusError.
+        with suppress(RuntimeError):
+            response.request.url = httpx.URL(redact_url(str(response.request.url)))
         return response
 
     def _request_once(
@@ -477,9 +518,7 @@ __all__ = [
     "DEFAULT_HTTP_RETRY_POLICY",
     "HttpClient",
     "HttpRetryPolicy",
-    "map_http_error",
-    "map_timeout_error",
-    "map_transport_error",
+    "check_status",
     "parse_retry_after",
     "pooled_client",
     "redact_params_for_logging",

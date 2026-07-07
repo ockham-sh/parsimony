@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import time
+import traceback
+from contextlib import suppress
 
 import httpx
 import pytest
 
 from parsimony.errors import (
+    ConnectorError,
     PaymentRequiredError,
     ProviderError,
     RateLimitError,
@@ -16,8 +19,7 @@ from parsimony.errors import (
 from parsimony.transport import (
     HttpClient,
     HttpRetryPolicy,
-    map_http_error,
-    map_timeout_error,
+    check_status,
     parse_retry_after,
     pooled_client,
     redact_sensitive_text,
@@ -142,97 +144,186 @@ def test_parse_retry_after_x_ratelimit_reset_in_past_falls_back() -> None:
 
 
 # ---------------------------------------------------------------------------
-# map_http_error
+# check_status — typed errors from the status code (never from an exception)
 # ---------------------------------------------------------------------------
 
 
-def _http_status_error(status: int, headers: dict[str, str] | None = None) -> httpx.HTTPStatusError:
-    request = httpx.Request("GET", "https://api.example.com/v1/data?api_key=secret-key")
-    response = httpx.Response(status, headers=headers or {}, request=request)
-    return httpx.HTTPStatusError("http error", request=request, response=response)
+def _status_response(status: int, headers: dict[str, str] | None = None) -> httpx.Response:
+    return httpx.Response(status, headers=headers or {}, request=httpx.Request("GET", "https://x.test"))
+
+
+@pytest.mark.parametrize("status", [200, 201, 204, 299])
+def test_check_status_2xx_passes_through(status: int) -> None:
+    assert check_status(_status_response(status), provider="example", op_name="op") is None
 
 
 @pytest.mark.parametrize("status", [401, 403])
-def test_map_http_error_401_403_unauthorized(status: int) -> None:
-    exc = _http_status_error(status)
+def test_check_status_401_403_unauthorized(status: int) -> None:
     with pytest.raises(UnauthorizedError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
+        check_status(_status_response(status), provider="example", op_name="op")
     assert excinfo.value.provider == "example"
-    assert excinfo.value.__cause__ is exc
+    # Raised fresh from the status — no chained httpx exception.
+    assert excinfo.value.__cause__ is None
 
 
-def test_map_http_error_402_payment_required() -> None:
-    exc = _http_status_error(402)
+def test_check_status_401_names_env_var_when_given() -> None:
+    with pytest.raises(UnauthorizedError) as excinfo:
+        check_status(_status_response(401), provider="example", op_name="op", env_var="EXAMPLE_API_KEY")
+    assert "EXAMPLE_API_KEY" in str(excinfo.value)
+
+
+def test_check_status_402_payment_required() -> None:
     with pytest.raises(PaymentRequiredError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
+        check_status(_status_response(402), provider="example", op_name="op")
     assert excinfo.value.provider == "example"
-    assert excinfo.value.__cause__ is exc
 
 
-def test_map_http_error_429_rate_limit_with_retry_after() -> None:
-    exc = _http_status_error(429, headers={"Retry-After": "30"})
+def test_check_status_429_rate_limit_with_retry_after() -> None:
     with pytest.raises(RateLimitError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
+        check_status(_status_response(429, headers={"Retry-After": "30"}), provider="example", op_name="op")
     assert excinfo.value.retry_after == 30.0
     assert excinfo.value.provider == "example"
 
 
-def test_map_http_error_429_uses_default_retry_after_when_header_missing() -> None:
-    exc = _http_status_error(429)
+def test_check_status_429_uses_default_retry_after_when_header_missing() -> None:
     with pytest.raises(RateLimitError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
+        check_status(_status_response(429), provider="example", op_name="op")
     assert excinfo.value.retry_after == 60.0
 
 
 @pytest.mark.parametrize("status", [400, 404, 500, 502, 503])
-def test_map_http_error_other_provider_error(status: int) -> None:
-    exc = _http_status_error(status)
+def test_check_status_other_provider_error(status: int) -> None:
     with pytest.raises(ProviderError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
+        check_status(_status_response(status), provider="example", op_name="op")
     assert excinfo.value.status_code == status
     assert excinfo.value.provider == "example"
     assert str(status) in str(excinfo.value)
 
 
-@pytest.mark.parametrize("status", [401, 402, 403, 429, 500])
-def test_map_http_error_message_does_not_leak_url_or_key(status: int) -> None:
-    exc = _http_status_error(status, headers={"Retry-After": "10"} if status == 429 else None)
-    with pytest.raises(Exception) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
-    msg = str(excinfo.value)
-    assert "secret-key" not in msg
-    assert "api.example.com" not in msg
-    assert "?api_key=" not in msg
-
-
-def test_map_http_error_op_name_in_message() -> None:
-    exc = _http_status_error(429, headers={"Retry-After": "5"})
+def test_check_status_op_name_in_message() -> None:
     with pytest.raises(RateLimitError) as excinfo:
-        map_http_error(exc, provider="example", op_name="test_op")
-    assert "test_op" in str(excinfo.value)
+        check_status(_status_response(429, headers={"Retry-After": "5"}), provider="example", op_name="my_op")
+    assert "my_op" in str(excinfo.value)
+
+
+class _DuckResponse:
+    """A minimal non-httpx response — proves ``check_status`` is transport-agnostic."""
+
+    def __init__(self, status_code: int, headers: dict[str, str] | None = None) -> None:
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(401, UnauthorizedError), (402, PaymentRequiredError), (429, RateLimitError), (500, ProviderError)],
+)
+def test_check_status_duck_typed_response(status: int, expected: type[ConnectorError]) -> None:
+    resp = _DuckResponse(status, headers={"Retry-After": "9"} if status == 429 else None)
+    with pytest.raises(expected):
+        check_status(resp, provider="curlish", op_name="op")
 
 
 # ---------------------------------------------------------------------------
-# map_timeout_error
+# credential leakage — the transport never hands back a key-bearing httpx object
+#
+# check_status maps from the status, so its errors have no chained httpx cause
+# to leak. The only key-bearing httpx object left is a transport-failure
+# exception, which HttpClient.request maps and scrubs internally, and the
+# request URL carried on any returned response is scrubbed too — so even a
+# caller that calls raise_for_status() itself cannot leak the key.
 # ---------------------------------------------------------------------------
 
+_LIVE_KEY = "LIVE-KEY-MUST-NOT-LEAK-42"
 
-def test_map_timeout_error_raises_provider_error_408() -> None:
-    exc = httpx.TimeoutException("timed out")
+
+def _all_chain_surfaces(exc: BaseException) -> str:
+    """Every string a caller could reach from *exc* and its cause/context chain.
+
+    Covers the two vectors F1 identifies: ``str(link)`` (what a traceback or
+    ``logging.exception`` prints) and ``str(link.request.url)`` (explicit
+    attribute access), for each link in the chain.
+    """
+    seen: set[int] = set()
+    parts: list[str] = []
+    node: BaseException | None = exc
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        parts.append(str(node))
+        request = getattr(node, "request", None)
+        if request is not None:
+            with suppress(RuntimeError):
+                parts.append(str(request.url))
+        node = node.__cause__ or node.__context__
+    return "\n".join(parts)
+
+
+def _keyed_client(handler: object, **policy_kwargs: object) -> HttpClient:
+    """A client whose default query params carry a live-looking key."""
+    return HttpClient(
+        "https://api.example.com",
+        provider="example",
+        query_params={"api_token": _LIVE_KEY},
+        _transport=httpx.MockTransport(handler),  # type: ignore[arg-type]
+        retry_policy=HttpRetryPolicy(max_attempts=1, base_delay_s=0.0, jitter_s=0.0, **policy_kwargs),  # type: ignore[arg-type]
+    )
+
+
+def test_request_transport_failure_maps_to_provider_error_503_scrubbed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    http = _keyed_client(handler)
     with pytest.raises(ProviderError) as excinfo:
-        map_timeout_error(exc, provider="example", op_name="test_op")
+        http.request("GET", "/data", op_name="fetch")
+    assert excinfo.value.status_code == 503
+    assert _LIVE_KEY not in _all_chain_surfaces(excinfo.value)
+
+
+def test_request_timeout_maps_to_provider_error_408_scrubbed() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("read timed out", request=request)
+
+    http = _keyed_client(handler)
+    with pytest.raises(ProviderError) as excinfo:
+        http.request("GET", "/data", op_name="fetch")
     assert excinfo.value.status_code == 408
-    assert excinfo.value.provider == "example"
-    assert excinfo.value.__cause__ is exc
+    assert _LIVE_KEY not in _all_chain_surfaces(excinfo.value)
 
 
-def test_map_timeout_error_message_includes_provider_and_op() -> None:
-    exc = httpx.ReadTimeout("read timed out")
-    with pytest.raises(ProviderError) as excinfo:
-        map_timeout_error(exc, provider="example", op_name="my_endpoint")
-    msg = str(excinfo.value)
-    assert "example" in msg
-    assert "my_endpoint" in msg
+def test_request_transport_failure_traceback_is_secret_free() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    http = _keyed_client(handler)
+    tb = ""
+    try:
+        http.request("GET", "/data", op_name="fetch")
+    except ProviderError as typed:
+        tb = "".join(traceback.format_exception(type(typed), typed, typed.__traceback__))
+    assert tb and _LIVE_KEY not in tb
+
+
+def test_request_returned_response_has_scrubbed_request_url() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    http = _keyed_client(handler)
+    response = http.request("GET", "/data", op_name="fetch")
+    assert _LIVE_KEY not in str(response.request.url)
+
+
+def test_request_returned_response_raise_for_status_does_not_leak() -> None:
+    """Even a caller that (against guidance) calls raise_for_status() cannot leak."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, request=request)
+
+    http = _keyed_client(handler)
+    response = http.request("GET", "/missing", op_name="fetch")
+    with pytest.raises(httpx.HTTPStatusError) as excinfo:
+        response.raise_for_status()
+    assert _LIVE_KEY not in _all_chain_surfaces(excinfo.value)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +343,7 @@ def test_pooled_client_yields_client_reusing_single_sync_client(monkeypatch: pyt
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         timeout=5.0,
         headers={"X-Test": "1"},
         query_params={"apikey": "secret"},
@@ -263,6 +355,7 @@ def test_pooled_client_yields_client_reusing_single_sync_client(monkeypatch: pyt
     transport = httpx.MockTransport(handler)
     pooled = HttpClient(
         "https://api.example.com",
+        provider="example",
         timeout=5.0,
         headers={"X-Test": "1"},
         query_params={"apikey": "secret"},
@@ -270,13 +363,14 @@ def test_pooled_client_yields_client_reusing_single_sync_client(monkeypatch: pyt
     )
 
     with pooled_client(pooled) as shared:
-        r1 = shared.request("GET", "/a")
-        r2 = shared.request("GET", "/b")
+        r1 = shared.request("GET", "/a", op_name="probe")
+        r2 = shared.request("GET", "/b", op_name="probe")
 
     assert r1.status_code == 200
     assert r2.status_code == 200
     assert len(created) == 1
     assert shared.base_url == pooled.base_url
+    assert shared.provider == "example"
     assert http.base_url == "https://api.example.com"
 
 
@@ -291,10 +385,11 @@ def test_http_client_retries_transient_status_then_succeeds() -> None:
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = http.request("GET", "/status")
+    response = http.request("GET", "/status", op_name="op")
     assert response.status_code == 200
     assert calls["n"] == 2
 
@@ -308,10 +403,11 @@ def test_http_client_does_not_retry_terminal_4xx() -> None:
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = http.request("GET", "/missing")
+    response = http.request("GET", "/missing", op_name="op")
     assert response.status_code == 404
     assert calls["n"] == 1
 
@@ -327,10 +423,11 @@ def test_http_client_retries_transient_exception_then_succeeds() -> None:
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = http.request("GET", "/connect")
+    response = http.request("GET", "/connect", op_name="op")
     assert response.status_code == 200
     assert calls["n"] == 2
 
@@ -345,15 +442,16 @@ def test_http_client_does_not_retry_429() -> None:
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0, max_delay_s=10.0),
     )
-    response = http.request("GET", "/rate-limited")
+    response = http.request("GET", "/rate-limited", op_name="op")
     assert response.status_code == 429
     assert calls["n"] == 1
 
 
-def test_http_client_exhausted_retries_preserves_error_mapping() -> None:
+def test_http_client_exhausted_retries_returns_response_for_check_status() -> None:
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -362,13 +460,13 @@ def test_http_client_exhausted_retries_preserves_error_mapping() -> None:
 
     http = HttpClient(
         "https://api.example.com",
+        provider="example",
         _transport=httpx.MockTransport(handler),
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0),
     )
-    response = http.request("GET", "/still-failing")
+    response = http.request("GET", "/still-failing", op_name="still-failing")
     assert calls["n"] == 3
-    with pytest.raises(httpx.HTTPStatusError) as excinfo:
-        response.raise_for_status()
+    assert response.status_code == 503
     with pytest.raises(ProviderError) as mapped:
-        map_http_error(excinfo.value, provider="example", op_name="still-failing")
+        check_status(response, provider="example", op_name="still-failing")
     assert mapped.value.status_code == 503

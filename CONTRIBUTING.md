@@ -123,7 +123,7 @@ parsimony/
 ├── discover.py         Provider + iter_providers + load + load_all (~70 LOC).
 ├── stores.py           InMemoryDataStore + LoadResult.
 ├── errors.py           ConnectorError hierarchy.
-├── transport/          HttpClient, pooled_client, map_http_error, redact_url + helpers.py.
+├── transport/          HttpClient, pooled_client, check_status, redact_url + helpers.py.
 ├── testing.py          assert_plugin_valid + ProviderTestSuite.
 └── cli.py              Two verbs: `parsimony list`, `parsimony cache`.
 ```

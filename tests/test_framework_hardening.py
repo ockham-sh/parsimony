@@ -136,8 +136,8 @@ def test_http_client_follows_redirects() -> None:
         lambda request: redirect_response if "original" in str(request.url) else final_response
     )
 
-    client = HttpClient("http://example.com", _transport=transport)
-    response = client.request("GET", "/original")
+    client = HttpClient("http://example.com", provider="example", _transport=transport)
+    response = client.request("GET", "/original", op_name="op")
 
     assert response.status_code == 200
     assert len(response.history) > 0
@@ -148,7 +148,7 @@ def test_http_client_follow_redirects_default_true() -> None:
     """HttpClient.follow_redirects defaults to True."""
     from parsimony.transport import HttpClient
 
-    c = HttpClient("http://example.com")
+    c = HttpClient("http://example.com", provider="example")
     assert c._follow_redirects is True
     assert c._max_redirects == 5
 

@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING — transport error mapping now decides from the status code, not a
+  raised `httpx.HTTPStatusError`.** `parsimony.transport.map_http_error`,
+  `map_timeout_error`, `map_transport_error`, and the `classify=` callback are
+  removed. In their place, `check_status(response, *, provider, op_name,
+  env_var=None)` maps a non-2xx response to a typed error directly from
+  `response.status_code` — no chained `HTTPStatusError`, so no query-string
+  credential can leak through `__cause__`. Transport failures (timeout,
+  connection refused, DNS, protocol error) are no longer mapped by a separate
+  function at all — `HttpClient.request(...)` now maps them internally (timeout
+  → `status_code=408`, any other failure → `status_code=503`), so no raw
+  `httpx` exception ever escapes `request()`.
+- **BREAKING — `HttpClient`, `make_http_client`, and `make_api_key_client` now
+  require `provider=`** (also exposed as `HttpClient.provider`), and
+  `HttpClient.request(...)` now requires `op_name=`. Both were previously
+  threaded through per-call to the removed mapper functions; they're now
+  supplied once, up front, and read by `check_status` and the internal
+  transport-failure mapping.
+- **BREAKING — `fetch_json` / `fetch_text` / `fetch_csv` dropped their
+  `provider=` argument.** The provider slug is read from `http.provider`
+  instead.
+
 ## [0.7.5] - 2026-06-19
 
 ### Fixed

@@ -167,18 +167,32 @@ class CatalogLRU:
         self._cache.clear()
 
 
+#: A free-text ``query`` is a ranked shortlist read into context; keep it small. Omitting
+#: ``query`` and passing only ``filter`` is an exact enumeration read into a kernel variable,
+#: so it may run up to ``ENUMERATION_LIMIT`` (the cap protects context, not the variable).
+RANKED_LIMIT = 50
+ENUMERATION_LIMIT = 10_000
+
+
 class CatalogSearchParams(BaseModel):
     """Common parameters for provider catalog search connectors."""
 
     query: Annotated[
-        str,
+        str | None,
         Field(
-            min_length=1,
+            default=None,
             max_length=512,
-            description="Structured field query (preferred) or plain text for broad search.",
+            description="Structured field query (preferred) or plain text for broad search. "
+            "Omit for a filter-only enumeration read.",
         ),
-    ]
-    limit: int = Field(default=10, ge=1, le=50, description="Top-N results.")
+    ] = None
+    limit: int = Field(default=10, ge=1, le=ENUMERATION_LIMIT, description="Top-N results.")
+    filter: dict[str, str] | None = Field(
+        default=None,
+        description="Exact AND constraint on result columns (e.g. {'code': 'CP0000'}) that "
+        "excludes non-matching rows. Combine with query, or use alone (omit query) to "
+        "enumerate the whole matching slice from the cached catalog.",
+    )
     catalog_url: str | None = Field(default=None, description="Override catalog URL.")
     refresh: bool = Field(
         default=False,
@@ -207,6 +221,17 @@ def _matches_to_dataframe(
             row[col] = m.metadata.get(col)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+#: Appended to every factory-built search description. These connectors are all a
+#: relevance-ranked ``catalog.search`` top-N, so the "not exhaustive" contract is a
+#: property of the factory, not of any one provider — stated here once, un-rottably.
+RANKED_SEARCH_CAVEAT = (
+    " Returns a relevance-ranked top-N, not the full catalog. To read a whole slice "
+    "exhaustively, drop query= and pass filter= (an exact AND on the result columns, "
+    'e.g. {"code": "..."}) with a higher limit; that enumerates from the same cached '
+    "catalog, no re-crawl."
+)
 
 
 def make_local_search_connector(
@@ -243,22 +268,38 @@ def make_local_search_connector(
         )
 
     def _search(
-        query: str,
+        query: str | None = None,
         limit: int = 10,
+        filter: dict[str, str] | None = None,
         catalog_url: str | None = None,
         refresh: bool = False,
     ) -> pd.DataFrame:
         try:
-            params = CatalogSearchParams(query=query, limit=limit, catalog_url=catalog_url, refresh=refresh)
+            params = CatalogSearchParams(
+                query=query, limit=limit, filter=filter, catalog_url=catalog_url, refresh=refresh
+            )
         except ValidationError as exc:
             raise InvalidParameterError(provider=provider, message=str(exc)) from exc
+        q = (params.query or "").strip() or None
+        filter_spec = {col: [str(val)] for col, val in params.filter.items()} if params.filter else None
+        if q is None and not filter_spec:
+            raise InvalidParameterError(provider=provider, message=f"{provider}_search requires query= and/or filter=.")
+        if q is not None and params.limit > RANKED_LIMIT:
+            raise InvalidParameterError(
+                provider=provider,
+                message=(
+                    f"query= is a ranked shortlist (limit <= {RANKED_LIMIT}). To read a whole "
+                    f"slice, drop query= and pass filter= (limit up to {ENUMERATION_LIMIT})."
+                ),
+            )
         catalog = _load_catalog(params)
-        matches = catalog.search(params.query, limit=params.limit)
+        matches = catalog.search(q, limit=params.limit, filter=filter_spec)
         if not matches:
-            msg = empty_message or f"No catalog matches for query={params.query!r}."
+            msg = empty_message or f"No catalog matches for query={q!r} filter={params.filter!r}."
             raise EmptyDataError(provider=provider, message=msg)
         return _matches_to_dataframe(matches, code_column=code_column, metadata_columns=metadata_columns)
 
-    _search.__doc__ = description
+    full_description = description.rstrip() + RANKED_SEARCH_CAVEAT
+    _search.__doc__ = full_description
     _search.__name__ = f"{provider}_search"
-    return connector(output=output, tags=list(tags), description=description)(_search)
+    return connector(output=output, tags=list(tags), description=full_description)(_search)

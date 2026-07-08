@@ -378,9 +378,11 @@ assert exc.provider == "premium"  # attribute still set
 ## How HTTP statuses become typed errors
 
 You rarely map statuses by hand. The [HTTP transport](http-transport.md) layer
-does it for you: its `map_http_error` and `map_timeout_error` helpers translate an
-`httpx` response or timeout into the right typed error, chained from the original
-exception and stripped of URLs and secrets.
+does it for you: `check_status` maps a response's status code to the right typed
+error (no chained `HTTPStatusError`, so no query-string can leak through
+`__cause__`), and `HttpClient.request` maps a transport failure (timeout, or any
+other failure that never produced a response) to a typed error internally,
+chained from the original exception and stripped of URLs and secrets.
 
 | Upstream                 | Mapped to                                              |
 |--------------------------|--------------------------------------------------------|
@@ -395,11 +397,11 @@ The retry-after parser clamps its result into `(0, 86400]` precisely so it never
 trips `RateLimitError`'s epoch guard — the two are coupled by design.
 
 The `fetch_json` / `fetch_csv` / `fetch_text` helpers route every request through
-one path that maps all three `httpx` failure modes — a non-2xx status, a timeout,
-and any other transport error — to the typed taxonomy above, so a raw `httpx`
-exception never escapes a fetch helper. `map_transport_error` is the catch-all for
-the last bucket (a request that never produced a response); it embeds only the
-exception *type name*, never its string, which can carry the URL and its secrets.
+one path that maps every failure mode — a non-2xx status via `check_status`, and
+a timeout or any other transport error inside `request()` — to the typed
+taxonomy above, so a raw `httpx` exception never escapes a fetch helper. The
+transport-failure branch embeds only the exception *type name*, never its
+string, which can carry the URL and its secrets.
 
 ## Catalog-side errors
 

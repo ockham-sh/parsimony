@@ -547,8 +547,10 @@ class Catalog:
                     f"Catalog snapshot integrity check failed for {src}:\n"
                     f"  expected sha256: {meta.build.content_sha256}\n"
                     f"  actual sha256:   {actual_sha}\n"
-                    f"  If this is a cached copy, clear it with "
-                    f"`parsimony cache clear --subdir catalogs --yes` and retry."
+                    f"  A stale local copy? Clear it with "
+                    f"`parsimony cache clear --subdir catalogs --yes` and retry.\n"
+                    f"  If the mismatch persists on a fresh download, the published snapshot "
+                    f"itself is corrupt — report it to the catalog's maintainers."
                 )
 
         meta = validate_catalog_snapshot(src, meta=meta)

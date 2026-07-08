@@ -16,6 +16,7 @@ via :pep:`562` so that ``import parsimony`` stays cheap.
 from __future__ import annotations
 
 import importlib
+import warnings
 from importlib.metadata import PackageNotFoundError, version
 from typing import TYPE_CHECKING, Any
 
@@ -69,6 +70,16 @@ try:
     __version__ = version("parsimony-core")
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
+
+# tqdm emits a ``TqdmWarning: "IProgress not found..."`` at *import* of
+# ``tqdm.autonotebook`` (pulled in transitively by sentence-transformers /
+# huggingface-hub / transformers), before any runtime ``TQDM_DISABLE`` can catch
+# it. It is pure noise for a non-notebook process. Register the filter here (at
+# package import, before any heavy lazy import fires). Match by message only —
+# ``category=TqdmWarning`` would force a hard ``import tqdm`` at package import
+# (defeating the cheap-import invariant), and ``module=`` is unreliable because
+# the warning is attributed to the importer frame via ``stacklevel``.
+warnings.filterwarnings("ignore", message="IProgress not found")
 
 
 __all__ = [

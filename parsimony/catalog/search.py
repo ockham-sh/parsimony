@@ -283,9 +283,7 @@ def make_local_search_connector(
         q = (params.query or "").strip() or None
         filter_spec = {col: [str(val)] for col, val in params.filter.items()} if params.filter else None
         if q is None and not filter_spec:
-            raise InvalidParameterError(
-                provider=provider, message=f"{provider}_search requires query= and/or filter=."
-            )
+            raise InvalidParameterError(provider=provider, message=f"{provider}_search requires query= and/or filter=.")
         if q is not None and params.limit > RANKED_LIMIT:
             raise InvalidParameterError(
                 provider=provider,

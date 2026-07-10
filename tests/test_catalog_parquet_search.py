@@ -143,7 +143,7 @@ def test_parquet_field_search_with_filter() -> None:
         catalog = _build_parquet_catalog(Path(tmp))
         matches = catalog.search(
             query="Germany",
-            field="REF_AREA_label",
+            fields="REF_AREA_label",
             filter={"FREQ_code": ["M"]},
             limit=10,
         )

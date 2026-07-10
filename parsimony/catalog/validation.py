@@ -20,7 +20,7 @@ from parsimony.catalog.storage import (
 )
 
 SUPPORTED_BACKEND_KINDS: frozenset[str] = frozenset({"memory", "parquet"})
-SUPPORTED_INDEX_KINDS: frozenset[str] = frozenset({"vector", "bm25", "hybrid", "dis_max"})
+SUPPORTED_INDEX_KINDS: frozenset[str] = frozenset({"vector", "bm25", "hybrid"})
 
 
 class CatalogValidationError(ValueError):

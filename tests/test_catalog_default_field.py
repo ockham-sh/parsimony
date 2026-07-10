@@ -43,7 +43,7 @@ def test_broad_search_unavailable_without_title_index() -> None:
     cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={"code": "x"})])
     cat.build()
 
-    with pytest.raises(BroadSearchUnavailableError, match="field="):
+    with pytest.raises(BroadSearchUnavailableError, match="fields="):
         cat.search("plain text", limit=5)
 
 

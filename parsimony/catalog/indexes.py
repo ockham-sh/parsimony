@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, Self, runtime_checkable
 
@@ -33,8 +33,6 @@ if TYPE_CHECKING:
     from rank_bm25 import BM25Okapi
 
 COMPONENTS_DIRNAME = "components"
-PER_FIELD_DIRNAME = "per_field"
-EXACT_MATCH_SCORE = 1_000_000.0
 #: Lowest score a fuzzy hybrid candidate is shifted to, so a below-mean fusion
 #: score (z-score fusion produces negatives) stays > 0 and is not dropped by
 #: ``_ValuePostings.expand`` (which discards ``score <= 0``).
@@ -164,22 +162,52 @@ class _ValuePostings:
         return cls(values=values, value_to_id=value_to_id, offsets=offsets, row_ids=row_ids)
 
 
-def _exact_match_vid(postings: _ValuePostings, query: str) -> int | None:
-    """Resolve a case-insensitive exact value match to its vid, else ``None``.
+def value_query_coverage(text: str, query: str) -> float:
+    """Coverage-gate one indexed value against a query.
 
-    Single source of truth for the exact-match short-circuit shared by every
-    index's ``_score_values`` (BM25, Vector): a case-sensitive hit wins fast,
-    otherwise fall back to a case-insensitive scan.
+    A value is *consumed* when its full token set is a subset of the query's
+    (it asserts nothing the query didn't ask for); its coverage is the fraction
+    of the query's tokens it consumes. Any value with leftover tokens gates to
+    0.0 and competes on fuzzy score alone. An exact match is the limit point:
+    coverage 1.0 — case-insensitive string equality covers even values that
+    tokenize to nothing. No parameters, no sentinels.
     """
-    stripped = query.strip()
-    vid = postings.value_to_id.get(stripped)
-    if vid is not None:
-        return vid
-    normalized = stripped.casefold()
-    for text, candidate in postings.value_to_id.items():
-        if text.casefold() == normalized:
-            return candidate
-    return None
+    if text.strip().casefold() == query.strip().casefold():
+        return 1.0
+    query_tokens = frozenset(tokenize(query))
+    if not query_tokens:
+        return 0.0
+    vtokens = set(tokenize(text))
+    if not vtokens or not vtokens <= query_tokens:
+        return 0.0
+    return len(vtokens) / len(query_tokens)
+
+
+def consumed_value_tokens(index: CatalogIndex, query: str) -> dict[str, frozenset[str]]:
+    """Indexed values fully consumed by *query*: ``{text: value token set}``.
+
+    The catalog layer unions these token sets across a row's fields to grade
+    the row's query coverage (see :meth:`Catalog.search`). A value that is
+    string-equal to the query (the tokenless limit of containment) carries the
+    query's full token set so the union grades it 1.0.
+    """
+    normalized = query.strip().casefold()
+    query_tokens = frozenset(tokenize(query))
+    try:
+        texts = _value_texts_from_index(index)
+    except TypeError:
+        return {}
+    out: dict[str, frozenset[str]] = {}
+    for text in texts:
+        if text.strip().casefold() == normalized:
+            out[text] = query_tokens
+            continue
+        if not query_tokens:
+            continue
+        vtokens = frozenset(tokenize(text))
+        if vtokens and vtokens <= query_tokens:
+            out[text] = vtokens
+    return out
 
 
 @runtime_checkable
@@ -245,12 +273,7 @@ class BM25Index:
         return _ranking_from_row_scores(entries, row_scores, limit=limit)
 
     def _score_values(self, query: str) -> dict[int, float]:
-        if not self._postings.values:
-            return {}
-        exact_vid = _exact_match_vid(self._postings, query)
-        if exact_vid is not None:
-            return {exact_vid: EXACT_MATCH_SCORE}
-        if self._bm25 is None:
+        if not self._postings.values or self._bm25 is None:
             return {}
         rows = _bm25_value_scores(self._bm25, query, doc_tokens=self._tokens)
         return {vid: score for vid, score in rows}
@@ -344,9 +367,6 @@ class VectorIndex:
     ) -> dict[int, float]:
         if not self._postings.values:
             return {}
-        exact_vid = _exact_match_vid(self._postings, query)
-        if exact_vid is not None:
-            return {exact_vid: EXACT_MATCH_SCORE}
         if self._faiss is None or self._faiss.ntotal == 0:
             return {}
         info = self.embedder_info
@@ -456,7 +476,7 @@ class HybridIndex:
         positive_vids = {vid for scores in per_kind_scores.values() for vid, score in scores.items() if score > 0.0}
         fused_values = self._fusion(concat(value_rankings), limit=max(len(positive_vids), 1))
         fused_by_vid = {int(item.code): item.score for item in fused_values.items}
-        fused_scores = self._compose_fused_scores(positive_vids, per_kind_scores, fused_by_vid)
+        fused_scores = self._compose_fused_scores(positive_vids, fused_by_vid)
         reference = next(iter(self._components.values()))
         if not isinstance(reference, (BM25Index, VectorIndex)):
             raise TypeError(f"Unsupported hybrid component for postings: {type(reference)!r}")
@@ -465,37 +485,24 @@ class HybridIndex:
     @staticmethod
     def _compose_fused_scores(
         positive_vids: set[int],
-        per_kind_scores: dict[str, dict[int, float]],
         fused_by_vid: dict[int, float],
     ) -> dict[int, float]:
         """Compose the per-vid row score from the configured fusion's output.
 
         The configured fusion (ZScore/MinMax/RRF + weights) decides the order of
-        every fuzzy candidate — that is the whole point of choosing a fusion. Two
-        corrections keep that honest:
-
-        * An exact-match sentinel from any component is kept verbatim rather than
-          fused: the fusion would normalize a lone exact hit down to ~0, costing it
-          the cross-field dominance a sentinel must keep when the catalog merges
-          fields.
-        * Fusion scores are centred (z-score produces negatives) and
-          ``_ValuePostings.expand`` drops ``score <= 0`` — which would silently lose
-          every below-mean candidate. The fuzzy band is translated into the positive
-          range (lowest → ``_FUZZY_SCORE_FLOOR``), preserving the fusion's order and
-          relative gaps without dropping anyone (a vid a degenerate fusion omits —
-          e.g. MinMax skipping a uniform-score group — lands at the floor).
+        every candidate — that is the whole point of choosing a fusion. One
+        correction keeps that honest: fusion scores are centred (z-score produces
+        negatives) and ``_ValuePostings.expand`` drops ``score <= 0`` — which would
+        silently lose every below-mean candidate. The band is translated into the
+        positive range (lowest → ``_FUZZY_SCORE_FLOOR``), preserving the fusion's
+        order and relative gaps without dropping anyone (a vid a degenerate fusion
+        omits — e.g. MinMax skipping a uniform-score group — lands at the floor).
         """
-        raw_max = {vid: max(s.get(vid, 0.0) for s in per_kind_scores.values()) for vid in positive_vids}
-        fused: dict[int, float] = {vid: raw_max[vid] for vid in positive_vids if raw_max[vid] >= EXACT_MATCH_SCORE}
-        fuzzy_vids = [vid for vid in positive_vids if raw_max[vid] < EXACT_MATCH_SCORE]
-        if not fuzzy_vids:
-            return fused
-        present = [fused_by_vid[vid] for vid in fuzzy_vids if vid in fused_by_vid]
+        if not positive_vids:
+            return {}
+        present = [fused_by_vid[vid] for vid in positive_vids if vid in fused_by_vid]
         lo = min(present) if present else 0.0
-        for vid in fuzzy_vids:
-            score = fused_by_vid.get(vid, lo)
-            fused[vid] = (score - lo) + _FUZZY_SCORE_FLOOR
-        return fused
+        return {vid: (fused_by_vid.get(vid, lo) - lo) + _FUZZY_SCORE_FLOOR for vid in positive_vids}
 
     def ranking(
         self,
@@ -545,132 +552,11 @@ class HybridIndex:
         return cls(components=components, fusion=fusion)
 
 
-class DisMaxIndex:
-    """DisMax across multiple Entity fields sharing one component index type.
-
-    The dict-key under which this index lives in ``Catalog.indexes`` is the
-    *logical search-surface name* (what users type in the DSL). The ``fields``
-    list names the actual Entity fields read by the per-field sub-indexes.
-    Score for a candidate row is ``max(per-field-scores) + tie_breaker *
-    sum(non-max scores)``.
-    """
-
-    kind: str = "dis_max"
-
-    def __init__(
-        self,
-        *,
-        fields: list[str],
-        component_factory: Callable[[], CatalogIndex],
-        tie_breaker: float = 0.0,
-    ) -> None:
-        if not fields:
-            raise ValueError("DisMaxIndex requires at least one field")
-        if len(set(fields)) != len(fields):
-            raise ValueError(f"DisMaxIndex fields must be unique: {fields}")
-        if not (0.0 <= tie_breaker <= 1.0):
-            raise ValueError("tie_breaker must be in [0.0, 1.0]")
-        per_field: dict[str, CatalogIndex] = {field: component_factory() for field in fields}
-        kinds = {_component_kind(idx) for idx in per_field.values()}
-        if len(kinds) != 1:
-            raise ValueError(f"DisMaxIndex requires uniform component kind across fields; got {sorted(kinds)}")
-        self._fields = list(fields)
-        self._tie_breaker = float(tie_breaker)
-        self._per_field = per_field
-        self._component_kind = next(iter(kinds))
-
-    def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None:
-        for inner_field, inner_idx in self._per_field.items():
-            inner_ctx = replace(ctx, field=inner_field)
-            inner_idx.build(entries, ctx=inner_ctx)
-
-    def score_candidates(
-        self,
-        query: str,
-        *,
-        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
-    ) -> dict[int, float]:
-        per_field_scores = [
-            idx.score_candidates(query, query_vectors=query_vectors) for idx in self._per_field.values()
-        ]
-        if not per_field_scores:
-            return {}
-        all_rows: set[int] = set().union(*per_field_scores)
-        out: dict[int, float] = {}
-        for row_id in all_rows:
-            scores = [d.get(row_id, 0.0) for d in per_field_scores]
-            best = max(scores)
-            rest = sum(s for s in scores if s != best)
-            out[row_id] = best + self._tie_breaker * rest
-        return out
-
-    def ranking(
-        self,
-        query: str,
-        *,
-        limit: int,
-        entries: list[Entity],
-        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
-    ) -> Ranking:
-        row_scores = self.score_candidates(query, query_vectors=query_vectors)
-        return _ranking_from_row_scores(entries, row_scores, limit=limit)
-
-    def save(self, path: Path) -> None:
-        path.mkdir(parents=True, exist_ok=True)
-        (path / META_FILENAME).write_text(
-            json.dumps(
-                {
-                    "kind": self.kind,
-                    "fields": self._fields,
-                    "tie_breaker": self._tie_breaker,
-                    "component_kind": self._component_kind,
-                },
-                indent=2,
-            )
-        )
-        per_field_dir = path / PER_FIELD_DIRNAME
-        per_field_dir.mkdir(parents=True, exist_ok=True)
-        for field, component in self._per_field.items():
-            if isinstance(component, (BM25Index, VectorIndex)):
-                component.save(per_field_dir / field)
-            else:
-                raise TypeError(f"DisMax component for field {field!r} is not serializable")
-
-    @classmethod
-    def load(cls, path: Path, *, embedder: EmbeddingProvider | None = None) -> Self:
-        raw = json.loads((path / META_FILENAME).read_text())
-        fields = list(raw["fields"])
-        tie_breaker = float(raw["tie_breaker"])
-        component_kind = raw["component_kind"]
-        per_field: dict[str, CatalogIndex] = {}
-        for field in fields:
-            component_path = path / PER_FIELD_DIRNAME / field
-            component_raw = json.loads((component_path / META_FILENAME).read_text())
-            if component_kind == "bm25":
-                if component_raw["kind"] != "bm25":
-                    raise ValueError(f"DisMax field {field!r} expected bm25 component, got {component_raw['kind']!r}")
-                per_field[field] = BM25Index.load(component_path)
-            elif component_kind == "vector":
-                if component_raw["kind"] != "vector":
-                    raise ValueError(f"DisMax field {field!r} expected vector component, got {component_raw['kind']!r}")
-                per_field[field] = VectorIndex.load(component_path, embedder=embedder)
-            else:
-                raise ValueError(f"Unsupported DisMax component kind {component_kind!r}")
-        index = object.__new__(cls)
-        index._fields = fields
-        index._tie_breaker = tie_breaker
-        index._per_field = per_field
-        index._component_kind = component_kind
-        return index
-
-
 def collect_vector_indexes(index: CatalogIndex) -> list[VectorIndex]:
     if isinstance(index, VectorIndex):
         return [index]
     if isinstance(index, HybridIndex):
         return [idx for idx in index._components.values() if isinstance(idx, VectorIndex)]
-    if isinstance(index, DisMaxIndex):
-        return [idx for idx in index._per_field.values() if isinstance(idx, VectorIndex)]
     return []
 
 
@@ -797,11 +683,26 @@ def search_index_values(
     *,
     limit: int,
     query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
-) -> list[tuple[str, float]]:
-    """Score distinct indexed values for *query* and return top-*limit* (text, score) pairs."""
+) -> list[tuple[str, float, float]]:
+    """Rank distinct indexed values for *query*: top-*limit* (text, score, coverage).
+
+    Values order by (coverage desc, fuzzy score desc): a value fully consumed by
+    the query (an exact hit is coverage 1.0) ranks above every fuzzy-only
+    candidate, while near-misses stay visible below it in the fuzzy band.
+    """
     value_scores = _fused_value_scores(index, query, query_vectors=query_vectors)
+    texts = _value_texts_from_index(index)
+    # An equal-but-tokenless value produces no fuzzy score; keep it findable.
+    normalized = query.strip().casefold()
+    for vid, text in enumerate(texts):
+        if vid not in value_scores and text.strip().casefold() == normalized:
+            value_scores[vid] = 0.0
     if not value_scores:
         return []
-    texts = _value_texts_from_index(index)
-    ranked = sorted(value_scores.items(), key=lambda item: (-item[1], item[0]))[:limit]
-    return [(texts[vid], float(score)) for vid, score in ranked if 0 <= vid < len(texts)]
+    scored = [
+        (texts[vid], float(score), value_query_coverage(texts[vid], query))
+        for vid, score in value_scores.items()
+        if 0 <= vid < len(texts)
+    ]
+    scored.sort(key=lambda item: (-item[2], -item[1], item[0]))
+    return scored[:limit]

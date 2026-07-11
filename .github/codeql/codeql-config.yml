@@ -21,3 +21,8 @@ paths-ignore:
   - "**/.venv/**"
   - "**/dist/**"
   - "**/build/**"
+  # `evals/` is eval/benchmark tooling — not shipped, not imported by the package.
+  # Its probe scripts print SDMX statistical dimension *labels* (sex/age/geo
+  # categories, e.g. "Females", "Y15-24"), which py/clear-text-logging-sensitive-data
+  # misreads as personal data. Don't security-scan the benchmark harness.
+  - "evals/**"

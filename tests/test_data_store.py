@@ -62,7 +62,7 @@ def test_loader_requires_key_namespace() -> None:
         ]
     )
     with pytest.raises(ValueError, match="non-empty namespace"):
-        loader(output=unnamespaced)(lambda: pd.DataFrame())
+        loader(output=unnamespaced)(pd.DataFrame)
 
 
 def test_load_result_skips_existing_keys() -> None:

@@ -16,7 +16,7 @@ For the conformance toolkit, see [Conformance testing](plugins/conformance.md).
 | Python package | `parsimony_<name>` (underscored) |
 | Entry point | `[project.entry-points."parsimony.providers"]` mapping a **provider name** → dotted module path |
 | Module export | `CONNECTORS: parsimony.Connectors` (non-empty) |
-| Kernel pin | `parsimony-core>=0.7,<0.8` (contract-version pin; use `[catalog]` extra only when the package needs hybrid search) |
+| Kernel pin | `parsimony-core>=0.0.1` (use `[catalog]` extra only when the package needs hybrid search) |
 
 Consumers discover plugins via `parsimony.discover`:
 

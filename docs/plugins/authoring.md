@@ -64,7 +64,7 @@ group name `parsimony.providers` is fixed; the kernel queries exactly this group
 name = "parsimony-acme"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["parsimony-core>=0.7.0"]
+dependencies = ["parsimony-core>=0.0.1"]
 
 [project.urls]
 Homepage = "https://github.com/acme/parsimony-acme"

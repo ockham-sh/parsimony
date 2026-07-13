@@ -71,7 +71,13 @@ def test_concurrent_save_uses_unique_temp_dirs(tmp_path: Path) -> None:
     entries = [Entity(namespace="demo", code="a", title="Alpha", metadata={})]
 
     def _save(name: str) -> None:
-        catalog = Catalog(name, indexes=discovery_indexes(entries))
+        # BM25-only (indexes=None's default) — this test is about save()'s temp-dir
+        # isolation, not search quality, so it has no business pulling in a real
+        # embedder. discovery_indexes(entries) would default to a HybridIndex here
+        # (1 unique value is below HYBRID_UNIQUE_VALUE_LIMIT) and hit the network on
+        # a cold model cache, which is exactly the live-dependency the rest of the
+        # suite avoids via stub embedders (see test_hybrid_index.py, test_catalog_lifecycle.py).
+        catalog = Catalog(name)
         catalog.set_entities(entries)
         catalog.build()
         catalog.save(str(tmp_path / name))

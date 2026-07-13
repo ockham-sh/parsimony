@@ -162,7 +162,7 @@ def _check_enumerator_return_type(module: ModuleType) -> None:
     for c in module.CONNECTORS:
         if "enumerator" not in c.tags:
             continue
-        if c.output_config is None:
+        if c.output_spec is None:
             raise ConformanceError(
                 "check_enumerator_return_type",
                 f"connector {c.name!r}: enumerator must declare output=",

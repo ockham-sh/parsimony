@@ -7,23 +7,23 @@ from typing import Annotated
 import pandas as pd
 
 from parsimony.connector import Connectors, _returns_clause, connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
         Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-KEY_NO_NS_OUTPUT = OutputConfig(
+KEY_NO_NS_OUTPUT = OutputSpec(
     columns=[
         Column(name="sym", role=ColumnRole.KEY),
         Column(name="price", role=ColumnRole.DATA),
     ]
 )
 
-TITLE_META_OUTPUT = OutputConfig(
+TITLE_META_OUTPUT = OutputSpec(
     columns=[
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="unit", role=ColumnRole.METADATA, namespace="unit"),
@@ -31,20 +31,20 @@ TITLE_META_OUTPUT = OutputConfig(
     ]
 )
 
-EXCLUDED_KEY_OUTPUT = OutputConfig(
+EXCLUDED_KEY_OUTPUT = OutputSpec(
     columns=[
         Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
         Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-ALL_EXCLUDED_OUTPUT = OutputConfig(
+ALL_EXCLUDED_OUTPUT = OutputSpec(
     columns=[
         Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
     ]
 )
 
-ORDER_OUTPUT = OutputConfig(
+ORDER_OUTPUT = OutputSpec(
     columns=[
         Column(name="alpha", role=ColumnRole.KEY, namespace="ns_a"),
         Column(name="beta", role=ColumnRole.DATA),
@@ -52,7 +52,7 @@ ORDER_OUTPUT = OutputConfig(
     ]
 )
 
-WILDCARD_OUTPUT = OutputConfig(
+WILDCARD_OUTPUT = OutputSpec(
     columns=[
         Column(name="*", role=ColumnRole.DATA),
     ]
@@ -153,7 +153,7 @@ class TestConnectorDescribe:
         assert "namespace=" in text
         assert "fred_series" in text
 
-    def test_output_schema_section(self) -> None:
+    def test_output_spec_section(self) -> None:
         text = fred_fetch.bind(api_key="secret").describe()
         assert "Output Schema:" in text
         assert "date" in text
@@ -202,7 +202,7 @@ class TestConnectorToLlmReturns:
         assert "internal_id" not in text
         assert "value (DATA)" in text
 
-    def test_no_returns_line_when_output_config_none(self) -> None:
+    def test_no_returns_line_when_output_spec_none(self) -> None:
         assert "Returns:" not in bare_connector.to_llm()
 
     def test_returns_preserves_declaration_order(self) -> None:
@@ -245,18 +245,35 @@ class TestConnectorRepr:
         assert "Search for FRED" in r
 
 
-class TestSearch:
-    def test_search_by_name_substring(self) -> None:
-        assert _collection().search("fred").names() == ["fred_fetch", "fred_search"]
+class TestToEntities:
+    def test_one_entity_per_connector(self) -> None:
+        entities = _collection().to_entities()
+        assert [e.code for e in entities] == [c.name for c in _collection()]
+        assert all(e.namespace == "connectors" for e in entities)
 
-    def test_search_by_tags_subset(self) -> None:
-        assert _collection().search("fred", tags=["search", "fred"]).names() == ["fred_search"]
+    def test_entity_carries_discovery_metadata(self) -> None:
+        entities = {e.code: e for e in _collection().to_entities()}
+        fetch = entities["fred_fetch"]
+        assert fetch.title == "Fetch FRED time series observations by series_id."
+        assert fetch.metadata["description"] == "Fetch FRED time series observations by series_id."
+        assert fetch.metadata["tags"] == ["loader", "fred"]
+        assert fetch.metadata["properties"] == {"provider": "fred", "tier": "premium"}
+        assert "series_id" in fetch.metadata["params"]
+        assert "date (KEY ns:fred_series)" in fetch.metadata["output"]
 
-    def test_search_by_property(self) -> None:
-        assert _collection().search("fred", tier="premium").names() == ["fred_fetch"]
+    def test_bare_connector_omits_empty_metadata(self) -> None:
+        entities = {e.code: e for e in _collection().to_entities()}
+        bare = entities["bare_connector"]
+        assert set(bare.metadata) == {"description", "params"}
 
-    def test_search_blank_query_returns_all(self) -> None:
-        assert _collection().search("  ").names() == _collection().names()
+    def test_custom_namespace(self) -> None:
+        entities = _collection().to_entities(namespace="my_tools")
+        assert all(e.namespace == "my_tools" for e in entities)
+
+    def test_no_indexed_search_on_collection(self) -> None:
+        # Discovery is catalog-backed and explicit (#71); the collection itself
+        # offers only structural filtering.
+        assert not hasattr(_collection(), "search")
 
 
 class TestFilter:

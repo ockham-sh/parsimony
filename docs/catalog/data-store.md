@@ -78,7 +78,7 @@ normalized form instead.
 ## Loading a result
 
 The bridge from connector output to storage is `load_result`. It reads the
-table's `output_schema`, finds the single `KEY` column (which must declare a
+table's `output_spec`, finds the single `KEY` column (which must declare a
 `namespace`), keeps the `DATA` columns, and groups rows by the `KEY` value into
 one DataFrame per distinct entity. The `KEY` column is consumed for identity;
 `TITLE`, `METADATA`, and any unmapped extra columns are dropped from the stored
@@ -88,9 +88,9 @@ frame.
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
-SCHEMA = OutputConfig(
+SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -107,7 +107,7 @@ table = Result(
         }
     ),
     provenance=Provenance(source="fred", source_description="FRED"),
-    output_schema=SCHEMA,
+    output_spec=SCHEMA,
 )
 
 stats = store.load_result(table)
@@ -151,9 +151,9 @@ extracted entity unconditionally.
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
-SCHEMA = OutputConfig(
+SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -166,7 +166,7 @@ store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
 table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
     provenance=Provenance(source="fred", source_description="FRED"),
-    output_schema=SCHEMA,
+    output_spec=SCHEMA,
 )
 
 first = store.load_result(table, force=False)
@@ -198,9 +198,9 @@ import pandas as pd
 
 from parsimony import InMemoryDataStore
 from parsimony.connector import loader
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-LOAD_SCHEMA = OutputConfig(
+LOAD_SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -232,7 +232,7 @@ it is never counted in `errors`. The table's schema must be well-formed:
 
 | Condition | Raises |
 | --- | --- |
-| `output_schema` is `None` | `ValueError` |
+| `output_spec` is `None` | `ValueError` |
 | `data` is not a DataFrame/Series | `TypeError` |
 | Not exactly one `KEY` column | `ValueError` |
 | `KEY` column has no `namespace` | `ValueError` |
@@ -244,13 +244,13 @@ it is never counted in `errors`. The table's schema must be well-formed:
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 store = InMemoryDataStore()
 table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [1.0]}),
     provenance=Provenance(source="x", source_description="x"),
-    output_schema=OutputConfig(
+    output_spec=OutputSpec(
         columns=[
             Column(name="series_id", role=ColumnRole.KEY),  # no namespace
             Column(name="value", role=ColumnRole.DATA),
@@ -279,6 +279,6 @@ continues with the remaining entities. A single bad entity does not abort a load
 ## See also
 
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — the loader verb that produces the `Result` a store consumes.
-- [Results and output schemas](../connectors/results.md) — `Result`, `OutputConfig`, `Column`, and `ColumnRole`.
+- [Results and output specs](../connectors/results.md) — `Result`, `OutputSpec`, `Column`, and `ColumnRole`.
 - [Entities](entities.md) — namespace/code normalization and the `entity_key` canonical key.
 - [The Catalog](index.md) — the discovery layer; an enumerator's output feeds a catalog, a loader's feeds a data store.

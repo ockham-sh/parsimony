@@ -19,17 +19,17 @@ pip install parsimony-core
 
 A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves. When `Result.data` is a DataFrame the result is *tabular* (`result.is_tabular`).
 
-The `@connector` decorator turns a plain `def` into a frozen `Connector`. When you attach an [`OutputConfig`](../connectors/results.md), the framework applies the declared schema to the returned DataFrame — renaming, coercing dtypes, and tagging each column with a role.
+The `@connector` decorator turns a plain `def` into a frozen `Connector`. When you attach an [`OutputSpec`](../connectors/results.md), it rides along on the result as `result.output_spec` — a declaration of column roles (`KEY`/`TITLE`/`DATA`/`METADATA`) that consumers can act on. The spec never transforms anything: your connector body returns already-shaped data, and `result.data` is exactly what it returned.
 
 ```python
 import pandas as pd
 
-from parsimony import Column, ColumnRole, OutputConfig, Result, connector
+from parsimony import Column, ColumnRole, OutputSpec, Result, connector
 
-PRICE_OUTPUT = OutputConfig(
+PRICE_OUTPUT = OutputSpec(
     columns=[
-        Column(name="date", role=ColumnRole.KEY, namespace="demo_prices", dtype="date"),
-        Column(name="close", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="date", role=ColumnRole.KEY, namespace="demo_prices"),
+        Column(name="close", role=ColumnRole.DATA),
     ]
 )
 
@@ -38,10 +38,11 @@ PRICE_OUTPUT = OutputConfig(
 def daily_close(symbol: str) -> pd.DataFrame:
     """Return a tiny synthetic price series for a ticker symbol."""
     # Replace this with a real HTTP call — see the HTTP transport guide.
+    # Parse and shape here, in the connector body: the frame you return is final.
     return pd.DataFrame(
         {
-            "date": ["2024-01-02", "2024-01-03", "2024-01-04"],
-            "close": ["185.6", "188.1", "187.2"],
+            "date": pd.to_datetime(["2024-01-02", "2024-01-03", "2024-01-04"]),
+            "close": [185.6, 188.1, 187.2],
         }
     )
 
@@ -50,11 +51,10 @@ result = daily_close(symbol="ACME")
 
 assert isinstance(result, Result)
 assert result.is_tabular                   # data is a DataFrame
-print(result.data)                         # the schema-applied DataFrame
-print(result.data["close"].dtype)          # float64 — coerced from strings by dtype="numeric"
+print(result.data)                         # exactly the DataFrame the connector returned
 print(result.provenance.source)            # "daily_close" (defaults to the function name)
 print(result.provenance.params)            # {"symbol": "ACME"}
-print([c.name for c in result.data_columns])  # ["close"]
+print([c.name for c in result.data_columns])  # ["close"] — from the declared spec
 ```
 
 A few things this example demonstrates, all enforced by the framework:
@@ -62,13 +62,12 @@ A few things this example demonstrates, all enforced by the framework:
 - **The connector is synchronous.** An `async def` raises `TypeError` at decoration time.
 - **A description is mandatory.** It defaults to the stripped docstring; pass `description=` to override. With neither, decoration raises `ValueError`.
 - **`provenance.source` is the connector name**, which defaults to `fn.__name__`. `provenance.params` records only the call-time arguments.
-- **`dtype="numeric"` coerced the string column to `float64`.** The `date` column declared `dtype="date"` and was normalized to midnight timestamps.
+- **The spec annotates; the body shapes.** Parsing dates and numbers happens inside the connector, before returning. The `OutputSpec` states what the columns *mean* — here it marks `date` as the namespaced `KEY` — which is what powers the [`result.to_entities()`](../connectors/results.md#entity-projection-resultto_entities) projection and catalog flows.
 
 !!! warning "Connectors must return raw data"
     Returning a `Result` or a `(data, properties)` tuple
     raises `TypeError`. The framework builds the output envelope; your job is
-    to return the data. A schema or coercion failure during wrapping surfaces as
-    a typed [`ParseError`](../connectors/errors.md), not a bare `ValueError`.
+    to return the data.
 
 ## 2. Compose connectors and hide secrets
 
@@ -120,7 +119,7 @@ print(series.provenance.params)  # {"series_id": "UNRATE"} — api_key is stripp
     `describe()` / `to_llm()` cards a connector renders for an agent prompt —
     that is the mechanism, not a convention.
 
-`Connectors` also offers `get`, `names`, `filter`, `search`, `describe`, and `to_llm` — see [Calling, binding, and composing](../connectors/calling-binding-composing.md). Note that `[]` takes a connector **name**, never an integer index: `bundle[0]` raises `KeyError`.
+`Connectors` also offers `get`, `names`, `filter`, `describe`, and `to_llm` — see [Calling, binding, and composing](../connectors/calling-binding-composing.md). Note that `[]` takes a connector **name**, never an integer index: `bundle[0]` raises `KeyError`.
 
 ## 3. Build and search a Catalog
 

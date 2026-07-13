@@ -170,7 +170,7 @@ print(everything.names())
 
 Both operands must be `Connectors`; merging is how you assemble exactly the providers you want
 under one call surface. See [Calling, binding, and composing](../connectors/calling-binding-composing.md)
-for the full collection API (`get`, `[]`, `in`, `names`, `bind`, `filter`, `search`).
+for the full collection API (`get`, `[]`, `in`, `names`, `bind`, `filter`).
 
 ## Inspecting metadata before loading code
 

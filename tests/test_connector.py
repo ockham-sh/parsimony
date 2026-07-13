@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict, Field
 
 from parsimony.connector import Connector, Connectors, connector, enumerator, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 
 class _MacroParams(BaseModel):
@@ -17,17 +17,17 @@ class _MacroParams(BaseModel):
     indicator: str
 
 
-SEARCH_OUTPUT = OutputConfig(
+SEARCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="id", role=ColumnRole.KEY, namespace="demo"),
         Column(name="title", role=ColumnRole.TITLE),
     ]
 )
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -161,7 +161,7 @@ class TestExposedSignature:
         assert result.provenance.params == {"payload": QueryModel(query="GDP")}
 
 
-ENUMERATE_OUTPUT = OutputConfig(
+ENUMERATE_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="demo"),
         Column(name="title", role=ColumnRole.TITLE),
@@ -181,7 +181,7 @@ class TestEnumerator:
     def test_enumerator_requires_output(self) -> None:
         with pytest.raises(ValueError, match="exactly one KEY"):
 
-            @enumerator(output=OutputConfig(columns=[Column(name="title", role=ColumnRole.TITLE)]))
+            @enumerator(output=OutputSpec(columns=[Column(name="title", role=ColumnRole.TITLE)]))
             def bad() -> pd.DataFrame:
                 """Missing KEY."""
                 return pd.DataFrame()
@@ -208,7 +208,7 @@ class TestEnumerator:
 
 class TestLoader:
     def test_loader_requires_data_column(self) -> None:
-        output = OutputConfig(columns=[Column(name="id", role=ColumnRole.KEY, namespace="demo")])
+        output = OutputSpec(columns=[Column(name="id", role=ColumnRole.KEY, namespace="demo")])
         with pytest.raises(ValueError, match="DATA"):
             loader(output=output)
 
@@ -252,9 +252,9 @@ class TestLoader:
             ),
         ],
     )
-    def test_loader_rejects_invalid_output_schema(self, columns: list[Column], match: str) -> None:
+    def test_loader_rejects_invalid_output_spec(self, columns: list[Column], match: str) -> None:
         with pytest.raises(ValueError, match=match):
-            loader(output=OutputConfig(columns=columns))
+            loader(output=OutputSpec(columns=columns))
 
     def test_loader_adds_tag(self) -> None:
         @loader(output=FETCH_OUTPUT, tags=["demo"])
@@ -277,9 +277,9 @@ class TestConnectorExecution:
         assert len(result.data) == 2
         assert result.provenance.params == {"query": "GDP"}
 
-    def test_execute_fetch_with_output_schema(self) -> None:
+    def test_execute_fetch_with_output_spec(self) -> None:
         result = demo_fetch(series_id="GDPC1")
-        assert result.output_schema is not None
+        assert result.output_spec is not None
         assert list(result.data.columns) == ["date", "value"]
         assert result.provenance.params == {"series_id": "GDPC1"}
 
@@ -389,11 +389,11 @@ class TestResultWrap:
         with pytest.raises(TypeError, match="must return raw data"):
             with_props(series_id="GDPC1")
 
-    def test_build_table_result_return_raises_typeerror(self) -> None:
+    def test_result_with_spec_return_raises_typeerror(self) -> None:
         @connector(output=FETCH_OUTPUT)
         def bad_table(series_id: str) -> Result:
             """Incorrectly returns a framework-built Result."""
-            return FETCH_OUTPUT.build_table_result(_make_fetch_df())
+            return Result(data=_make_fetch_df(), output_spec=FETCH_OUTPUT)
 
         with pytest.raises(TypeError, match="must return raw data"):
             bad_table(series_id="GDPC1")

@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
 
-LOAD_SCHEMA = OutputConfig(
+LOAD_SCHEMA = OutputSpec(
     columns=[
         Column(name="code_col", role=ColumnRole.KEY, namespace="test_ns"),
         Column(name="obs", role=ColumnRole.DATA),
@@ -27,7 +27,7 @@ def test_data_from_result_extracts_data_columns_only() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     rows = _data_from_result(table)
     assert len(rows) == 1
@@ -47,7 +47,7 @@ def test_data_from_result_groups_by_key() -> None:
             }
         ),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     rows = _data_from_result(table)
     assert len(rows) == 2
@@ -61,7 +61,7 @@ def test_data_from_result_requires_key_namespace() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=OutputConfig(
+        output_spec=OutputSpec(
             columns=[
                 Column(name="code_col", role=ColumnRole.KEY),
                 Column(name="obs", role=ColumnRole.DATA),
@@ -79,7 +79,7 @@ def test_load_result_skips_existing_keys() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     r = store.load_result(table, force=False)
     assert r.total == 2
@@ -98,7 +98,7 @@ def test_load_result_force_upserts_existing() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     r = store.load_result(table, force=True)
     assert r.total == 1

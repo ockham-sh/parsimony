@@ -9,7 +9,7 @@ import pandas as pd
 
 from parsimony.connector import Connector
 from parsimony.entity import Entity
-from parsimony.result import OutputConfig, Result
+from parsimony.result import OutputSpec, Result
 
 
 def _dataframe_from_raw(raw: Any) -> pd.DataFrame:
@@ -32,7 +32,7 @@ def _dataframe_from_raw(raw: Any) -> pd.DataFrame:
 
 def entities_from_raw(
     raw: Any,
-    output: OutputConfig,
+    output: OutputSpec,
 ) -> list[Entity]:
     """Map a tabular connector result to entities using *output* column roles."""
     if isinstance(raw, list):
@@ -42,12 +42,12 @@ def entities_from_raw(
     if isinstance(raw, Result) and isinstance(raw.data, list):
         raise TypeError("Connectors must not return list[Entity]; return a DataFrame")
     df = _dataframe_from_raw(raw)
-    return output.build_entities(df)
+    return Result(data=df, output_spec=output).to_entities()
 
 
 def entities_from_connector(
     source: Connector | Callable[..., Any],
-    output: OutputConfig,
+    output: OutputSpec,
     **kwargs: Any,
 ) -> list[Entity]:
     """Invoke *source* and convert its return value into catalog entries."""

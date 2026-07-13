@@ -93,7 +93,7 @@ subclass — a connector is a `def` plus metadata.
 import pandas as pd
 
 from parsimony.connector import connector, enumerator, Connectors
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 ```
 
 Three rules govern every connector you write:
@@ -112,7 +112,7 @@ Pick the decorator that matches the verb:
 
 | Decorator | Output contract | Feeds |
 |---|---|---|
-| `@connector` | optional `output=`; merges unmapped columns into DATA | anything |
+| `@connector` | optional `output=` annotation | anything |
 | `@loader(output=...)` | exactly one namespaced KEY, ≥1 DATA, no TITLE/METADATA | a [data store](../catalog/data-store.md) |
 | `@enumerator(output=...)` | exactly one namespaced KEY, ≥1 TITLE, no DATA; must annotate a `pd.DataFrame` return | a [catalog](../catalog/index.md) |
 
@@ -214,7 +214,7 @@ normalize_namespace("acme_series")  # -> "acme_series" (raises if not snake_case
 `code_token` lowercases, collapses separators to single underscores, drops disallowed
 characters, and prefixes a leading-digit token with `v_`. `normalize_namespace` enforces
 the `^[a-z][a-z0-9_]*$` pattern and raises `ValueError` on anything else. Declare the KEY
-column's namespace on your loader/enumerator `OutputConfig`, and tie a parameter to a
+column's namespace on your loader/enumerator `OutputSpec`, and tie a parameter to a
 namespace for LLM cards with an `Annotated[str, "ns:<namespace>"]` hint. See
 [entities](../catalog/entities.md) for how these flow into a catalog.
 
@@ -254,17 +254,17 @@ network is involved — the bodies return synthetic frames).
 import pandas as pd
 
 from parsimony.connector import connector, enumerator, Connectors
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="acme"),
-        Column(name="date", dtype="datetime", role=ColumnRole.DATA),
-        Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+        Column(name="date", role=ColumnRole.DATA),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-ENUM_OUTPUT = OutputConfig(
+ENUM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="title", role=ColumnRole.TITLE),
@@ -278,7 +278,7 @@ def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "key": [series_id, series_id],
-            "date": ["2024-01-01", "2024-02-01"],
+            "date": pd.to_datetime(["2024-01-01", "2024-02-01"]),
             "value": [1.0, 2.0],
         }
     )
@@ -298,9 +298,10 @@ Two details worth noting:
 - `acme_fetch` declares `api_key` as a secret; a consumer fixes it via
   `CONNECTORS.bind(api_key=...)` (binding is scoped per-connector — only connectors that
   actually expose `api_key` receive it).
-- `acme_enumerate` is an enumerator, so its schema has a namespaced KEY and a TITLE, no
-  DATA columns, and the function annotates a `pd.DataFrame` return. The enumerator
-  validates its returned columns against the declared schema at call time.
+- `acme_enumerate` is an enumerator, so its spec has a namespaced KEY and a TITLE, no
+  DATA columns, and the function annotates a `pd.DataFrame` return. The returned columns
+  are validated when the result is projected into entities (`result.to_entities()`), not
+  during the call.
 
 ## Validate before you publish
 

@@ -34,19 +34,19 @@ def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
     Namespace comes from the KEY column's ``namespace=...``. The returned
     DataFrame contains only DATA columns; KEY is consumed for identity.
     """
-    if table.output_schema is None:
-        raise ValueError("Result must have an output_schema for data loading")
+    if table.output_spec is None:
+        raise ValueError("Result must have an output_spec for data loading")
     if not isinstance(table.data, (pd.DataFrame, pd.Series)):
         raise TypeError(f"load expected tabular data, got {type(table.data).__name__}")
     df = table.df
     if df.empty:
         return []
 
-    cols = table.output_schema.columns
+    cols = table.output_spec.columns
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
         raise ValueError(
-            f"Result must have exactly one KEY column in output_schema for data loading, found {len(key_cols)}"
+            f"Result must have exactly one KEY column in output_spec for data loading, found {len(key_cols)}"
         )
     key_col = key_cols[0]
     if not key_col.namespace:
@@ -57,7 +57,7 @@ def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
 
     data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
     if not data_names:
-        raise ValueError("Result must declare at least one DATA column in output_schema for data loading")
+        raise ValueError("Result must declare at least one DATA column in output_spec for data loading")
     for dn in data_names:
         if dn not in df.columns:
             raise ValueError(f"Result missing DATA column {dn!r}. Available: {list(df.columns)}")

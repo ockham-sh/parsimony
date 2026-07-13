@@ -4,8 +4,8 @@ An `Entity` is the unit a [catalog](index.md) indexes and returns: a normalized,
 discoverable identity made of a `namespace`, a `code`, a `title`, and an open
 `metadata` dictionary. This page covers the `Entity` model and its sibling
 `CatalogMatch`, the normalization helpers that enforce identity rules, the
-field-extraction helpers that decide what indexes actually read, and the two ways
-you turn a DataFrame into entities.
+field-extraction helpers that decide what indexes actually read, and how a
+DataFrame becomes entities.
 
 ## The `Entity` model
 
@@ -222,94 +222,30 @@ assert field_text(e, "tags") == "labor rates"
 
 ## Turning a DataFrame into entities
 
-Connectors return raw DataFrames, not entities. There are two ways to build `Entity`
-rows from a frame: the low-level `entities_from_dataframe`, and the higher-level
-`OutputConfig.build_entities`, which an [enumerator](../connectors/loaders-and-enumerators.md)
-uses to feed a catalog.
+Connectors return raw DataFrames, not entities. Entities come from the role-driven
+**entity projection**: a [`Result`](../connectors/results.md) whose
+[`OutputSpec`](../connectors/results.md) declares a namespaced `KEY` column projects into
+entity records via [`result.to_entities()`](../connectors/results.md#entity-projection-resultto_entities).
+For a bare frame outside a `Result`, the same projection is exposed as
+`entities_from_raw` in `parsimony.catalog.source`.
 
 !!! tip "Just want to search a frame you already hold?"
-    The helpers below build a *curated* catalog — explicit column roles, key grouping,
+    The projection builds a *curated* catalog — explicit column roles, key grouping,
     metadata-consistency checks, ready to persist. If instead you have a DataFrame in
     hand and only want to find rows in it, reach for
     [`auto_catalog(df)`](search.md#ad-hoc-runtime-catalogs): every row becomes an
     entity, every column becomes searchable, and you get back an already-built catalog.
     It is a convenience over the runtime path, not the way catalogs are built.
 
-### `entities_from_dataframe`
+### `result.to_entities()`
 
-`entities_from_dataframe` (in `parsimony.entity`) takes explicit column roles and
-returns `list[Entity]`. Rows are grouped by the key column, so repeated keys collapse
-into one entity.
-
-```python
-import pandas as pd
-from parsimony.entity import entities_from_dataframe
-
-df = pd.DataFrame(
-    {
-        "code": ["A", "A", "B"],
-        "title": ["Alpha", "Alpha", "Beta"],
-        "sector": ["Tech", "Tech", "Energy"],
-    }
-)
-entities = entities_from_dataframe(
-    df,
-    namespace="demo",
-    key_column="code",
-    title_column="title",        # optional; falls back to the code if None or missing
-    metadata_columns=["sector"],
-)
-assert {e.code: e.metadata["sector"] for e in entities} == {"A": "Tech", "B": "Energy"}
-```
-
-It raises a `ValueError` if a named key, title, or metadata column is absent from the
-frame. Each metadata column must hold a single value per key group; if values vary
-within one key, it raises a `ValueError` whose message says the column "is not entity
-metadata" and points you at `ColumnRole.DATA` or a more specific key.
-
-#### Per-row namespaces (`__row__`)
-
-When entities in one frame belong to different namespaces, pass
-`namespace="__row__"` together with a `namespace_column`. Each row's namespace is then
-read (and normalized) from that column instead of a single static value.
+An [enumerator](../connectors/loaders-and-enumerators.md) (or any connector whose spec
+declares a namespaced `KEY`) returns a `Result` that already carries its spec, so the
+projection is one method call:
 
 ```python
 import pandas as pd
-from parsimony.entity import entities_from_dataframe
-
-df = pd.DataFrame({"code": ["X"], "title": ["T"], "entity_namespace": ["fred"]})
-entities = entities_from_dataframe(
-    df,
-    namespace="__row__",
-    key_column="code",
-    title_column="title",
-    metadata_columns=[],
-    namespace_column="entity_namespace",
-)
-assert entities[0].namespace == "fred"
-```
-
-### `OutputConfig.build_entities`
-
-The declarative path is `OutputConfig.build_entities(df)` (see
-[results and output schemas](../connectors/results.md)). It reads column roles from the
-schema and delegates to `entities_from_dataframe`, so the same grouping and
-metadata-consistency rules apply.
-
-Requirements:
-
-- Exactly one `KEY` column, and that column must declare a `namespace=` — otherwise
-  `ValueError: KEY column must declare namespace=...`.
-- At most one `TITLE` column (optional). When absent, the code is used as the title.
-- `METADATA` columns are optional. A metadata column named `"*"` is a wildcard that
-  claims every DataFrame column not already taken by the `KEY`, `TITLE`, or another
-  explicit metadata column.
-- A `KEY` namespace of `"__row__"` switches on per-row namespaces, read from a column
-  named `entity_namespace`.
-
-```python
-import pandas as pd
-from parsimony import OutputConfig, Column, ColumnRole
+from parsimony import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame(
     {
@@ -319,43 +255,90 @@ df = pd.DataFrame(
         "description": ["Civilian unemployment rate"],
     }
 )
-schema = OutputConfig(
+result = Result(data=df, output_spec=OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="fred"),
         Column(name="title", role=ColumnRole.TITLE),
         Column(name="frequency", role=ColumnRole.METADATA),
         Column(name="description", role=ColumnRole.METADATA),
     ]
-)
-entities = schema.build_entities(df)
+))
+entities = result.to_entities()
 assert entities[0].namespace == "fred"
 assert entities[0].metadata == {"frequency": "M", "description": "Civilian unemployment rate"}
 ```
+
+Requirements, all validated at projection time (never during connector execution):
+
+- Exactly one `KEY` column, and that column must declare a `namespace=` — otherwise
+  `ValueError`.
+- Every declared column must be present in the frame; a missing one raises `ValueError`
+  naming the missing and available columns.
+- At most one `TITLE` column (optional). When absent, the code is used as the title.
+- `METADATA` columns are optional. A metadata column named `"*"` is a wildcard that
+  claims every DataFrame column not already taken by the `KEY`, `TITLE`, a `DATA`
+  declaration, or another explicit metadata column.
+
+Rows are grouped by the key column, so repeated keys collapse into one entity, and the
+entities come back in first-appearance order. See
+[Results and output specs](../connectors/results.md#entity-projection-resultto_entities)
+for the full mapping semantics.
 
 The wildcard form is convenient when you want every remaining column as metadata:
 
 ```python
 import pandas as pd
-from parsimony import OutputConfig, Column, ColumnRole
+from parsimony import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame({"code": ["A"], "name": ["Alpha"], "sector": ["Tech"], "region": ["US"]})
-schema = OutputConfig(
+result = Result(data=df, output_spec=OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="demo"),
         Column(name="name", role=ColumnRole.TITLE),
         Column(name="*", role=ColumnRole.METADATA),
     ]
-)
-entities = schema.build_entities(df)
+))
+entities = result.to_entities()
 assert entities[0].metadata == {"sector": "Tech", "region": "US"}
 ```
 
+### `entities_from_raw`
+
+`entities_from_raw(raw, output)` (in `parsimony.catalog.source`) runs the same
+projection on a bare DataFrame, Series, or `Result` you hold outside a connector call —
+typically in a catalog build script. It wraps the frame with the given `OutputSpec` and
+returns the projected `list[Entity]` directly.
+
+```python
+import pandas as pd
+from parsimony import Column, ColumnRole, OutputSpec
+from parsimony.catalog.source import entities_from_raw
+
+df = pd.DataFrame(
+    {
+        "code": ["A", "A", "B"],
+        "title": ["Alpha", "Alpha", "Beta"],
+        "sector": ["Tech", "Tech", "Energy"],
+    }
+)
+spec = OutputSpec(columns=[
+    Column(name="code", role=ColumnRole.KEY, namespace="demo"),
+    Column(name="title", role=ColumnRole.TITLE),
+    Column(name="sector", role=ColumnRole.METADATA),
+])
+entities = entities_from_raw(df, spec)
+assert {e.code: e.metadata["sector"] for e in entities} == {"A": "Tech", "B": "Energy"}
+```
+
+Passing a `list[Entity]` raises `TypeError` — connectors return frames, and entities are
+always derived by projection, never returned directly.
+
 !!! warning "Metadata must be constant within an entity key"
-    Both builders group rows by the key and require each metadata column to hold a
-    single value per group. A column whose value differs across rows that share a key
-    (for example an `isin` that changes between two rows of the same `code`) raises a
-    `ValueError` — that column is observation `DATA`, not identity metadata, or your
-    key is too coarse.
+    The projection groups rows by the key and requires each title/metadata column to
+    hold a single non-null value per group. A column whose value differs across rows
+    that share a key (for example an `isin` that changes between two rows of the same
+    `code`) raises a `ValueError` — that column is observation `DATA`, not identity
+    metadata, or your key is too coarse.
 
 Once you have a `list[Entity]`, hand it to a catalog with `set_entities`, then build
 and search. See [building and searching](search.md).
@@ -364,5 +347,5 @@ and search. See [building and searching](search.md).
 
 - [The Catalog](index.md) — the lifecycle that consumes entities and returns matches.
 - [Building and searching](search.md) — `set_entities`, `build`, and the query DSL that returns `CatalogMatch` results.
-- [Results and output schemas](../connectors/results.md) — `OutputConfig`, `Column`, and `ColumnRole`, the schema that drives `build_entities`.
+- [Results and output specs](../connectors/results.md) — `OutputSpec`, `Column`, `ColumnRole`, and the entity projection.
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — enumerators emit the DataFrames that become catalog entities.

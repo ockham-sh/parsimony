@@ -15,11 +15,11 @@ from parsimony.catalog.policy import (
 from parsimony.catalog.source import entities_from_raw
 from parsimony.entity import Entity
 from parsimony.errors import CatalogNotFoundError
-from parsimony.result import Column, ColumnRole, OutputConfig, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 
-def _sample_output() -> OutputConfig:
-    return OutputConfig(
+def _sample_output() -> OutputSpec:
+    return OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="demo"),
             Column(name="title", role=ColumnRole.TITLE),
@@ -32,7 +32,7 @@ def test_entities_from_tabular_result() -> None:
     output = _sample_output()
     raw = Result(
         data=pd.DataFrame({"code": ["a"], "title": ["Alpha"], "topic": ["prices"]}),
-        output_schema=output,
+        output_spec=output,
     )
     entities = entities_from_raw(raw, output)
     assert len(entities) == 1

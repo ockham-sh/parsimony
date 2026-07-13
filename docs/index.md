@@ -64,17 +64,17 @@ See [Installation](getting-started/installation.md) for the full optional-extras
 ## A 60-second taste
 
 This runs with only `parsimony-core` installed. Define a `@connector`, attach an output
-schema, call it, and read the typed `Result`.
+spec, call it, and read the typed `Result`.
 
 ```python
 import pandas as pd
 
-from parsimony import Column, ColumnRole, OutputConfig, connector
+from parsimony import Column, ColumnRole, OutputSpec, connector
 
-OUTPUT = OutputConfig(
+OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -86,7 +86,7 @@ def demo_fetch(series_id: str) -> pd.DataFrame:
 
 
 result = demo_fetch(series_id="GDP")
-print(result.data)                     # the validated DataFrame
+print(result.data)                     # exactly the DataFrame the connector returned
 print(result.provenance.source)        # 'demo_fetch'
 print(result.provenance.params)        # {'series_id': 'GDP'}
 ```
@@ -96,10 +96,10 @@ A few things this shows:
 - The connector is a plain `def`; an `async def` would raise `TypeError` at decoration time.
 - The docstring becomes the connector's required `description` — omit both and decoration
   raises `ValueError`.
-- The function returns a **raw** DataFrame. The framework applies the
-  [`OutputConfig`](connectors/results.md) schema and wraps the result in a `Result`
-  with `Provenance`. Returning a `Result` or a `(data, properties)` tuple instead would
-  raise `TypeError`.
+- The function returns a **raw** DataFrame, already shaped. The framework wraps it in a
+  `Result` with `Provenance` and attaches the [`OutputSpec`](connectors/results.md) as an
+  annotation of the columns' roles — it never renames or coerces the data. Returning a
+  `Result` or a `(data, properties)` tuple instead would raise `TypeError`.
 - `result.provenance` is built by the framework — connectors never construct it. Its
   `params` record only the call-time arguments (with any declared `secrets` stripped).
 

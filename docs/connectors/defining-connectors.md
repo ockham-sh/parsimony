@@ -1,7 +1,7 @@
 # Defining connectors
 
 The `@connector` decorator turns a `def` into a frozen `Connector`: a small
-callable plus the metadata Parsimony needs to call it, validate its output, render it for an
+callable plus the metadata Parsimony needs to call it, render it for an
 LLM, and stamp its results with provenance. This page covers the decorator in depth — its two
 call forms, every keyword, the defaults it derives, the validation it runs at decoration time,
 and what happens to your return value when the connector is called.
@@ -87,15 +87,16 @@ connector, so write it as a precise capability statement.
 |---|---|---|---|
 | `name` | `str \| None` | `fn.__name__` | Connector identity; becomes `provenance.source`. |
 | `description` | `str \| None` | stripped `fn.__doc__` | Required capability text. |
-| `output` | `OutputConfig \| None` | `None` | Declarative output schema applied to DataFrame/Series returns. |
-| `tags` | `list[str] \| None` | `()` | Free-form labels used by `Connectors.search`/`filter`. |
-| `properties` | `dict[str, Any] \| None` | `{}` | Exact-match metadata used by `Connectors.search`. |
+| `output` | `OutputSpec \| None` | `None` | Declarative output spec attached to DataFrame/Series returns. |
+| `tags` | `list[str] \| None` | `()` | Free-form labels used by `Connectors.filter`. |
+| `properties` | `dict[str, Any] \| None` | `{}` | Read-only metadata you can filter the collection on. |
 | `secrets` | `tuple[str, ...]` | `()` | Parameter names to strip from provenance. |
 
 `tags` and `properties` are stored as read-only views (`tags` as a tuple, `properties` as a
-`MappingProxyType`). `output` is an [`OutputConfig`](results.md); when present and the return is
-a DataFrame/Series, the schema is applied. The `secrets` and `output` keywords are covered in
-their own sections below.
+`MappingProxyType`). `output` is an [`OutputSpec`](results.md); when present and the return is
+a DataFrame/Series, the spec rides along on the result as `result.output_spec` — annotation
+only, the data is never touched. The `secrets` and `output` keywords are covered in their own
+sections below.
 
 ```python
 @connector(tags=["finance"], properties={"region": "us"})
@@ -147,9 +148,9 @@ Annotate a parameter with `Annotated[T, "ns:<namespace>"]` to declare which cata
 from typing import Annotated
 import pandas as pd
 from parsimony import connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-OUT = OutputConfig(columns=[
+OUT = OutputSpec(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
     Column(name="value", role=ColumnRole.DATA),
 ])
@@ -200,8 +201,8 @@ frame (`result.is_tabular` is then `True`). The rules:
 
 | Return value | `output=` set? | Result |
 |---|---|---|
-| `DataFrame` / `Series` | yes | `Result` with the schema applied via `OutputConfig.build_table_result` (`is_tabular`) |
-| `DataFrame` / `Series` | no | bare `Result` carrying the frame, no schema (`is_tabular`) |
+| `DataFrame` / `Series` | yes | `Result` carrying the frame unchanged, with the `OutputSpec` attached as `output_spec` (`is_tabular`) |
+| `DataFrame` / `Series` | no | bare `Result` carrying the frame, no spec (`is_tabular`) |
 | scalar / `dict` / any other | — | `Result` (the value lands on `result.data`) |
 | `tuple` | — | **`TypeError`** |
 | `Result` | — | **`TypeError`** |
@@ -226,22 +227,28 @@ the description, `fetched_at` is the current UTC time, `params` is the call-time
 declared secrets removed, and `properties` is empty. Bound arguments are *never* recorded as
 provenance params — only call-time arguments are.
 
-### Applying an output schema
+### Attaching an output spec
 
-When `output=` is an [`OutputConfig`](results.md) and you return a DataFrame/Series, the schema
-maps your columns into roles (`KEY`/`TITLE`/`DATA`/`METADATA`), coerces dtypes, and produces a
-schema-applied `Result`. For a plain `@connector` (and a `@loader`), any DataFrame column
-not named in the schema is folded in as a `DATA` column. (An `@enumerator` is the exception — it
-enforces an exact column match instead.)
+When `output=` is an [`OutputSpec`](results.md) and you return a DataFrame/Series, the spec is
+attached to the result as `result.output_spec`. It is a declaration, not a transform: the
+framework never renames columns, coerces dtypes, or checks the frame against the spec. Your
+connector body parses, renames, and coerces before returning; the spec states how consumers may
+interpret the columns (`KEY`/`TITLE`/`DATA`/`METADATA`, namespaces, LLM visibility).
+
+Declaring a column the connector did not return is **not** an execution error, and extra
+returned columns are fine too. Role-driven operations validate presence when invoked — the
+[`result.to_entities()`](results.md#entity-projection-resultto_entities) projection and
+[data-store loading](../catalog/data-store.md) raise `ValueError` at that point if a declared
+column is missing.
 
 ```python
 import pandas as pd
 from parsimony import connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-OUT = OutputConfig(columns=[
+OUT = OutputSpec(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-    Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+    Column(name="value", role=ColumnRole.DATA),
 ])
 
 @connector(output=OUT)
@@ -250,44 +257,15 @@ def fetch(series_id: str) -> pd.DataFrame:
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0], "extra": ["z"]})
 
 result = fetch(series_id="X")
-assert [c.name for c in result.columns] == ["date", "value", "extra"]
-assert result.columns[2].role == ColumnRole.DATA      # 'extra' merged as DATA
-```
-
-### Schema failures become `ParseError`
-
-A `ValueError` raised while wrapping the result — typically a dtype coercion failure such as an
-all-non-numeric column declared `dtype="numeric"` — is re-raised as a typed
-[`ParseError`](errors.md), carrying the connector name as `provider`. This is what
-`Connector.__call__` raises on a schema mismatch, so callers see one consistent operational error
-type rather than a raw pandas/pydantic exception.
-
-```python
-import pandas as pd
-from parsimony import connector
-from parsimony.result import Column, ColumnRole, OutputConfig
-from parsimony.errors import ParseError
-
-OUT = OutputConfig(columns=[
-    Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-    Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
-])
-
-@connector(output=OUT)
-def fetch(series_id: str) -> pd.DataFrame:
-    """Fetch demo observations."""
-    return pd.DataFrame({"date": ["2020-01-01"], "value": ["not-a-number"]})
-
-try:
-    fetch(series_id="X")
-except ParseError as exc:
-    print(exc.provider)   # 'fetch'
+assert list(result.data.columns) == ["date", "value", "extra"]   # exactly what was returned
+assert [c.name for c in result.columns] == ["date", "value"]     # the declared spec
 ```
 
 !!! note "Operational errors only"
     `ParseError` and its siblings are for *operational* failures — bad upstream data, auth, rate
-    limits. Programmer errors (a forbidden tuple return, an unknown argument, a bad
-    `OutputConfig`) stay as `TypeError` / `ValueError` / pydantic `ValidationError`. See
+    limits — raised from inside the connector body (or the transport helpers it uses).
+    Programmer errors (a forbidden tuple return, an unknown argument, a bad
+    `OutputSpec`) stay as `TypeError` / `ValueError` / pydantic `ValidationError`. See
     [Errors](errors.md) for the full taxonomy.
 
 ## Projections: `describe()` and `to_llm()`
@@ -300,7 +278,7 @@ parameters (including bound secrets) are invisible in both.
   `Output Schema` section (column name + role + namespace) when `output=` is set, and `Tags` /
   `Properties` lines.
 - **`to_llm()`** — a compact, token-efficient card for system prompts: `### <name> [tags]`, the
-  collapsed description (with a `Returns: <col> (ROLE ns:x), ...` line when an `OutputConfig`
+  collapsed description (with a `Returns: <col> (ROLE ns:x), ...` line when an `OutputSpec`
   declares columns — one `name (ROLE)` token per LLM-visible column, `ns:` appended for KEY/METADATA
   columns that declare a namespace, columns with `exclude_from_llm_view` omitted), then one
   `- <param>?: <type> [ns:x]` line per exposed parameter (`?` marks optional, `[ns:...]` marks a
@@ -342,7 +320,7 @@ print(fred_fetch.describe())
 | `properties` | field | Read-only metadata mapping. |
 | `namespace_hints` | field | Read-only `{param: namespace}` mapping from `Annotated` hints. |
 | `secrets` | field | `tuple[str, ...]` of secret parameter names. |
-| `output_config` | field | The `OutputConfig` or `None`. |
+| `output_spec` | field | The `OutputSpec` or `None`. |
 | `exposed_signature` | property | The post-binding `inspect.Signature` callers and cards see. |
 | `describe()` / `to_llm()` | method | Human and LLM projections. |
 
@@ -354,5 +332,5 @@ instance. That, plus composing connectors into a collection, is covered in
 
 - [Loaders and enumerators](loaders-and-enumerators.md) — the two stricter connector verbs and their output contracts.
 - [Calling, binding, and composing](calling-binding-composing.md) — calling connectors, fixing parameters with `bind`, and `Connectors` collections.
-- [Results and output schemas](results.md) — `OutputConfig`, `Column`, `ColumnRole`, `Provenance`, and dtype coercion.
-- [Errors](errors.md) — the typed exception taxonomy connectors raise and `ParseError` translation.
+- [Results and output specs](results.md) — `OutputSpec`, `Column`, `ColumnRole`, `Provenance`, and the entity projection.
+- [Errors](errors.md) — the typed exception taxonomy connectors raise.

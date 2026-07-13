@@ -21,7 +21,7 @@ body:
     attributes:
       label: Area
       options:
-        - Core framework (Connector, Result, OutputConfig)
+        - Core framework (Connector, Result, OutputSpec)
         - Catalog (indexing, search, embeddings)
         - Existing connector improvement
         - Documentation

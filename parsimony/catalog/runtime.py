@@ -3,7 +3,7 @@
 This is the *convenience* path, not the way catalogs are built. A real catalog —
 curated, persistable, optionally vector-backed — is assembled through the
 lifecycle on :class:`~parsimony.catalog.Catalog` itself: construct, load entities
-(see :func:`~parsimony.entity.entities_from_dataframe` for explicit column roles),
+(project them from a role-annotated result via ``result.to_entities()``),
 :meth:`~parsimony.catalog.Catalog.build`, and optionally
 :meth:`~parsimony.catalog.Catalog.save`.
 

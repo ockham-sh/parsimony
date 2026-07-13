@@ -33,7 +33,7 @@ The kernel ships **zero connectors in-tree**. Each connector (e.g. `parsimony-fr
 
 - **Connectors are just functions.** The function's own parameters *are* the connector's call surface — no separate params schema to wire up.
 - **Typed, provenance-tagged results.** Return a raw `pandas` `DataFrame`; the framework builds the `Result` and a `Provenance` record (source, description, UTC fetch time, call params).
-- **Declarative output schemas.** `OutputConfig` + `Column` + `ColumnRole` (`DATA`/`KEY`/`TITLE`/`METADATA`) shape results *and* drive catalog-entity extraction.
+- **Declarative output specs.** `OutputSpec` + `Column` + `ColumnRole` (`DATA`/`KEY`/`TITLE`/`METADATA`) annotate what a connector returns — the data itself is never renamed or coerced — and drive the `result.to_entities()` catalog projection.
 - **Agent-facing error taxonomy.** A single `ConnectorError` base with subclasses whose default messages embed retry directives — built for autonomous agent loops, not just humans.
 - **Credential injection by composition.** `bind(api_key=...)` fixes a parameter, removes it from the call surface, and keeps it out of provenance.
 - **HTTP transport helpers.** `HttpClient` plus `fetch_json` / `fetch_csv` / `fetch_text` (and `check_status`) translate `httpx` errors into the typed taxonomy — including a non-JSON/non-CSV body surfacing as `ParseError` — with secret redaction in logs and transient retry built in.
@@ -132,16 +132,16 @@ def fetch_series(series_id: Annotated[str, Namespace("fred")]) -> pd.DataFrame:
     ...
 ```
 
-For catalog-backed flows, attach an [`OutputConfig`](docs/connectors/results.md) so the framework coerces dtypes and assigns column roles:
+For catalog-backed flows, attach an [`OutputSpec`](docs/connectors/results.md) declaring each column's role. The spec is annotation only — your function returns already-shaped data, and the framework never renames or coerces it:
 
 ```python
-from parsimony import Column, ColumnRole, OutputConfig, connector
+from parsimony import Column, ColumnRole, OutputSpec, connector
 
-CUSTOM_OUTPUT = OutputConfig(
+CUSTOM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="my_source"),
         Column(name="label", role=ColumnRole.TITLE),
-        Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="score", role=ColumnRole.DATA),
     ]
 )
 
@@ -213,13 +213,13 @@ The transport layer maps `httpx` errors (`401`/`402`/`429`/`5xx`/timeout) into t
 
 ```python
 import pandas as pd
-from parsimony import Column, ColumnRole, OutputConfig, connector
+from parsimony import Column, ColumnRole, OutputSpec, connector
 from parsimony.transport.helpers import fetch_json, make_api_key_client
 
-OUT = OutputConfig(
+OUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="acme"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -285,7 +285,7 @@ A few important details, grounded in the code:
 
 ### Building entities from connector output
 
-`OutputConfig.build_entities(df)` projects a `DataFrame` into `Entity` rows using column roles — the single `KEY` column (which must declare a `namespace`) becomes the `code`, `TITLE` becomes the `title`, and `METADATA` columns become `metadata`. This is how an enumerator connector feeds the catalog.
+A role-annotated tabular result projects into entities via `result.to_entities()`, which returns the catalog-ready `list[Entity]` (`catalog.set_entities(result.to_entities())`): rows sharing the `KEY` value become one `Entity`, in first-appearance order. The single `KEY` column (which must declare a `namespace`) becomes the `code`, `TITLE` becomes the `title`, and `METADATA` columns become `metadata`; role invariants are validated at projection time, never during connector execution. This is how an enumerator connector feeds the catalog. For a bare DataFrame outside a `Result`, `parsimony.catalog.source.entities_from_raw(df, output_spec)` runs the same projection.
 
 ### Swapping the embedder
 
@@ -313,7 +313,7 @@ A `Connector` is a frozen dataclass wrapping a synchronous function plus metadat
 - `conn.bind(**kwargs)` → a new connector with parameters fixed and removed from `exposed_signature`.
 - `conn.describe()` / `conn.to_llm()` → human- and LLM-readable cards.
 
-`Connectors([...])` is the immutable collection: `+` to combine (rejects duplicate names), `bundle[name]` / `bundle.get(name)` to index, `names()`, `filter(pred)`, `search(query, *, tags=None, **properties)`, `bind(**kwargs)`, `describe()`, `to_llm()`. There is no `merge` classmethod — use `+`.
+`Connectors([...])` is the immutable collection: `+` to combine (rejects duplicate names), `bundle[name]` / `bundle.get(name)` to index, `names()`, `filter(predicate, tags=[...])`, `bind(**kwargs)`, `describe()`, `to_llm()`, and `to_entities()` (one catalogable `Entity` per connector, namespace `"connectors"` by default) for explicit catalog-backed connector discovery. There is no `merge` classmethod — use `+`. There is no collection-level `search()` — for free-text discovery over a large bundle, build a `Catalog` over `to_entities()` and search that.
 
 ### Three decorators
 
@@ -325,11 +325,11 @@ A `Connector` is a frozen dataclass wrapping a synchronous function plus metadat
 
 ### Result / Provenance
 
-`Result` is the single envelope for every connector output. Its canonical payload is `result.data: Any` — a `pandas` `DataFrame` for tabular fetches, but it may also be a `Series`, scalar, `dict`, `str`, or `bytes`. `result.is_tabular` is `True` exactly when `data` is a `DataFrame`; in that case `result.frame` (alias `result.df`) returns it (and raises if the result is not tabular), and an optional `result.output_schema` (an `OutputConfig`) carries column roles, namespaces, and `exclude_from_llm_view` governance.
+`Result` is the single envelope for every connector output. Its canonical payload is `result.data: Any` — a `pandas` `DataFrame` for tabular fetches, but it may also be a `Series`, scalar, `dict`, `str`, or `bytes` — and it is exactly what the connector returned; the framework never renames, coerces, or validates it. `result.is_tabular` is `True` exactly when `data` is a `DataFrame`; in that case `result.frame` (alias `result.df`) returns it (and raises if the result is not tabular), and an optional `result.output_spec` (an `OutputSpec`) carries column roles, namespaces, and `exclude_from_llm_view` governance. When the spec declares a namespaced `KEY` column, `result.to_entities()` projects the frame into entity records (see "Building entities from connector output" above).
 
 - `result.to_llm()` renders a governed, bounded preview — honest row/column counts and the first rows for tabular payloads, a structural type/shape preview for opaque ones. Use it for LLM context.
 - `result.text` coerces the payload to a string.
-- Tabular results round-trip through Arrow/Parquet (`to_arrow`/`from_arrow`/`to_parquet`/`from_parquet`), embedding provenance and the column schema in table metadata; `Result.from_dataframe(df)` builds a tabular result with no schema applied.
+- Tabular results round-trip through Arrow/Parquet (`to_arrow`/`from_arrow`/`to_parquet`/`from_parquet`), embedding provenance and the output spec in table metadata; `Result.from_dataframe(df)` builds a tabular result with no spec.
 
 `result.provenance` is a framework-built `Provenance` (`source`, `source_description`, `params`, `fetched_at`, plus a framework-only `properties` map) — connectors never construct it.
 

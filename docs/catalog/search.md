@@ -321,8 +321,9 @@ caller (a sandboxed agent) has no embedder.
 
 This is a convenience for searching data you already hold, **not** the way catalogs are built.
 When you need column roles, key grouping, a vector index, or a persistable snapshot, use the
-`Catalog` lifecycle directly with [`entities_from_dataframe`](entities.md#entities_from_dataframe).
-BM25 works on a bare `pip install parsimony-core` — no extra needed.
+`Catalog` lifecycle directly with the
+[entity projection](entities.md#turning-a-dataframe-into-entities) (`result.to_entities()` /
+`entities_from_raw`). BM25 works on a bare `pip install parsimony-core` — no extra needed.
 
 ## See also
 

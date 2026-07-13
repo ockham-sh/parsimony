@@ -6,7 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **`Result.to_entities() -> list[Entity]` — the entity projection of a
+  role-annotated tabular result.** Rows sharing the `KEY` value become one
+  `Entity` (first-appearance order): the `KEY` column's `namespace=` plus the
+  key value form the identity, `TITLE` supplies the title (falling back to the
+  code when all-null), and `METADATA` columns — including the `"*"` wildcard —
+  become `metadata`. Role invariants are validated at projection time, never
+  during connector execution. The list is catalog-ready
+  (`catalog.set_entities(result.to_entities())`); for a bare DataFrame outside
+  a `Result`, `parsimony.catalog.source.entities_from_raw(df, spec)` runs the
+  same projection (#72).
+- **`Connectors.to_entities()`** — one catalogable `Entity` per connector
+  (namespace `"connectors"` by default), for explicit catalog-backed connector
+  discovery over a large bundle (#71).
+
 ### Changed
+
+- **BREAKING — `OutputConfig` is now `OutputSpec`, a non-transforming output
+  semantics declaration.** The spec annotates what a connector's tabular
+  output means (column names + roles); it never validates, renames, or coerces
+  at execution time. `Column` loses `dtype` and `mapped_name` — the model is
+  strict (`extra="forbid"`), so passing them raises — connectors parse,
+  rename, and coerce inside the connector body and return already-shaped data.
+  `Result.output_schema` is renamed `Result.output_spec`. The
+  transforming/validating machinery is gone: `OutputSpec.build_table_result`,
+  `OutputSpec.build_entities`, `OutputSpec.validate_columns`,
+  `Result.to_table`, `Result.entity_keys`, and `entities_from_dataframe` no
+  longer exist — project entities via `result.to_entities()` or
+  `entities_from_raw(df, spec)` instead (#73).
 
 - **BREAKING — `Catalog.search` replaces `field=` with `fields=`.** One
   parameter declares the scoring surface: a single indexed field name
@@ -63,6 +92,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **BREAKING — `fetch_json` / `fetch_text` / `fetch_csv` dropped their
   `provider=` argument.** The provider slug is read from `http.provider`
   instead.
+
+### Removed
+
+- **BREAKING — `Connectors.search`.** A connector collection is not a search
+  index. Narrow a bundle programmatically with `filter(predicate,
+  tags=[...])`; for free-text discovery over a large bundle, build a `Catalog`
+  over `Connectors.to_entities()` and search that (#71).
 
 ## [0.7.5] - 2026-06-19
 

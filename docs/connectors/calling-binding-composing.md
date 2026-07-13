@@ -3,8 +3,8 @@
 A connector is a callable plus metadata, so you invoke it and the framework
 hands back a [`Result`](results.md). Binding fixes parameters
 ahead of time — the idiom for injecting secrets and base URLs without leaking
-them — and the immutable `Connectors` collection lets you merge, filter, and
-search connector bundles. This page covers all three.
+them — and the immutable `Connectors` collection lets you merge and filter
+connector bundles. This page covers all three.
 
 ## Calling a connector
 
@@ -43,8 +43,8 @@ required parameter is omitted.
     A connector returns a DataFrame, Series, scalar, or dict — never a
     pre-built envelope. Returning a `Result` or a `(data, properties)` tuple
     raises `TypeError` at call time, because the framework builds the execution
-    envelope. If a schema or coercion failure surfaces a `ValueError` while
-    wrapping the result, it is re-raised as a typed [`ParseError`](errors.md).
+    envelope. Wrapping never transforms the data: any declared
+    [`OutputSpec`](results.md) is attached as annotation only.
 
 ### The exposed signature
 
@@ -218,31 +218,49 @@ wired = all_tools.bind(api_key="shared-key")   # binds api_key only where it exi
 | `__contains__(name)` | `bool` | `True` if a connector has that name (`False` for non-`str`) |
 | `names()` | `list[str]` | sorted connector names |
 | `__len__()` / `__iter__()` | `int` / iterator | count and iteration over the connectors |
-| `filter(predicate)` | `Connectors` | connectors for which `predicate(connector)` is true |
-| `search(query, tags=, **properties)` | `Connectors` | substring match plus tag/property filters |
+| `filter(predicate=, tags=)` | `Connectors` | connectors matching the predicate and/or carrying all the given tags |
 
 ```python
 # Keep only the loaders.
-loaders = all_tools.filter(lambda c: "loader" in c.tags)
+loaders = all_tools.filter(tags=["loader"])
+
+# Predicate and tags compose; both are optional.
+fred_loaders = all_tools.filter(lambda c: c.name.startswith("fred_"), tags=["loader"])
 ```
 
-`search(query, *, tags=None, **properties)` does a case-insensitive substring
-match of `query` against each connector's **name and description**, then applies
-two optional filters:
+`filter(predicate=None, *, tags=None)` keeps a connector when the given `tags`
+are a **subset** of the connector's tags and `predicate(connector)` is true
+(each check is skipped when its argument is omitted). `filter` and `bind` both
+return new `Connectors`; the original is never modified.
 
-- `tags` — the query tags must be a **subset** of the connector's tags.
-- `**properties` — each given property must match the connector's
-  `properties` value by **exact equality** (`connector.properties.get(k) == v`).
+### Discovery over large collections
 
-A blank or whitespace-only query short-circuits and returns the whole
-collection **without** applying the `tags` / `**properties` filters — those
-filters only run when the query is non-empty. `filter`, `search`, and `bind`
-all return new `Connectors`; the original is never modified.
+`filter`, `names()`, `describe()`, and name lookup cover collection filtering.
+When an agent needs to *find* the right connector among hundreds by free-text
+query, use explicit catalog-backed discovery: `to_entities()` converts each
+connector into one catalogable [`Entity`](../catalog/entities.md)
+(namespace `"connectors"` by default; description, tags, params, and declared
+output columns land in `metadata`), and you build and search the
+[`Catalog`](../catalog/index.md) yourself:
 
 ```python
-# Description/name substring match, narrowed to a tag.
-hits = all_tools.search("series", tags=["loader"])
+import pandas as pd
+from parsimony import Catalog, connector
+
+entities = all_tools.to_entities()   # one Entity per connector
+catalog = Catalog("connectors")
+catalog.set_entities(entities)
+catalog.build()
+
+@connector(tags=["search"])
+def connectors_search(query: str) -> pd.DataFrame:
+    """Search the available connector operations."""
+    matches = catalog.search(query, limit=10)
+    return pd.DataFrame([m.model_dump() for m in matches])
 ```
+
+`to_entities()` is conversion only — index policy, embedding model, and
+lifecycle stay explicit in your code, exactly like any other catalog.
 
 ### Rendering for prompts and humans
 
@@ -270,6 +288,6 @@ and [The connector model](index.md) for the bigger picture.
 
 - [Defining connectors](defining-connectors.md) — the `@connector` decorator, `secrets=`, and namespace hints
 - [Loaders and enumerators](loaders-and-enumerators.md) — the two stricter connector verbs you compose into bundles
-- [Results and output schemas](results.md) — the `Result` envelope every call returns
+- [Results and output specs](results.md) — the `Result` envelope every call returns
 - [Errors](errors.md) — the typed exceptions connectors raise
 - [Discovering installed providers](../plugins/discovery.md) — loading plugin `CONNECTORS` bundles to compose with `+`

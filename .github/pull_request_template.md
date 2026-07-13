@@ -15,7 +15,7 @@
 - [ ] Connector package exports `CONNECTORS`
 - [ ] Connector signatures and docstrings are clear
 - [ ] `@connector`, `@enumerator`, or `@loader` decorators applied
-- [ ] `OutputConfig` with explicit `Column` roles
+- [ ] `OutputSpec` with explicit `Column` roles
 - [ ] Docstrings include workflow chaining hints
 - [ ] Auth/env behavior lives in connector implementation or explicit `.bind(...)`
 - [ ] Tests added in `tests/`

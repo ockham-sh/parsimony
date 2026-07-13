@@ -114,7 +114,7 @@ open an issue before you start coding.
 parsimony/
 ├── __init__.py         Public surface (lazy-loaded via PEP 562).
 ├── connector.py        Connector + Connectors + @connector / @enumerator / @loader.
-├── result.py           Result + Provenance + OutputConfig + Column + ColumnRole.
+├── result.py           Result + Provenance + OutputSpec + Column + ColumnRole + the Result.to_entities projection.
 ├── catalog/            Catalog runtime, indexes, query parsing, search helpers, snapshot I/O.
 ├── catalog/search.py   make_local_search_connector and related helpers.
 ├── embedder.py         EmbeddingProvider Protocol + SentenceTransformerEmbedder + OnnxEmbedder + LiteLLMEmbeddingProvider.

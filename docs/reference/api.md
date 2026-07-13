@@ -34,17 +34,19 @@ grouped below by concern; the grouping is editorial — at runtime they are a fl
 See [The connector model](../connectors/index.md), [Defining connectors](../connectors/defining-connectors.md),
 and [Loaders and enumerators](../connectors/loaders-and-enumerators.md).
 
-### Results and output schemas
+### Results and output specs
 
 | Name | Kind | Import |
 |---|---|---|
-| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_schema`); tabular when `data` is a DataFrame | `from parsimony import Result` |
-| `OutputConfig` | class — declarative output schema | `from parsimony import OutputConfig` |
-| `Column` | class — one schema column | `from parsimony import Column` |
+| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_spec`); tabular when `data` is a DataFrame | `from parsimony import Result` |
+| `OutputSpec` | class — declared output semantics (annotation only, never transformation) | `from parsimony import OutputSpec` |
+| `Column` | class — one declared column | `from parsimony import Column` |
 | `ColumnRole` | enum — `DATA` / `KEY` / `TITLE` / `METADATA` | `from parsimony import ColumnRole` |
 | `Provenance` | class — framework-built fetch metadata | `from parsimony import Provenance` |
 
-See [Results and output schemas](../connectors/results.md).
+See [Results and output specs](../connectors/results.md) — including
+[`Result.to_entities()`](../connectors/results.md#entity-projection-resultto_entities), the
+role-driven projection of a tabular result into catalog entities.
 
 ### Errors
 
@@ -56,7 +58,7 @@ See [Results and output schemas](../connectors/results.md).
 | `RateLimitError` | rate limit / quota (HTTP 429) | `from parsimony import RateLimitError` |
 | `ProviderError` | 5xx, other 4xx, or timeout (carries `status_code`) | `from parsimony import ProviderError` |
 | `EmptyDataError` | HTTP 200 but no rows | `from parsimony import EmptyDataError` |
-| `ParseError` | HTTP 200 but unparseable (also a schema-application failure) | `from parsimony import ParseError` |
+| `ParseError` | HTTP 200 but unparseable | `from parsimony import ParseError` |
 | `InvalidParameterError` | call-time parameter validation failure | `from parsimony import InvalidParameterError` |
 
 See [Errors](../connectors/errors.md). Note `CatalogNotFoundError` is **not** top-level — see below.
@@ -115,7 +117,7 @@ See [Data stores](../catalog/data-store.md).
 See [Caching](../caching.md) and [Discovering installed providers](../plugins/discovery.md).
 
 !!! note "These are the only top-level names"
-    `from parsimony import <name>` works **only** for the 35 names above. Anything else raises
+    `from parsimony import <name>` works **only** for the 36 names above. Anything else raises
     `AttributeError`. Import every other symbol from its submodule, using the paths in the next
     section.
 

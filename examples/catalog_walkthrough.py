@@ -24,7 +24,7 @@ from parsimony.connector import Connectors, connector, enumerator
 from parsimony.entity import Entity
 from parsimony.errors import EmptyDataError
 from parsimony.namespace import Namespace
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 from parsimony.transport.helpers import require_key
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,29 +61,30 @@ print(f"data:\n{result.data.to_string(index=False)}")
 print(f"provenance: source={result.provenance.source!r}, params={result.provenance.params}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — OutputConfig: declare column roles and coerce dtypes
+# Stage 2 — OutputSpec: declare column roles
 #
-# OutputConfig maps raw DataFrame columns to semantic roles:
+# OutputSpec annotates the columns a connector returns with semantic roles:
 #   KEY      — unique identifier (can be used as a catalog code)
 #   TITLE    — human-readable label
 #   DATA     — numeric/string payload
 #   METADATA — filtering context, not a primary analysis target
 #
-# mapped_name renames a column on output.
-# dtype coerces the series on the way out (e.g. "numeric", "date").
-# Columns not listed in the schema are absorbed as DATA by default.
+# The spec never transforms the data: the connector body parses, renames,
+# and coerces before returning, and result.data is exactly what it returned.
+# The roles power downstream consumers — the result.to_entities() projection,
+# data stores, and LLM-facing schema cards.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
-print("Stage 2 — OutputConfig: schema, roles, dtype coercion")
+print("Stage 2 — OutputSpec: declared column roles")
 print("=" * 70)
 
-SERIES_OUTPUT = OutputConfig(
+SERIES_OUTPUT = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="acme"),
         Column(name="name", role=ColumnRole.TITLE),
         Column(name="freq", role=ColumnRole.METADATA),
-        Column(name="obs_date", role=ColumnRole.DATA, dtype="date", mapped_name="date"),
-        Column(name="obs_value", role=ColumnRole.DATA, dtype="numeric", mapped_name="value"),
+        Column(name="date", role=ColumnRole.DATA),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -91,24 +92,25 @@ SERIES_OUTPUT = OutputConfig(
 @connector(output=SERIES_OUTPUT, tags=["acme", "data"])
 def acme_fetch(series_id: str, start: str = "2024-01-01") -> pd.DataFrame:
     """Fetch Acme time series observations."""
+    # Shape the frame here: parse dates and numbers, use the final column names.
     return pd.DataFrame(
         {
             "series_id": ["A001", "A001"],
             "name": ["Acme Index", "Acme Index"],
             "freq": ["monthly", "monthly"],
-            "obs_date": ["2024-01-01", "2024-02-01"],
-            "obs_value": ["100.5", "102.3"],  # strings — coerced to numeric
+            "date": pd.to_datetime(["2024-01-01", "2024-02-01"]),
+            "value": [100.5, 102.3],
         }
     )
 
 
 result2 = acme_fetch(series_id="A001")
 
-assert "date" in result2.data.columns  # mapped_name applied
-assert "value" in result2.data.columns  # mapped_name applied
+assert "date" in result2.data.columns
+assert "value" in result2.data.columns
 assert pd.api.types.is_numeric_dtype(result2.data["value"])
 
-cols_info = [(c.name, c.role.value) for c in result2.output_schema.columns]
+cols_info = [(c.name, c.role.value) for c in result2.output_spec.columns]
 print(f"columns: {cols_info}")
 print(f"data:\n{result2.data.to_string(index=False)}")
 
@@ -168,10 +170,10 @@ print("\n" + "=" * 70)
 print("Stage 4 — Namespace annotation")
 print("=" * 70)
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="acme_dates"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -208,22 +210,21 @@ print(f"\nparam_schema: {schema}")
 #   +          concatenate two bundles (unique names enforced)
 #   bind()     fix parameters across every matching connector
 #   filter()   subset by predicate and/or tags
-#   search()   substring match over name + description
 #   to_llm()   render an LLM-ready prompt section
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
 print("Stage 5 — Connectors collection")
 print("=" * 70)
 
-SEARCH_OUTPUT = OutputConfig(
+SEARCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="score", role=ColumnRole.DATA),
     ]
 )
 
-LIST_OUTPUT = OutputConfig(
+LIST_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="label", role=ColumnRole.TITLE),
@@ -382,21 +383,21 @@ with tempfile.TemporaryDirectory() as tmp:
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 8 — Enumerator → Catalog: building from connector output
 #
-# An enumerator connector returns entity-discovery data.  Its OutputConfig
+# An enumerator connector returns entity-discovery data.  Its OutputSpec
 # declares a KEY column (with namespace=), TITLE column(s), and optional
-# METADATA columns.  OutputConfig.build_entities() converts the result
-# DataFrame into Entity instances ready for catalog ingestion.
+# METADATA columns.  result.to_entities() projects the result into the
+# Entity list ready for catalog ingestion.
 #
 # Real connector packages use this pattern to build their snapshots:
-#   1. Call the enumerator to get a raw DataFrame.
-#   2. Call output_config.build_entities() to get the Entity list.
+#   1. Call the enumerator to get a Result carrying its spec.
+#   2. Call result.to_entities() to get the Entity list.
 #   3. Populate and build the Catalog.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
 print("Stage 8 — Enumerator → Catalog build")
 print("=" * 70)
 
-ENUM_OUTPUT = OutputConfig(
+ENUM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
         Column(name="name", role=ColumnRole.TITLE),
@@ -423,8 +424,9 @@ def acme_enumerate() -> pd.DataFrame:
 enum_result = acme_enumerate()
 assert enum_result.is_tabular
 
-# build_entities() uses the declared OUTPUT schema to extract Entity objects
-entities = enum_result.output_schema.build_entities(enum_result.data)
+# result.to_entities() projects rows into entities using the declared roles
+# and returns the catalog-ready Entity list.
+entities = enum_result.to_entities()
 assert len(entities) == 5
 assert entities[0].namespace == "acme2"
 assert entities[0].code == "CORE_CPI"
@@ -468,10 +470,10 @@ print("\n" + "=" * 70)
 print("Stage 9 — Full search-then-fetch with make_local_search_connector")
 print("=" * 70)
 
-FETCH_V2_OUTPUT = OutputConfig(
+FETCH_V2_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="acme2_obs"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -509,7 +511,7 @@ with tempfile.TemporaryDirectory() as tmp2:
             Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="category", role=ColumnRole.DATA),
-            Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+            Column(name="score", role=ColumnRole.DATA),
         ],
     )
     print(f"search connector: {acme_search_v2!r}")

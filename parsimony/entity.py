@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
 from typing import Any
 
-import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 CODE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -115,93 +113,9 @@ def field_text(entity: Entity, field: str) -> str:
     return " ".join(parts)
 
 
-def _metadata_value(value: Any) -> Any:
-    if hasattr(value, "tolist"):
-        value = value.tolist()
-    elif hasattr(value, "item"):
-        value = value.item()
-    if isinstance(value, list):
-        return [item.item() if hasattr(item, "item") else item for item in value]
-    return value
-
-
-def entities_from_dataframe(
-    df: pd.DataFrame,
-    *,
-    namespace: str,
-    key_column: str,
-    title_column: str | None,
-    metadata_columns: Sequence[str],
-    namespace_column: str | None = None,
-) -> list[Entity]:
-    """Build :class:`Entity` rows from a DataFrame with explicit column roles."""
-
-    if df.empty:
-        return []
-    use_row_namespace = namespace == "__row__" and namespace_column is not None
-    static_ns = None if use_row_namespace else normalize_namespace(namespace)
-    if use_row_namespace and namespace_column not in df.columns:
-        raise ValueError(
-            f"DataFrame missing per-row namespace column {namespace_column!r}. Available: {list(df.columns)}"
-        )
-    if key_column not in df.columns:
-        raise ValueError(f"DataFrame missing key column {key_column!r}. Available: {list(df.columns)}")
-    title_name = title_column
-    if title_name is not None and title_name not in df.columns:
-        raise ValueError(f"DataFrame missing title column {title_name!r}. Available: {list(df.columns)}")
-    meta_names = [name for name in metadata_columns if name != namespace_column]
-    for meta_name in meta_names:
-        if meta_name not in df.columns:
-            raise ValueError(f"DataFrame missing metadata column {meta_name!r}. Available: {list(df.columns)}")
-
-    key_name = key_column
-    needed_cols = {key_name, *meta_names}
-    if namespace_column:
-        needed_cols.add(namespace_column)
-    if title_name:
-        needed_cols.add(title_name)
-    sub_df = df[list(needed_cols)]
-    grouped = sub_df.groupby(key_name, sort=False, dropna=True)
-
-    entries: list[Entity] = []
-    for raw_code, sub in grouped:
-        code = normalize_entity_code(str(raw_code))
-        if title_name and title_name in sub.columns:
-            titles = sub[title_name].dropna()
-            title = str(titles.iloc[0]) if len(titles) > 0 else code
-        else:
-            title = code
-        metadata: dict[str, Any] = {}
-        for meta_name in meta_names:
-            vals = sub[meta_name].dropna()
-            if len(vals) == 0:
-                continue
-            normalized = [_metadata_value(v) for v in vals]
-            distinct = {repr(v) for v in normalized}
-            if len(distinct) > 1:
-                raise ValueError(
-                    f"Column {meta_name!r} is not entity metadata for code {code!r}: "
-                    f"values vary within the entity key. Use ColumnRole.DATA or choose a more specific entity key."
-                )
-            metadata[meta_name] = normalized[0]
-        row_ns: str
-        if use_row_namespace:
-            assert namespace_column is not None
-            ns_vals = sub[namespace_column].dropna()
-            if len(ns_vals) == 0:
-                raise ValueError(f"Missing namespace value in column {namespace_column!r} for code {code!r}")
-            row_ns = normalize_namespace(str(ns_vals.iloc[0]))
-        else:
-            assert static_ns is not None
-            row_ns = static_ns
-        entries.append(Entity(namespace=row_ns, code=code, title=title, metadata=metadata))
-    return entries
-
-
 __all__ = [
     "Entity",
     "code_token",
-    "entities_from_dataframe",
     "entity_key",
     "field_text",
     "field_value",

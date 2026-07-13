@@ -525,4 +525,4 @@ directly — all tuning is per `HttpClient` / `HttpRetryPolicy` instance.
 - [Errors](errors.md) — the typed exception hierarchy these mappers raise, and the `message=` override caveat.
 - [Authoring a provider plugin](../plugins/authoring.md) — building a `parsimony-<name>` distribution that uses this transport layer.
 - [Calling, binding, and composing](calling-binding-composing.md) — `bind` an API key once so it stays off the connector's call surface.
-- [Results and output schemas](results.md) — how the framework wraps connector return values into a `Result`.
+- [Results and output specs](results.md) — how the framework wraps connector return values into a `Result`.

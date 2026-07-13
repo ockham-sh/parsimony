@@ -17,7 +17,7 @@ from parsimony.catalog.source import lazy_catalog_dir
 from parsimony.connector import Connector, connector
 from parsimony.embedder import PARSIMONY_CATALOG_PACKAGE
 from parsimony.errors import CatalogNotFoundError, ConnectorError, EmptyDataError, InvalidParameterError, ProviderError
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
 logger = logging.getLogger(__name__)
 
@@ -252,7 +252,7 @@ def make_local_search_connector(
     """Factory for standard single-catalog search connectors."""
     resolved_env = catalog_url_env_var if env_var is None else env_var
     lazy_namespace = catalog_subdirectory or provider
-    output = OutputConfig(columns=list(output_columns))
+    output = OutputSpec(columns=list(output_columns))
     _lru = CatalogLRU()
 
     def _load_catalog(params: CatalogSearchParams) -> Catalog:

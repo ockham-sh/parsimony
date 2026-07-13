@@ -1,9 +1,13 @@
 # Parsimony
 
-Parsimony is a connector framework for financial data — typed fetch and hybrid-search
-catalogs. It gives you a small, agent-native data layer: connectors that fetch raw data
-through a typed, synchronous call surface, and a portable in-memory catalog that indexes and
-searches over the entities those connectors discover.
+Parsimony is a connector framework for financial data. It tries to do as little as possible:
+no ORM, no schema-validation layer, no plugin base class — not even a standard request or
+response object. A connector is a plain Python function; a bundle of connectors is a list you
+can add together; a catalog is an index plus a search method. The framework doesn't validate
+your data or coerce a dtype — the handful of things it does insist on (provenance, a typed
+error taxonomy, a four-role column schema) exist because those specific things get reinvented,
+slightly differently, by every connector that skips them. Everything else stays in your own
+code, where you can see it.
 
 The distribution is published to PyPI as `parsimony-core` (import name `parsimony`,
 Apache-2.0). It runs on Python `>=3.11` (3.11, 3.12, 3.13).
@@ -26,8 +30,8 @@ Parsimony is built around two complementary ideas.
 
 - **Catalog** — a [`Catalog`](catalog/index.md) is a portable, in-memory, searchable index
   over normalized [`Entity`](catalog/entities.md) records. It supports
-  [pluggable per-field indexes](catalog/indexes.md) (BM25, FAISS vectors, hybrid fusion,
-  DisMax), [structured and broad search](catalog/search.md), and
+  [pluggable per-field indexes](catalog/indexes.md) (BM25, FAISS vectors, hybrid fusion),
+  [structured and broad search](catalog/search.md), and
   [snapshot persistence](catalog/snapshots.md) to local paths or Hugging Face datasets.
 
 !!! note "Connectors ship as separate plugins"
@@ -43,6 +47,22 @@ single `params: SomeModel` object), and connector errors are
 [typed and agent-facing](connectors/errors.md) — default messages embed directives like
 "DO NOT retry" so an LLM driving the connector can act on them. Connectors can also render
 themselves for prompts via `to_llm()`.
+
+## Why entities
+
+Financial data keeps recurring in the same shape: something has an identifier, a name, a
+handful of facts that hold for its whole history, and a stream of observations over time. A
+FRED series has a code (`UNRATE`), a title, a frequency, and a monthly value. A stock has a
+ticker, a company name, a sector, and a daily price. Different providers, same shape.
+[`OutputSpec`](connectors/results.md) names that shape with four roles instead of a bespoke
+schema per provider — `KEY` for the identifier, `TITLE` for the name, `METADATA` for the facts
+that don't vary row to row, `DATA` for the observations. An [`Entity`](catalog/entities.md) is
+what you get when you group a DataFrame by its `KEY`.
+
+None of this is enforced on a plain `@connector` — it can return whatever it wants. But a
+catalog can only search, and a data store can only persist by key, if something first says
+which column is the identity. Four roles is the smallest vocabulary that says so for every
+provider at once — that's the entire case for `OutputSpec` existing.
 
 ## Install
 
@@ -69,12 +89,12 @@ schema, call it, and read the typed `Result`.
 ```python
 import pandas as pd
 
-from parsimony import Column, ColumnRole, OutputConfig, connector
+from parsimony import Column, ColumnRole, OutputSpec, connector
 
-OUTPUT = OutputConfig(
+OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -86,7 +106,7 @@ def demo_fetch(series_id: str) -> pd.DataFrame:
 
 
 result = demo_fetch(series_id="GDP")
-print(result.data)                     # the validated DataFrame
+print(result.data)                     # exactly the DataFrame you returned
 print(result.provenance.source)        # 'demo_fetch'
 print(result.provenance.params)        # {'series_id': 'GDP'}
 ```
@@ -96,10 +116,10 @@ A few things this shows:
 - The connector is a plain `def`; an `async def` would raise `TypeError` at decoration time.
 - The docstring becomes the connector's required `description` — omit both and decoration
   raises `ValueError`.
-- The function returns a **raw** DataFrame. The framework applies the
-  [`OutputConfig`](connectors/results.md) schema and wraps the result in a `Result`
-  with `Provenance`. Returning a `Result` or a `(data, properties)` tuple instead would
-  raise `TypeError`.
+- The function returns a **raw** DataFrame. The framework attaches the
+  [`OutputSpec`](connectors/results.md) schema unchanged and wraps the result in a `Result`
+  with `Provenance` — it never coerces or reshapes your data. Returning a `Result` or a
+  `(data, properties)` tuple instead would raise `TypeError`.
 - `result.provenance` is built by the framework — connectors never construct it. Its
   `params` record only the call-time arguments (with any declared `secrets` stripped).
 

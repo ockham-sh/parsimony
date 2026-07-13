@@ -10,7 +10,7 @@ import pyarrow as pa
 from parsimony.result import (
     Column,
     ColumnRole,
-    OutputConfig,
+    OutputSpec,
     Provenance,
     Result,
 )
@@ -20,8 +20,8 @@ def _df() -> pd.DataFrame:
     return pd.DataFrame({"code": ["UNRATE", "GDPC1"], "title": ["Unemployment", "Real GDP"]})
 
 
-def _schema() -> OutputConfig:
-    return OutputConfig(
+def _schema() -> OutputSpec:
+    return OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="fred"),
             Column(name="title", role=ColumnRole.TITLE),
@@ -53,24 +53,24 @@ def test_arrow_roundtrip_schemaless_result() -> None:
     result = Result(data=_df(), provenance=prov)
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
-    assert roundtrip.output_schema is None
+    assert roundtrip.output_spec is None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"k": "v"}
     assert roundtrip.provenance.properties == {"series_url": "https://example.com/UNRATE"}
-    pd.testing.assert_frame_equal(roundtrip.df, _df())
+    pd.testing.assert_frame_equal(roundtrip.frame, _df())
 
 
 def test_arrow_roundtrip_with_schema() -> None:
-    """When output_schema is set, from_arrow restores it."""
+    """When output_spec is set, from_arrow restores it."""
     result = Result(
         data=_df(),
         provenance=Provenance(source="fred", source_description="FRED"),
-        output_schema=_schema(),
+        output_spec=_schema(),
     )
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
-    assert roundtrip.output_schema is not None
-    cols = roundtrip.output_schema.columns
+    assert roundtrip.output_spec is not None
+    cols = roundtrip.output_spec.columns
     assert [c.name for c in cols] == ["code", "title"]
     assert [c.role for c in cols] == [ColumnRole.KEY, ColumnRole.TITLE]
     assert cols[0].namespace == "fred"
@@ -79,8 +79,32 @@ def test_arrow_roundtrip_with_schema() -> None:
 def test_from_arrow_accepts_vanilla_parquet_without_metadata() -> None:
     table = pa.Table.from_pandas(_df(), preserve_index=False)
     result = Result.from_arrow(table)
-    assert result.output_schema is None
-    pd.testing.assert_frame_equal(result.df, _df())
+    assert result.output_spec is None
+    pd.testing.assert_frame_equal(result.frame, _df())
+
+
+def test_from_arrow_ignores_legacy_dtype_and_kind_fields() -> None:
+    """Old Arrow/Parquet payloads may carry retired ``dtype``/``kind`` keys; ignore, don't reject."""
+    table = pa.Table.from_pandas(_df(), preserve_index=False)
+    legacy_payload = {
+        "provenance": {"source": "fred", "source_description": "FRED", "params": {}, "properties": {}},
+        "columns": [
+            {"name": "code", "kind": "key", "namespace": "fred", "mapped_name": "code"},
+            {"name": "title", "kind": "title", "dtype": "string"},
+        ],
+    }
+    import json
+
+    meta = dict(table.schema.metadata or {})
+    meta[b"parsimony.result"] = json.dumps(legacy_payload).encode("utf-8")
+    table = table.replace_schema_metadata(meta)
+
+    result = Result.from_arrow(table)
+    assert result.output_spec is not None
+    assert [c.name for c in result.output_spec.columns] == ["code", "title"]
+    assert result.output_spec.columns[0].role == ColumnRole.KEY
+    assert result.output_spec.columns[0].namespace == "fred"
+    assert not hasattr(result.output_spec.columns[1], "dtype")
 
 
 # ---------------------------------------------------------------------------
@@ -97,13 +121,13 @@ def test_parquet_roundtrip(tmp_path: Path) -> None:
             params={"q": "unemployment"},
             properties={"series_url": "https://example.com/UNRATE"},
         ),
-        output_schema=_schema(),
+        output_spec=_schema(),
     )
     path = tmp_path / "data.parquet"
     result.to_parquet(path)
     roundtrip = Result.from_parquet(path)
-    assert roundtrip.output_schema is not None
+    assert roundtrip.output_spec is not None
     assert roundtrip.provenance.source == "fred"
     assert roundtrip.provenance.params == {"q": "unemployment"}
     assert roundtrip.provenance.properties == {"series_url": "https://example.com/UNRATE"}
-    pd.testing.assert_frame_equal(roundtrip.df, _df())
+    pd.testing.assert_frame_equal(roundtrip.frame, _df())

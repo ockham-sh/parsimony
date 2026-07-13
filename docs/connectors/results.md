@@ -1,37 +1,39 @@
 # Results and output schemas
 
-A connector returns **raw data** — a DataFrame, Series, scalar, or dict. The framework wraps that return value in a single result envelope, `Result`, carrying framework-built [`Provenance`](#provenance), and — when the connector declares an [`OutputConfig`](#outputconfig) — applies a declarative column schema. This page covers the unified result carrier and the schema system that shapes tabular output.
+A connector returns **raw data** — a DataFrame, Series, scalar, or dict. The framework wraps that return value in a single result envelope, `Result`, carrying framework-built [`Provenance`](#provenance), and — when the connector declares an [`OutputSpec`](#outputspec) — attaches it unchanged as passive metadata. This page covers the unified result carrier, the declarative schema system, and the entity projection built on top of it.
 
 These types live in `parsimony.result` and are all re-exported at the top level, so either import path works:
 
 ```python
-from parsimony import Result, OutputConfig, Column, ColumnRole, Provenance
+from parsimony import Result, OutputSpec, Column, ColumnRole, Provenance, EntityResult
 # equivalently, the explicit submodule path:
-from parsimony.result import Result, OutputConfig, Column, ColumnRole, Provenance
+from parsimony.result import Result, OutputSpec, Column, ColumnRole, Provenance, EntityResult
 ```
 
 !!! note "You rarely construct these directly"
-    The framework builds `Result` and `Provenance` for you when a [connector](defining-connectors.md) returns. A connector that returns a `Result` or a `(data, properties)` tuple raises `TypeError` — provider facts belong in DataFrame columns, not in the result envelope. You *do* construct `OutputConfig` and `Column` to declare a connector's `output=` schema, and you may build a `Result` by hand for tests or for the catalog / data-store flows.
+    The framework builds `Result` and `Provenance` for you when a [connector](defining-connectors.md) returns. A connector that returns a `Result` or a `(data, properties)` tuple raises `TypeError` — provider facts belong in DataFrame columns, not in the result envelope. You *do* construct `OutputSpec` and `Column` to declare a connector's `output=` schema, and you may build a `Result` by hand for tests or for the catalog / data-store flows.
 
 ## Result
 
-`Result` is the one envelope for every payload: any `data` plus provenance, optionally tabular. There is no separate type for DataFrames — a result is *tabular* exactly when its `data` is a `pandas.DataFrame`, and the tabular-only accessors (`frame`, `output_schema`, the schema-derived views, Arrow/Parquet serialization) apply only then.
+`Result` is the one envelope for every payload: any `data` plus provenance, optionally tabular. There is no separate type for DataFrames — a result is *tabular* exactly when its `data` is a `pandas.DataFrame`, and the tabular-only accessors (`frame`, `columns`, `entities`, Arrow/Parquet serialization) apply only then.
 
 | Field | Type | Default |
 |---|---|---|
 | `data` | `Any` | required |
 | `provenance` | `Provenance` | `Provenance(source="", source_description="")` |
-| `output_schema` | `OutputConfig \| None` | `None` |
+| `output_spec` | `OutputSpec \| None` | `None` |
 
-The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. `data` is the canonical payload accessor — a DataFrame for tabular fetches, but it may equally be a Series, scalar, `dict`, `str`, or `bytes`. The members worth knowing:
+The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. The framework **never copies, coerces, renames, or reorders** whatever a connector returned — `data` is exactly that object. `data` is the canonical payload accessor: a DataFrame for tabular fetches, but it may equally be a Series, scalar, `dict`, `str`, or `bytes`. The members worth knowing:
 
 | Member | Kind | Returns |
 |---|---|---|
 | `data` | field | the raw payload, whatever its type |
 | `is_tabular` | property | `True` when `data` is a `pandas.DataFrame` |
 | `frame` | property | the DataFrame payload; raises `TypeError` if not tabular |
-| `df` | property | a live alias of `frame` (the tabular convenience accessor) |
 | `text` | property | `data` unchanged if already a `str`, otherwise `str(data)` |
+| `columns` | property | `output_spec.columns`, or `[]` when there is no schema |
+| `entities` | property | lazy tuple-keyed entity projection — see [Entity projection](#entity-projection) |
+| `to_entities()` | method | `list[Entity]` — lossy catalog conversion built on `entities` |
 | `to_llm()` | method | a governed, length-bounded text preview — the right thing to print for an agent |
 
 Use `is_tabular` to branch on payload shape — never `isinstance(result, ...)`:
@@ -49,92 +51,200 @@ print(tabular.frame.shape)  # (2, 1)  — frame works on tabular payloads
 print(scalar.text)          # 4.25    — stringified opaque payload
 ```
 
-`_with_properties(**properties)` is an internal helper for serialization/tests; it merges keyword arguments into `provenance.properties` on a **new** `Result`. Connector code should not call this.
+## OutputSpec
 
-### Schema-derived views (tabular)
+`OutputSpec` is the declarative schema you attach to a connector via `output=`. It is an ordered `list[Column]` naming each column's semantic [role](#columnrole) — nothing more.
 
-When `data` is a DataFrame and an `output_schema` is present, these read-only properties project it by [role](#columnrole):
+```python
+class OutputSpec(BaseModel):
+    columns: list[Column]
+```
 
-| Property | Returns |
-|---|---|
-| `frame` | the underlying `pd.DataFrame` (raises `TypeError` if not tabular) |
-| `df` | a live alias of `frame` |
-| `columns` | `list[Column]` from the schema, or `[]` when there is no schema |
-| `data_columns` | columns whose role is `DATA` |
-| `metadata_columns` | columns whose role is `METADATA` |
-| `entity_keys` | a DataFrame of the `KEY` column(s), addressed by `mapped_name or name` |
-
-`entity_keys` raises `ValueError` if a declared key column is absent from the data, and returns an empty DataFrame when the schema declares no `KEY` column.
+`OutputSpec` never sees data. It has **no methods that accept a DataFrame** — no coercion, no renaming, no matching side effects, no result construction. The framework attaches it to `Result.output_spec` unchanged; it becomes operational only when a caller asks for an [entity projection](#entity-projection) (`Result.entities`) or a governed presentation (`Result.to_llm()`) — both interpret the declaration against `Result.data` without modifying it.
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame({"sym": ["A", "B"], "title": ["Alpha", "Beta"], "v": [1, 2]})
-schema = OutputConfig(columns=[
+schema = OutputSpec(columns=[
     Column(name="sym", role=ColumnRole.KEY, namespace="demo"),
     Column(name="title", role=ColumnRole.TITLE),
     Column(name="v", role=ColumnRole.DATA),
 ])
-result = Result(data=df, output_schema=schema)
+result = Result(data=df, output_spec=schema)
 
-print(list(result.entity_keys.columns))           # ['sym']
-print([c.name for c in result.data_columns])       # ['v']
-print([c.name for c in result.metadata_columns])   # []
+print([c.name for c in result.columns])  # ['sym', 'title', 'v']
 ```
 
-### Constructors and re-application
+### Declaration validation (at construction)
 
-- `Result.from_dataframe(df)` — wraps a DataFrame (or a Series, coerced first) with **no schema**. Raises `ValueError("Returned an empty DataFrame.")` on empty input.
-- `to_table(output)` — re-applies a new `OutputConfig` to the existing tabular data with `merge_unmapped_as_data=True`, preserving the current provenance. Unmapped columns become `DATA`.
+An after-validator enforces these rules when you build an `OutputSpec`; violations raise `ValueError` (surfaced as pydantic `ValidationError`):
+
+- declared column **names must be unique** (the `"*"` wildcard is exempt from this check — there can only be one anyway)
+- **at most one** `KEY` column
+- **at most one** `TITLE` column
+- **at most one** `"*"` wildcard column, and it must have role `DATA` or `METADATA` (a wildcard cannot identify an entity)
 
 ```python
-import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-raw = Result(
-    data=pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]}),
-    provenance=Provenance(source="s", source_description="demo source"),
-)
-shaped = raw.to_table(OutputConfig(columns=[
-    Column(name="k", role=ColumnRole.KEY, namespace="demo"),
+# raises: "OutputSpec must have at most one KEY column, found 2: ['a', 'b']"
+OutputSpec(columns=[
+    Column(name="a", role=ColumnRole.KEY),
+    Column(name="b", role=ColumnRole.KEY),
+])
+```
+
+Unlike the legacy `OutputConfig`, a `KEY` column may **omit** `namespace` at declaration time — useful when the namespace is resolved dynamically per call, or when the schema is shared with a connector that never projects entities. `namespace` is only required when an [entity projection](#entity-projection) is actually requested; see below.
+
+### The `"*"` wildcard
+
+`"*"` is the sole dynamic rule in a declaration: a wildcard column assigns its role (`DATA` or `METADATA`) to every column *actually present in the data* that isn't named explicitly elsewhere in the declaration. It is resolved only inside [`Result.entities`](#entity-projection) — never eagerly, and never against anything but the frame in hand.
+
+```python
+from parsimony.result import Column, ColumnRole, OutputSpec
+
+# Every undeclared column folds in as METADATA when entities are projected.
+schema = OutputSpec(columns=[
+    Column(name="series_key", role=ColumnRole.KEY, namespace="fred"),
     Column(name="title", role=ColumnRole.TITLE),
-]))
-roles = {c.name: c.role for c in shaped.output_schema.columns}
-print(roles["obs"])              # data  (ColumnRole is a StrEnum; unmapped → DATA)
-print(shaped.provenance.source)  # "s"  (provenance preserved)
+    Column(name="value", role=ColumnRole.DATA),
+    Column(name="*", role=ColumnRole.METADATA),
+])
 ```
 
-### Arrow and Parquet serialization
+## Entity projection
 
-A tabular `Result` round-trips through Arrow and Parquet with provenance and schema embedded in the table metadata (under the binary key `b"parsimony.result"`):
-
-| Method | Behavior |
-|---|---|
-| `to_arrow()` | `pa.Table` with `provenance.safe_dump()` and the column dumps embedded as metadata |
-| `from_arrow(table)` | classmethod; reverses `to_arrow`; tolerates a vanilla table with no such metadata by returning a schemaless result |
-| `to_parquet(path)` | writes the Arrow table to Parquet |
-| `from_parquet(path)` | classmethod; reads Parquet written by `to_parquet` |
+`Result.entities` is a lazy, read-only, tuple-keyed view (`Mapping[tuple[str, str], EntityResult]`) grouping a tabular result's rows into one [`EntityResult`](#entityresult) per `(namespace, code)`. It is the single place `OutputSpec` roles are interpreted against real data — the same algorithm backs `Result.to_entities()`, catalog construction, and data-store loading.
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
-result = Result(
-    data=pd.DataFrame({"code": ["UNRATE"], "title": ["Unemployment"]}),
-    provenance=Provenance(source="fred", source_description="FRED", params={"q": "unemployment"}),
-    output_schema=OutputConfig(columns=[
-        Column(name="code", role=ColumnRole.KEY, namespace="fred"),
-        Column(name="title", role=ColumnRole.TITLE),
-    ]),
-)
+df = pd.DataFrame({
+    "code": ["unrate", "unrate", "cpi"],
+    "title": ["Unemployment", "Unemployment", "CPI"],
+    "freq": ["monthly", "monthly", "monthly"],
+    "date": ["2024-01", "2024-02", "2024-01"],
+    "value": [3.7, 3.9, 310.3],
+})
+schema = OutputSpec(columns=[
+    Column(name="code", role=ColumnRole.KEY, namespace="fred"),
+    Column(name="title", role=ColumnRole.TITLE),
+    Column(name="freq", role=ColumnRole.METADATA),
+    Column(name="date", role=ColumnRole.DATA),
+    Column(name="value", role=ColumnRole.DATA),
+])
+result = Result(data=df, output_spec=schema)
 
-table = result.to_arrow()
-restored = Result.from_arrow(table)
-print([c.name for c in restored.output_schema.columns])  # ['code', 'title']
-print(restored.output_schema.columns[0].namespace)        # 'fred'
-print(restored.provenance.params)                          # {'q': 'unemployment'}
+entities = result.entities                 # bind once; the property is uncached
+unrate = entities["fred", "unrate"]
+print(unrate.title)                        # 'Unemployment'
+print(unrate.metadata)                     # {'freq': 'monthly'}
+print(list(unrate.data.columns))           # ['date', 'value']
+print(len(unrate.data))                    # 2 rows for this entity
 ```
+
+### Requirements and errors
+
+`Result.entities` requires:
+
+- a tabular `data` (`TypeError` otherwise)
+- an `output_spec` declaring **exactly one** `KEY` column (`ValueError` otherwise)
+- that `KEY` column must declare a non-empty `namespace` (`ValueError`: `"KEY column ... must declare namespace=... for entity projection"`) — this is checked here, at projection time, not at `OutputSpec` construction
+- every declared non-wildcard column (`KEY`, `TITLE`, `METADATA`, `DATA`) must actually be present in the frame (`ValueError` listing the missing names)
+- no duplicate DataFrame column labels among the columns the projection reads (`ValueError`)
+- no null values in the `KEY` column (`ValueError`)
+- **consistent** `TITLE`/`METADATA` values within one entity's rows — a `TITLE` or `METADATA` column may vary row-to-row *only* if it resolves to the same non-null value throughout that entity's group; otherwise `ValueError`
+
+Rows are grouped by the normalized `(namespace, code)` pair (see [`normalize_namespace`/`normalize_entity_code`](../catalog/entities.md)), in first-appearance order. Each `EntityResult.data` contains exactly that entity's `DATA`-role rows and columns — `KEY`, `TITLE`, and `METADATA` columns are consumed into the entity's identity, not duplicated into `data`.
+
+!!! warning "Intentionally uncached"
+    `Result.data` is a mutable raw object, so caching the projection would risk a stale view after in-place mutation. `Result.entities` recomputes on every access — bind it to a local once for repeated lookups (`entities = result.entities`) rather than re-accessing the property in a loop.
+
+### Per-row namespace
+
+When a connector's entity namespace is not static (e.g. a search endpoint that spans several catalogs in one call), declare the `KEY` column's `namespace` as the sentinel `"__row__"` and add a `METADATA` column literally named `entity_namespace` carrying the per-row value:
+
+```python
+from parsimony.result import Column, ColumnRole, OutputSpec
+
+schema = OutputSpec(columns=[
+    Column(name="code", role=ColumnRole.KEY, namespace="__row__"),
+    Column(name="entity_namespace", role=ColumnRole.METADATA),
+    Column(name="title", role=ColumnRole.TITLE),
+])
+```
+
+### EntityResult
+
+`EntityResult` is a frozen dataclass — one entity's slice of a tabular `Result`: identity plus `DATA` rows.
+
+| Field / property | Type | Notes |
+|---|---|---|
+| `entity` | `Entity` | the resolved identity (see [Entities](../catalog/entities.md)) |
+| `data` | `pd.DataFrame` | only this entity's `DATA`-role columns, in original row order and index |
+| `provenance` | `Provenance` | the **same** call-level object as the parent `Result` — shared, not copied |
+| `namespace` | `str` | delegates to `entity.namespace` |
+| `code` | `str` | delegates to `entity.code` |
+| `title` | `str` | delegates to `entity.title` |
+| `metadata` | `Mapping[str, Any]` | delegates to `entity.metadata` |
+
+### to_entities()
+
+```python
+to_entities() -> list[Entity]
+```
+
+A lossy catalog conversion: identity, title, and metadata only — no `DATA` rows. This is what catalog-build code calls to turn a connector's `Result` into the records a [`Catalog`](../catalog/index.md) indexes.
+
+```python
+entities = result.to_entities()
+print(entities[0].namespace, entities[0].code)  # fred unrate
+```
+
+## Column
+
+`Column` declares one column's semantics in an `OutputSpec`. It is purely declarative — it never inspects, transforms, or renames the connector's returned data.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `name` | `str` | required | matched against DataFrame columns by exact label; `"*"` is the wildcard |
+| `role` | `ColumnRole` | `DATA` | |
+| `description` | `str \| None` | `None` | free annotation |
+| `namespace` | `str \| None` | `None` | allowed **only** on `KEY` columns; required for entity projection, not for declaration |
+| `exclude_from_llm_view` | `bool` | `False` | forbidden on `DATA` and `TITLE` columns |
+
+An after-validator applies (raises `ValueError`, surfaced as `ValidationError`):
+
+- `exclude_from_llm_view=True` is rejected on `DATA` and `TITLE` columns
+- `namespace` is rejected on any role other than `KEY`, and must be non-empty when set
+
+```python
+from parsimony.result import Column, ColumnRole
+
+col = Column(name="freq", role=ColumnRole.METADATA)
+print(col.role)  # ColumnRole.METADATA
+```
+
+`llm_annotation()` renders the governed `(ROLE)` / `(ROLE ns:<namespace>)` token used by every LLM-facing schema view (connector cards, `to_llm()`, downstream fetch logs) — the single source of truth for that formatting.
+
+## ColumnRole
+
+`ColumnRole` is a string enum naming a column's semantic role:
+
+| Member | Value | Meaning |
+|---|---|---|
+| `ColumnRole.DATA` | `"data"` | an observation / measurement column |
+| `ColumnRole.KEY` | `"key"` | the entity identifier (its `code`); carries a `namespace` for entity projection |
+| `ColumnRole.TITLE` | `"title"` | a human-readable label |
+| `ColumnRole.METADATA` | `"metadata"` | descriptive attributes (frequency, units, …) |
+
+These roles drive [entity projection](#entity-projection) and are what a [data store](../catalog/data-store.md)'s `@loader` output validates against.
+
+!!! tip "No dtype coercion, ever"
+    `OutputSpec`/`Column` declare semantics only — they never coerce a column's dtype, rename it, or otherwise touch the returned DataFrame. If a connector needs `date` parsed to `datetime64` or a numeric field coerced from a provider's string encoding, it does that explicitly in the connector body (e.g. `df["date"] = pd.to_datetime(df["date"])`) before returning. This keeps `OutputSpec` a pure, inspectable declaration and keeps all data transformation visible in one place: the connector's own code.
 
 ## The `to_llm()` view
 
@@ -156,10 +266,10 @@ Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) +
 
 ```python
 import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-01-02"]), "value": [1.0, 2.0]})
-result = Result(data=df, output_schema=OutputConfig(columns=[
+result = Result(data=df, output_spec=OutputSpec(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
     Column(name="value", role=ColumnRole.DATA),
 ]))
@@ -174,7 +284,7 @@ print(result.to_llm())
 # 2020-01-02 00:00:00,2.0
 ```
 
-With no `output_schema` the schema lines carry dtype only (no role annotation). For a frame longer than `max_rows` the header counts stay honest (the *real* row total) and the row label becomes `Rows (showing N of M):`, showing only the first `N` rows; wide cell values are truncated.
+With no `output_spec` the schema lines carry dtype only (no role annotation). For a frame longer than `max_rows` the header counts stay honest (the *real* row total) and the row label becomes `Rows (showing N of M):`, showing only the first `N` rows; wide cell values are truncated.
 
 ### Opaque preview
 
@@ -201,178 +311,39 @@ print(Result(data=4.25).to_llm())   # Result (float): 4.25
     around the data (pagination, charts, caching handles); what it must not do is re-implement the
     governed schema rendering.
 
-## OutputConfig
+## Arrow and Parquet serialization
 
-`OutputConfig` is the declarative schema you attach to a connector via `output=`. It is an ordered `list[Column]` that maps a raw DataFrame into a schema-applied `Result`.
+A tabular `Result` round-trips through Arrow and Parquet with provenance and schema embedded in the table metadata (under the binary key `b"parsimony.result"`):
 
-```python
-class OutputConfig(BaseModel):
-    columns: list[Column]
-```
-
-### Role validation (at construction)
-
-An after-validator enforces three rules when you build an `OutputConfig`; violations raise `ValueError` (surfaced as pydantic `ValidationError`):
-
-- **at most one** `KEY` column
-- **at most one** `TITLE` column
-- **at least one** column with role `DATA`, `KEY`, or `TITLE`
-
-```python
-from parsimony.result import Column, ColumnRole, OutputConfig
-
-# raises: "Output config must have at most one KEY column"
-OutputConfig(columns=[
-    Column(name="a", role=ColumnRole.KEY),
-    Column(name="b", role=ColumnRole.KEY),
-])
-```
-
-### build_table_result
-
-```python
-build_table_result(df: pd.DataFrame | pd.Series, *, merge_unmapped_as_data: bool = True) -> Result
-```
-
-This is the core transform. It walks the declared columns **in order** and, for each, matches a DataFrame column by `Column.name` (or claims all remaining columns for the `"*"` wildcard), copies the series, [coerces its dtype](#dtype-coercion), and renames it. The result:
-
-- A column is **consumed at most once**, so an explicit name always wins over a later `"*"` wildcard.
-- When `mapped_name` is set, the output column is renamed to that literal string; otherwise the source name is kept.
-- When `merge_unmapped_as_data=True` (the default), every still-unconsumed DataFrame column is appended as a fresh `DATA` `Column(dtype="auto")`.
-- The returned `Result` is tabular and carries a **resolved** `OutputConfig` whose `Column.name`s are the final output names (post-rename).
-
-It raises `TypeError` on a non-DataFrame/Series input, and `ValueError` if the frame is empty with no columns. If **no** declared column matches anything it raises `ValueError("Column config matched no input columns.")` — but first it logs a `WARNING` (logger `parsimony.result`) naming the absent columns, so a caller that swallows the exception still sees the diagnostic.
-
-```python
-import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig
-
-raw = pd.DataFrame({"d": ["2020-01-01", "2021-06-15"], "v": ["1", "2.5"], "meta": ["x", "y"]})
-cfg = OutputConfig(columns=[
-    Column(name="d", dtype="datetime", role=ColumnRole.DATA),
-    Column(name="v", dtype="numeric", role=ColumnRole.DATA, mapped_name="value"),
-    Column(name="meta", role=ColumnRole.METADATA),
-])
-result = cfg.build_table_result(raw)
-
-print(list(result.data.columns))              # ['d', 'value', 'meta']  ('v' renamed)
-print(str(result.data["value"].dtype))        # 'float64'  (numeric coercion)
-print([c.name for c in result.metadata_columns])  # ['meta']
-```
-
-The `"*"` wildcard pulls in every column not already claimed by an explicit name:
-
-```python
-import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig
-
-cfg = OutputConfig(columns=[Column(name="*", dtype="numeric", role=ColumnRole.DATA)])
-result = cfg.build_table_result(pd.DataFrame({"a": [1], "b": [2]}))
-print(set(result.data.columns))  # {'a', 'b'}
-```
-
-!!! tip "Connectors do this for you"
-    When a connector declares `output=OutputConfig(...)` and returns a DataFrame, the framework calls `build_table_result` automatically. For an [enumerator](loaders-and-enumerators.md) it instead calls it with `merge_unmapped_as_data=False`, so unmapped columns are dropped rather than folded in as data.
-
-### validate_columns
-
-```python
-validate_columns(df: pd.DataFrame) -> list[str]
-```
-
-Returns the sorted declared (non-wildcard) column names that are **absent** from `df`. Use it to check a frame against a schema before applying it.
-
-```python
-import pandas as pd
-from parsimony.result import Column, OutputConfig
-
-cfg = OutputConfig(columns=[Column(name="x"), Column(name="y")])
-print(cfg.validate_columns(pd.DataFrame({"x": [1]})))  # ['y']
-```
-
-### build_entities
-
-```python
-build_entities(df: pd.DataFrame) -> list[Entity]
-```
-
-Bridges a schema and a DataFrame into a list of [`Entity`](../catalog/entities.md) records for the [Catalog](../catalog/index.md). It requires **exactly one** `KEY` column carrying a `namespace` (else `ValueError`), an optional single `TITLE`, and any number of `METADATA` columns. A `METADATA` column named `"*"` is a wildcard matching every DataFrame column not already claimed by `KEY`, `TITLE`, or an explicit `METADATA` entry. When the key column's `namespace` is the sentinel `"__row__"`, the per-row namespace is read from an `entity_namespace` column instead.
-
-```python
-import pandas as pd
-from parsimony.result import Column, ColumnRole, OutputConfig
-
-cfg = OutputConfig(columns=[
-    Column(name="code", role=ColumnRole.KEY, namespace="fred"),
-    Column(name="title", role=ColumnRole.TITLE),
-    Column(name="*", role=ColumnRole.METADATA),
-])
-entities = cfg.build_entities(pd.DataFrame({
-    "code": ["unrate"], "title": ["Unemployment"], "freq": ["monthly"],
-}))
-print(entities[0].namespace, entities[0].code)  # fred unrate
-print(entities[0].metadata)                       # {'freq': 'monthly'}
-```
-
-## Column
-
-`Column` declares one column in an `OutputConfig`.
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `name` | `str` | required | matched against DataFrame columns; `"*"` is the wildcard |
-| `dtype` | `str` | `"auto"` | drives [coercion](#dtype-coercion) |
-| `role` | `ColumnRole` | `DATA` | accepts the JSON alias `kind` |
-| `mapped_name` | `str \| None` | `None` | output column rename (literal string) |
-| `description` | `str \| None` | `None` | free annotation |
-| `exclude_from_llm_view` | `bool` | `False` | forbidden on `DATA` and `TITLE` columns |
-| `namespace` | `str \| None` | `None` | allowed **only** on `KEY` or `METADATA` columns |
-
-Two after-validators apply (each raises `ValueError`, surfaced as `ValidationError`):
-
-- `exclude_from_llm_view=True` is rejected on `DATA` and `TITLE` columns.
-- `namespace` is rejected on any role other than `KEY` or `METADATA`, and must be non-empty when set.
-
-The `role` field accepts the legacy alias `kind` on input, which is convenient when validating from serialized data:
-
-```python
-from parsimony.result import Column, ColumnRole
-
-col = Column.model_validate({"name": "freq", "kind": "metadata"})
-print(col.role)  # ColumnRole.METADATA
-```
-
-## ColumnRole
-
-`ColumnRole` is a string enum naming a column's semantic role:
-
-| Member | Value | Meaning |
-|---|---|---|
-| `ColumnRole.DATA` | `"data"` | an observation / measurement column |
-| `ColumnRole.KEY` | `"key"` | the entity identifier (its `code`); carries a `namespace` for catalog flows |
-| `ColumnRole.TITLE` | `"title"` | a human-readable label |
-| `ColumnRole.METADATA` | `"metadata"` | descriptive attributes (frequency, units, …) |
-
-These roles drive entity extraction ([Entities](../catalog/entities.md)) and loader output validation ([Data stores](../catalog/data-store.md)).
-
-## dtype coercion
-
-`Column.dtype` is a string that controls how `build_table_result` converts each matched series. The default `"auto"` passes the series through untouched.
-
-| `dtype` | Conversion |
+| Method | Behavior |
 |---|---|
-| `"auto"` | passthrough — no conversion |
-| `"datetime"` | `pd.to_datetime(series)` |
-| `"timestamp"` | unix epoch → datetime (see heuristic below); already-datetime series pass through |
-| `"date"` | `pd.to_datetime(series).dt.normalize()` (time component zeroed) |
-| `"numeric"` | `pd.to_numeric(series, errors="coerce")` |
-| `"bool"` | `series.astype(bool)` |
-| any other string | `series.astype(dtype)` — any valid pandas/numpy dtype (`"int64"`, `"string"`, …); incompatible input raises a descriptive `ValueError` |
+| `to_arrow()` | `pa.Table` with `provenance.safe_dump()` and the column dumps embedded as metadata |
+| `from_arrow(table)` | classmethod; reverses `to_arrow`; tolerates a vanilla table with no such metadata by returning a schemaless result |
+| `to_parquet(path)` | writes the Arrow table to Parquet |
+| `from_parquet(path)` | classmethod; reads Parquet written by `to_parquet` |
 
-The `"timestamp"` heuristic divides values greater than `1e11` by `1000` (treating them as milliseconds) before interpreting them as unix **seconds**. It is a magic threshold, not a declared unit, so `1577836800` (seconds) and `1577836800000` (milliseconds) both resolve to `2020-01-01`.
+```python
+import pandas as pd
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
-!!! warning "All-NaN after coercion raises"
-    If a `"timestamp"` or `"numeric"` column was not entirely missing before coercion but becomes entirely `NaT` / `NaN` after it, `build_table_result` raises `ValueError` rather than emitting a column of nothing — this surfaces bad input (e.g. non-numeric strings) early instead of silently producing empty data.
+result = Result(
+    data=pd.DataFrame({"code": ["UNRATE"], "title": ["Unemployment"]}),
+    provenance=Provenance(source="fred", source_description="FRED", params={"q": "unemployment"}),
+    output_spec=OutputSpec(columns=[
+        Column(name="code", role=ColumnRole.KEY, namespace="fred"),
+        Column(name="title", role=ColumnRole.TITLE),
+    ]),
+)
+
+table = result.to_arrow()
+restored = Result.from_arrow(table)
+print([c.name for c in restored.output_spec.columns])  # ['code', 'title']
+print(restored.output_spec.columns[0].namespace)        # 'fred'
+print(restored.provenance.params)                       # {'q': 'unemployment'}
+```
+
+!!! note "Legacy fields are ignored on read"
+    Retired fields on older Arrow/Parquet payloads written before this schema simplified — `dtype`, `mapped_name`, and the `kind` role alias — are ignored rather than rejected by `from_arrow`, so old files remain readable. New writes never emit them.
 
 ## Provenance
 
@@ -403,7 +374,7 @@ print(dumped["params"])  # {'truncated': True, 'byte_length': ..., 'field': 'par
 
 ## See also
 
-- [Defining connectors](defining-connectors.md) — how `output=` schemas are declared and how raw return values are wrapped
-- [Loaders and enumerators](loaders-and-enumerators.md) — the stricter `OutputConfig` shapes the two verbs require
-- [Errors](errors.md) — a schema `ValueError` during wrapping becomes a typed `ParseError`
-- [Entities](../catalog/entities.md) — what `build_entities` produces and how DataFrames become catalog records
+- [Defining connectors](defining-connectors.md) — how `output=` schemas are declared and attached to a `Result`
+- [Loaders and enumerators](loaders-and-enumerators.md) — the stricter `OutputSpec` shapes the two verbs require
+- [Errors](errors.md) — the typed `ConnectorError` taxonomy a connector raises itself; entity-projection failures stay plain `ValueError`
+- [Entities](../catalog/entities.md) — what `to_entities()` produces and how DataFrames become catalog records

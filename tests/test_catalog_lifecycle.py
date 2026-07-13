@@ -13,7 +13,7 @@ from parsimony.catalog import (
     VectorIndex,
 )
 from parsimony.embedder import EmbedderInfo
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 
 def _entries() -> list[Entity]:
@@ -50,8 +50,8 @@ def test_save_coerces_non_json_native_metadata(tmp_path: Path) -> None:
     assert md["ratio"] == "1.5"
 
 
-def _enumeration_schema(*, namespace: str | None = "series") -> OutputConfig:
-    return OutputConfig(
+def _enumeration_schema(*, namespace: str | None = "series") -> OutputSpec:
+    return OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace=namespace),
             Column(name="title", role=ColumnRole.TITLE),
@@ -91,16 +91,18 @@ def test_catalog_build_entities_static_indexes_and_ranker() -> None:
 
 def test_catalog_build_result_uses_key_namespace() -> None:
     catalog = Catalog("artifact", indexes={"title": BM25Index()})
-    catalog.set_entities(_enumeration_schema(namespace="series").build_entities(_enumeration_df()))
+    result = Result(data=_enumeration_df(), output_spec=_enumeration_schema(namespace="series"))
+    catalog.set_entities(result.to_entities())
 
     catalog.build()
 
     assert {entry.namespace for entry in catalog.entities} == {"series"}
 
 
-def test_build_entities_requires_key_namespace() -> None:
-    with pytest.raises(ValueError, match="KEY column must declare namespace"):
-        _enumeration_schema(namespace=None).build_entities(_enumeration_df())
+def test_entity_projection_requires_key_namespace() -> None:
+    result = Result(data=_enumeration_df(), output_spec=_enumeration_schema(namespace=None))
+    with pytest.raises(ValueError, match="must declare namespace"):
+        result.to_entities()
 
 
 def test_catalog_mutation_methods_require_rebuild(tmp_path: Path) -> None:

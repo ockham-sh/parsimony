@@ -5,7 +5,8 @@ from __future__ import annotations
 __all__ = [
     "Column",
     "ColumnRole",
-    "OutputConfig",
+    "EntityResult",
+    "OutputSpec",
     "Provenance",
     "REDACTED",
     "Result",
@@ -18,18 +19,24 @@ import json
 import logging
 import re
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from parsimony.entity import Entity
+from types import MappingProxyType
+from typing import Any
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from parsimony.entity import (
+    Entity,
+    _metadata_value,
+    normalize_entity_code,
+    normalize_namespace,
+)
 
 SECRET_NAME_PATTERN = re.compile(r"(?i)(api[_-]?key|token|secret|password|credential|bearer|auth)")
 
@@ -41,6 +48,10 @@ REDACTED = "«redacted»"
 
 #: Key under which Result embeds its schema+provenance payload in Arrow table metadata.
 _RESULT_SCHEMA_META_KEY = b"parsimony.result"
+
+#: Reserved KEY namespace value: per-row namespace instead comes from a
+#: METADATA column literally named ``entity_namespace``.
+_ROW_NAMESPACE = "__row__"
 
 logger = logging.getLogger(__name__)
 
@@ -55,32 +66,30 @@ class ColumnRole(StrEnum):
 
 
 class Column(BaseModel):
-    """Declared column in an :class:`OutputConfig` schema."""
+    """Declared semantics for one column of a :class:`OutputSpec`.
+
+    Purely declarative: a ``Column`` never inspects, transforms, or renames
+    the connector's returned data. It binds semantics (role, namespace,
+    description, visibility) to a column name so that a later, explicit
+    projection (:attr:`Result.entities`) or presentation (:meth:`Result.to_llm`)
+    can interpret the raw payload.
+    """
 
     name: str
-    dtype: str = "auto"
-    role: ColumnRole = Field(
-        default=ColumnRole.DATA,
-        validation_alias=AliasChoices("role", "kind"),
-    )
-    mapped_name: str | None = None
+    role: ColumnRole = ColumnRole.DATA
     description: str | None = None
-    exclude_from_llm_view: bool = False
-    #: Catalog namespace for KEY entity codes or METADATA value universes.
-    #: Catalog-producing results must set this on their KEY column. On
-    #: METADATA columns this is a lightweight annotation only; Parsimony does
-    #: not enforce references.
+    #: Catalog namespace for a KEY column's entity codes. Not meaningful on
+    #: any other role — Parsimony enforces no metadata-namespace behavior.
     namespace: str | None = None
+    exclude_from_llm_view: bool = False
 
     @model_validator(mode="after")
     def _validate_exclude_and_namespace(self) -> Column:
-        if self.exclude_from_llm_view and self.role == ColumnRole.DATA:
-            raise ValueError("exclude_from_llm_view is not allowed for data columns")
-        if self.exclude_from_llm_view and self.role == ColumnRole.TITLE:
-            raise ValueError("exclude_from_llm_view is not allowed for title columns")
+        if self.exclude_from_llm_view and self.role in (ColumnRole.DATA, ColumnRole.TITLE):
+            raise ValueError(f"exclude_from_llm_view is not allowed for {self.role.value} columns")
         if self.namespace is not None:
-            if self.role not in (ColumnRole.KEY, ColumnRole.METADATA):
-                raise ValueError("namespace is only allowed on KEY or METADATA columns")
+            if self.role != ColumnRole.KEY:
+                raise ValueError("namespace is only allowed on KEY columns")
             if not str(self.namespace).strip():
                 raise ValueError("namespace must be non-empty when set")
         return self
@@ -94,33 +103,6 @@ class Column(BaseModel):
         role = self.role.value.upper()
         ns = f" ns:{self.namespace}" if self.namespace else ""
         return f"({role}{ns})"
-
-
-def _coerce_series_dtype(column: Column, series: pd.Series) -> pd.Series:
-    match column.dtype:
-        case "auto":
-            return series
-        case "datetime":
-            return pd.to_datetime(series)
-        case "timestamp":
-            if pd.api.types.is_datetime64_any_dtype(series):
-                return series
-            s = pd.to_numeric(series, errors="coerce")
-            s = s.where(s <= 1e11, s / 1000)
-            return pd.to_datetime(s, unit="s", errors="coerce")
-        case "date":
-            return pd.to_datetime(series).dt.normalize()
-        case "numeric":
-            return pd.to_numeric(series, errors="coerce")
-        case "bool":
-            return series.astype(bool)
-        case _:
-            try:
-                return series.astype(column.dtype)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"column '{column.name}': unsupported or incompatible dtype '{column.dtype}': {exc}"
-                ) from exc
 
 
 class Provenance(BaseModel):
@@ -288,45 +270,238 @@ def shape_descriptor(frame: pd.DataFrame, hidden_count: int) -> str:
     return descriptor
 
 
+class OutputSpec(BaseModel):
+    """Ordered declaration of column semantics for a connector's tabular output.
+
+    An ``OutputSpec`` never sees data. It has no methods that accept a
+    DataFrame: no coercion, renaming, matching side effects, or result
+    construction. It becomes operational only when a caller asks for an
+    entity projection (:attr:`Result.entities`) or a governed presentation
+    (:meth:`Result.to_llm`) — both interpret the declaration against
+    ``Result.data`` without modifying it.
+
+    ``"*"`` is the sole dynamic rule: a wildcard column assigns its role to
+    every returned column not named explicitly elsewhere in the declaration.
+    """
+
+    columns: list[Column]
+
+    @model_validator(mode="after")
+    def _validate_declaration(self) -> OutputSpec:
+        names = [c.name for c in self.columns if c.name != "*"]
+        seen: set[str] = set()
+        dupes = {n for n in names if n in seen or seen.add(n)}  # type: ignore[func-returns-value]
+        if dupes:
+            raise ValueError(f"Column names must be unique, found duplicates: {sorted(dupes)}")
+
+        keys = [c for c in self.columns if c.role == ColumnRole.KEY]
+        if len(keys) > 1:
+            names = [c.name for c in keys]
+            raise ValueError(f"OutputSpec must have at most one KEY column, found {len(keys)}: {names}")
+
+        titles = [c.name for c in self.columns if c.role == ColumnRole.TITLE]
+        if len(titles) > 1:
+            raise ValueError(f"OutputSpec must have at most one TITLE column, found {len(titles)}: {titles}")
+
+        wildcards = [c for c in self.columns if c.name == "*"]
+        if len(wildcards) > 1:
+            raise ValueError("OutputSpec must have at most one '*' wildcard column")
+        if wildcards and wildcards[0].role not in (ColumnRole.DATA, ColumnRole.METADATA):
+            raise ValueError("'*' wildcard column must have role DATA or METADATA; it cannot identify an entity")
+        return self
+
+
+@dataclass(frozen=True)
+class EntityResult:
+    """One entity's slice of a tabular :class:`Result`: identity plus DATA rows.
+
+    Produced only by :attr:`Result.entities`. ``data`` contains exactly the
+    columns resolved as ``DATA`` by the parent result's :class:`OutputSpec`,
+    in original row order and index. ``provenance`` is the same call-level
+    object as the parent :class:`Result` — shared, not copied or mixed into
+    metadata.
+    """
+
+    entity: Entity
+    data: pd.DataFrame
+    provenance: Provenance
+
+    @property
+    def namespace(self) -> str:
+        return self.entity.namespace
+
+    @property
+    def code(self) -> str:
+        return self.entity.code
+
+    @property
+    def title(self) -> str:
+        return self.entity.title
+
+    @property
+    def metadata(self) -> Mapping[str, Any]:
+        return self.entity.metadata
+
+
+# ---------------------------------------------------------------------------
+# Entity projection — the one grouping algorithm shared by Result.entities,
+# Result.to_entities(), catalog construction, and data-store loading.
+# ---------------------------------------------------------------------------
+
+
+def _resolve_wildcard_names(frame: pd.DataFrame, claimed: set[str]) -> list[str]:
+    return [str(name) for name in frame.columns if str(name) not in claimed]
+
+
+def _check_no_duplicate_labels(frame: pd.DataFrame, names: Sequence[str]) -> None:
+    counts = frame.columns.value_counts()
+    ambiguous = sorted({n for n in names if n in counts.index and counts[n] > 1})
+    if ambiguous:
+        raise ValueError(f"Entity projection columns are ambiguous: DataFrame has duplicate labels for {ambiguous}")
+
+
+def _consistent_non_null(values: pd.Series, *, label: str, entity_ref: str) -> Any | None:
+    """Return the single distinct non-null value in *values*, or ``None``.
+
+    Raises if more than one distinct non-null value is present. Repeated
+    equal values and a mix of null plus one distinct non-null value are both
+    accepted per the entity-projection contract.
+    """
+    non_null = [_metadata_value(v) for v in values.dropna()]
+    if not non_null:
+        return None
+    distinct = {repr(v) for v in non_null}
+    if len(distinct) > 1:
+        raise ValueError(f"{label} has conflicting values for entity {entity_ref}: values vary within the entity key")
+    return non_null[0]
+
+
+def _project_entities(
+    data: Any,
+    output_spec: OutputSpec | None,
+    provenance: Provenance,
+) -> Mapping[tuple[str, str], EntityResult]:
+    """Group a tabular payload into one :class:`EntityResult` per ``(namespace, code)``.
+
+    See ``Result.entities`` for the full contract. Errors are raised as
+    direct ``TypeError``/``ValueError`` with entity and column context.
+    """
+    if output_spec is None:
+        raise ValueError("Result has no OutputSpec; cannot project entities")
+    if not isinstance(data, pd.DataFrame):
+        raise TypeError(f"Entity projection requires a tabular Result (payload type: {type(data).__name__})")
+    frame = data
+
+    columns = output_spec.columns
+    key_cols = [c for c in columns if c.role == ColumnRole.KEY]
+    if len(key_cols) != 1:
+        raise ValueError(f"Entity projection requires exactly one KEY column, found {len(key_cols)}")
+    key_col = key_cols[0]
+    if not key_col.namespace:
+        raise ValueError(f"KEY column {key_col.name!r} must declare namespace=... for entity projection")
+
+    title_cols = [c for c in columns if c.role == ColumnRole.TITLE]
+    title_col = title_cols[0] if title_cols else None
+
+    meta_cols = [c for c in columns if c.role == ColumnRole.METADATA and c.name != "*"]
+    data_cols = [c for c in columns if c.role == ColumnRole.DATA and c.name != "*"]
+    wildcard = next((c for c in columns if c.name == "*"), None)
+
+    per_row_namespace = key_col.namespace == _ROW_NAMESPACE
+    namespace_col_name = "entity_namespace" if per_row_namespace else None
+    if per_row_namespace and namespace_col_name not in {c.name for c in meta_cols}:
+        raise ValueError(
+            f'KEY column {key_col.name!r} declares namespace="{_ROW_NAMESPACE}", which requires a '
+            'METADATA column named "entity_namespace"'
+        )
+
+    required_names = [
+        key_col.name,
+        *([title_col.name] if title_col else []),
+        *(c.name for c in meta_cols),
+        *(c.name for c in data_cols),
+    ]
+    missing = sorted({n for n in required_names if n not in frame.columns})
+    if missing:
+        raise ValueError(
+            f"Entity projection missing declared columns: {missing}. Available: {sorted(map(str, frame.columns))}"
+        )
+    _check_no_duplicate_labels(frame, required_names)
+
+    claimed = set(required_names)
+    wildcard_names = _resolve_wildcard_names(frame, claimed) if wildcard is not None else []
+
+    meta_names = [c.name for c in meta_cols if c.name != namespace_col_name]
+    full_data_names = [c.name for c in data_cols]
+    if wildcard is not None:
+        if wildcard.role == ColumnRole.DATA:
+            full_data_names = [*full_data_names, *wildcard_names]
+        else:
+            meta_names = [*meta_names, *wildcard_names]
+
+    if frame.empty:
+        return MappingProxyType({})
+
+    key_series = frame[key_col.name]
+    if key_series.isna().any():
+        raise ValueError(f"KEY column {key_col.name!r} has null values; entity identity cannot be null")
+    codes = key_series.astype(str).map(normalize_entity_code)
+
+    if per_row_namespace:
+        assert namespace_col_name is not None
+        ns_series = frame[namespace_col_name]
+        if ns_series.isna().any():
+            raise ValueError(f"Per-row namespace column {namespace_col_name!r} has null values")
+        namespaces = ns_series.astype(str).map(normalize_namespace)
+    else:
+        static_ns = normalize_namespace(key_col.namespace)
+        namespaces = pd.Series([static_ns] * len(frame), index=frame.index)
+
+    work = frame.assign(__ns__=namespaces, __code__=codes)
+
+    out: dict[tuple[str, str], EntityResult] = {}
+    for (ns, code), sub in work.groupby(["__ns__", "__code__"], sort=False):
+        entity_ref = f"({ns}, {code})"
+
+        title = code
+        if title_col is not None:
+            title_label = f"TITLE column {title_col.name!r}"
+            resolved_title = _consistent_non_null(sub[title_col.name], label=title_label, entity_ref=entity_ref)
+            if resolved_title is not None:
+                title = str(resolved_title)
+
+        metadata: dict[str, Any] = {}
+        for name in meta_names:
+            value = _consistent_non_null(sub[name], label=f"METADATA column {name!r}", entity_ref=entity_ref)
+            if value is not None:
+                metadata[name] = value
+
+        entity = Entity(namespace=ns, code=code, title=title, metadata=metadata)
+        entity_data = sub[full_data_names].copy() if full_data_names else pd.DataFrame(index=sub.index)
+        out[(ns, code)] = EntityResult(entity=entity, data=entity_data, provenance=provenance)
+    return MappingProxyType(out)
+
+
 class Result(BaseModel):
     """Connector output: any payload plus provenance, optionally tabular.
 
-    One result type for every payload. When ``data`` is a
-    :class:`~pandas.DataFrame` the result is *tabular* (``is_tabular``) and may
-    carry an :class:`OutputConfig` schema — column roles, namespaces, and
-    ``exclude_from_llm_view`` governance; otherwise it is an opaque payload
-    rendered as a bounded structural preview. The framework wraps connector
-    return values automatically; connectors should not construct this directly.
-    Put provider facts in returned tabular columns with :class:`ColumnRole`
-    semantics; do not attach provider metadata through ``provenance.properties``.
+    One result type for every payload. ``data`` is exactly the object a
+    connector returned — the framework never copies, coerces, renames, or
+    reorders it. When ``data`` is a :class:`~pandas.DataFrame` the result is
+    *tabular* (``is_tabular``) and may carry an :class:`OutputSpec` — a
+    passive declaration of column roles, namespaces, and
+    ``exclude_from_llm_view`` governance. The framework wraps connector
+    return values automatically; connectors should not construct this
+    directly. Put provider facts in returned tabular columns with
+    :class:`ColumnRole` semantics; do not attach provider metadata through
+    ``provenance.properties``.
     """
 
     model_config = {"arbitrary_types_allowed": True}
 
     data: Any
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
-    output_schema: OutputConfig | None = Field(default=None)
-
-    # -- construction -----------------------------------------------------
-
-    @classmethod
-    def from_dataframe(cls, df: pd.DataFrame | pd.Series) -> Result:
-        """Build a tabular result with no schema applied."""
-        frame = pd.DataFrame(df)
-        if frame.empty:
-            raise ValueError("Returned an empty DataFrame.")
-        return cls(data=frame)
-
-    def _with_properties(self, **properties: Any) -> Result:
-        """Merge extras into ``provenance.properties`` (serialization/tests only)."""
-        merged = {**self.provenance.properties, **properties}
-        new_prov = self.provenance.model_copy(update={"properties": merged})
-        return self.model_copy(update={"provenance": new_prov})
-
-    def to_table(self, output: OutputConfig) -> Result:
-        """Apply *output* to tabular data. Unmapped columns become DATA automatically."""
-        result = output.build_table_result(self.frame, merge_unmapped_as_data=True)
-        return result.model_copy(update={"provenance": self.provenance})
+    output_spec: OutputSpec | None = Field(default=None)
 
     # -- payload accessors ------------------------------------------------
 
@@ -343,10 +518,6 @@ class Result(BaseModel):
         return self.data
 
     @property
-    def df(self) -> pd.DataFrame:
-        return self.frame
-
-    @property
     def text(self) -> str:
         if isinstance(self.data, str):
             return self.data
@@ -354,28 +525,38 @@ class Result(BaseModel):
 
     @property
     def columns(self) -> list[Column]:
-        if self.output_schema is None:
+        if self.output_spec is None:
             return []
-        return self.output_schema.columns
+        return self.output_spec.columns
+
+    # -- entity projection --------------------------------------------------
 
     @property
-    def entity_keys(self) -> pd.DataFrame:
-        key_names = [c.mapped_name or c.name for c in self.columns if c.role == ColumnRole.KEY]
-        if not key_names:
-            return pd.DataFrame()
-        frame = self.frame
-        missing = [n for n in key_names if n not in frame.columns]
-        if missing:
-            raise ValueError(f"Result data missing key columns: {missing}")
-        return frame[key_names].copy()
+    def entities(self) -> Mapping[tuple[str, str], EntityResult]:
+        """Lazy, read-only, tuple-keyed view of this result's entities.
 
-    @property
-    def data_columns(self) -> list[Column]:
-        return [c for c in self.columns if c.role == ColumnRole.DATA]
+        Requires a tabular ``data`` and an ``output_spec`` declaring exactly
+        one namespaced KEY column. Groups rows by the normalized
+        ``(namespace, code)`` pair (per-row namespace when the KEY declares
+        ``namespace="__row__"`` via a METADATA column named
+        ``entity_namespace``), in first-appearance order. Each
+        :class:`EntityResult` carries only that entity's ``DATA`` columns.
 
-    @property
-    def metadata_columns(self) -> list[Column]:
-        return [c for c in self.columns if c.role == ColumnRole.METADATA]
+        Intentionally uncached — ``Result.data`` is a mutable raw object, so
+        caching would create stale views. Bind the mapping once for repeated
+        access: ``entities = result.entities; unrate = entities["fred", "UNRATE"]``.
+
+        Raises ``ValueError``/``TypeError`` (with entity and column context)
+        when the declaration or data cannot support a projection: missing
+        KEY/namespace, missing declared columns, duplicate DataFrame labels,
+        null KEY/namespace values, or conflicting TITLE/METADATA values
+        within one entity.
+        """
+        return _project_entities(self.data, self.output_spec, self.provenance)
+
+    def to_entities(self) -> list[Entity]:
+        """Lossy catalog conversion: identity, title, and metadata only."""
+        return [item.entity for item in self.entities.values()]
 
     # -- LLM view ---------------------------------------------------------
 
@@ -420,15 +601,20 @@ class Result(BaseModel):
         payload: dict[str, Any] = {
             "provenance": self.provenance.safe_dump(),
         }
-        if self.output_schema is not None:
-            payload["columns"] = [c.model_dump(mode="json") for c in self.output_schema.columns]
+        if self.output_spec is not None:
+            payload["columns"] = [c.model_dump(mode="json") for c in self.output_spec.columns]
         meta = dict(table.schema.metadata or {})
         meta[_RESULT_SCHEMA_META_KEY] = json.dumps(payload, default=str).encode("utf-8")
         return table.replace_schema_metadata(meta)
 
     @classmethod
     def from_arrow(cls, table: pa.Table) -> Result:
-        """Deserialize an Arrow table written by :meth:`to_arrow`."""
+        """Deserialize an Arrow table written by :meth:`to_arrow`.
+
+        Retired fields on legacy payloads (``dtype``, ``mapped_name``, the
+        ``kind`` role alias) are ignored rather than rejected, so old
+        Parquet/Arrow files remain readable.
+        """
         df = table.to_pandas()
         raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
         if not raw:
@@ -437,11 +623,24 @@ class Result(BaseModel):
         provenance = Provenance.model_validate(payload.get("provenance", {}))
         cols_raw = payload.get("columns") or []
         if cols_raw:
-            columns = [Column.model_validate(c) for c in cols_raw]
+            columns = []
+            for c in cols_raw:
+                role = c.get("role") or c.get("kind") or ColumnRole.DATA
+                columns.append(
+                    Column.model_validate(
+                        {
+                            "name": c["name"],
+                            "role": role,
+                            "description": c.get("description"),
+                            "namespace": c.get("namespace") if role == ColumnRole.KEY else None,
+                            "exclude_from_llm_view": c.get("exclude_from_llm_view", False),
+                        }
+                    )
+                )
             return cls(
                 data=df,
                 provenance=provenance,
-                output_schema=OutputConfig(columns=columns),
+                output_spec=OutputSpec(columns=columns),
             )
         return cls(data=df, provenance=provenance)
 
@@ -453,162 +652,3 @@ class Result(BaseModel):
     def from_parquet(cls, path: str | Path) -> Result:
         """Read a tabular result from Parquet written by :meth:`to_parquet`."""
         return cls.from_arrow(pq.read_table(path))
-
-
-class OutputConfig(BaseModel):
-    """Declarative schema: maps raw data frames into schema-applied :class:`Result` instances."""
-
-    columns: list[Column]
-
-    @model_validator(mode="after")
-    def _validate_roles(self) -> OutputConfig:
-        keys = [c.name for c in self.columns if c.role == ColumnRole.KEY]
-        titles = [c.name for c in self.columns if c.role == ColumnRole.TITLE]
-        if len(keys) > 1:
-            raise ValueError(f"Output config must have at most one KEY column, found {len(keys)}: {keys}")
-        if len(titles) > 1:
-            raise ValueError(f"Output config must have at most one TITLE column, found {len(titles)}: {titles}")
-        if not any(c.role in (ColumnRole.DATA, ColumnRole.KEY, ColumnRole.TITLE) for c in self.columns):
-            raise ValueError("Output config must define at least one data, key, or title column")
-        return self
-
-    def validate_columns(self, df: pd.DataFrame) -> list[str]:
-        """Return declared column names absent from *df* (excludes wildcards)."""
-        declared = {c.name for c in self.columns if c.name != "*"}
-        return sorted(declared - set(df.columns))
-
-    def _apply_columns(
-        self,
-        df: pd.DataFrame,
-    ) -> tuple[pd.DataFrame, list[tuple[Column, str]], set[str]]:
-        processed_series: list[tuple[Column, pd.Series]] = []
-        consumed: set[str] = set()
-
-        for column in self.columns:
-            matches: list[str] = []
-            if column.name in df.columns and column.name not in consumed:
-                matches.append(column.name)
-                consumed.add(column.name)
-            elif column.name == "*":
-                for col in df.columns:
-                    if col not in consumed:
-                        matches.append(col)
-                        consumed.add(col)
-
-            for match_name in matches:
-                series = df[match_name].copy()
-                pre_all_na = series.isna().all()
-                series = _coerce_series_dtype(column, series)
-                if not series.empty and not pre_all_na:
-                    if column.dtype == "timestamp" and series.isna().all():
-                        raise ValueError(
-                            f"column '{column.name}': all values are NaT after 'timestamp' coercion — "
-                            "expected unix epoch (seconds or milliseconds), got non-numeric input"
-                        )
-                    elif column.dtype == "numeric" and series.isna().all():
-                        raise ValueError(
-                            f"column '{column.name}': all values are NaN after 'numeric' coercion — "
-                            "expected numeric input"
-                        )
-                new_name = column.mapped_name if column.mapped_name else match_name
-                series.name = new_name
-                processed_series.append((column, series))
-
-        if not processed_series:
-            return pd.DataFrame(), [], set()
-
-        new_df = pd.concat([s for _, s in processed_series], axis=1)
-        info = [(col, s.name) for col, s in processed_series]
-        return new_df, info, consumed
-
-    def build_table_result(
-        self,
-        df: pd.DataFrame | pd.Series,
-        *,
-        merge_unmapped_as_data: bool = True,
-    ) -> Result:
-        """Apply column schema to *df*; unmapped columns become DATA when requested."""
-        if not isinstance(df, (pd.DataFrame, pd.Series)):
-            raise TypeError(f"OutputConfig.build_table_result expected a pandas DataFrame or Series, got {type(df)}")
-        frame = pd.DataFrame(df)
-        if frame.empty and len(frame.columns) == 0:
-            raise ValueError("Returned an empty DataFrame with no columns.")
-
-        full_df, columns_info, consumed = self._apply_columns(frame)
-
-        declared = {c.name for c in self.columns if c.name != "*"}
-        unmatched = sorted(declared - consumed)
-        if unmatched:
-            raise ValueError(
-                f"OutputConfig columns not found in DataFrame: {unmatched}. Available columns: {sorted(frame.columns)}"
-            )
-
-        if not columns_info:
-            raise ValueError("Column config matched no input columns.")
-
-        processed_series: list[tuple[Column, pd.Series]] = [
-            (col_cfg, full_df[out_name]) for col_cfg, out_name in columns_info
-        ]
-
-        if merge_unmapped_as_data:
-            for col in frame.columns:
-                if col not in consumed:
-                    series = frame[col].copy()
-                    series.name = str(col)
-                    data_col = Column(name=str(col), role=ColumnRole.DATA, dtype="auto")
-                    processed_series.append((data_col, series))
-
-        if not processed_series:
-            raise ValueError("Column config produced no columns.")
-
-        new_df = pd.concat([s for _, s in processed_series], axis=1)
-        resolved_schema: list[Column] = [col_cfg.model_copy(update={"name": s.name}) for col_cfg, s in processed_series]
-        resolved_config = OutputConfig(columns=resolved_schema)
-        return Result(data=new_df, output_schema=resolved_config)
-
-    def build_entities(self, df: pd.DataFrame) -> list[Entity]:
-        """Apply this schema to *df* to extract a list of :class:`Entity`.
-
-        The schema must declare exactly one ``KEY`` column with a
-        ``namespace``. Optional ``TITLE`` and ``METADATA`` columns populate
-        the corresponding fields on each entry. A metadata column named
-        ``"*"`` is a wildcard that matches every DataFrame column not
-        already claimed by ``KEY``, ``TITLE``, or another explicit
-        ``METADATA`` entry.
-        """
-        from parsimony.entity import entities_from_dataframe
-
-        key_cols = [c for c in self.columns if c.role == ColumnRole.KEY]
-        if len(key_cols) != 1:
-            raise ValueError(f"Expected exactly one KEY column, found {len(key_cols)}")
-        key_col = key_cols[0]
-        if not key_col.namespace:
-            raise ValueError("KEY column must declare namespace=...")
-        title_cols = [c for c in self.columns if c.role == ColumnRole.TITLE]
-        title_name = title_cols[0].name if len(title_cols) == 1 else None
-
-        declared_meta = [c.name for c in self.columns if c.role == ColumnRole.METADATA]
-        explicit_meta = [name for name in declared_meta if name != "*"]
-        if "*" in declared_meta:
-            claimed = {key_col.name, *([title_name] if title_name else []), *explicit_meta}
-            wildcard_meta = [str(col) for col in df.columns if str(col) not in claimed]
-            meta_names = [*explicit_meta, *wildcard_meta]
-        else:
-            meta_names = explicit_meta
-
-        namespace_column = "entity_namespace" if key_col.namespace == "__row__" else None
-        return entities_from_dataframe(
-            df,
-            namespace=key_col.namespace,
-            key_column=key_col.name,
-            title_column=title_name,
-            metadata_columns=meta_names,
-            namespace_column=namespace_column,
-        )
-
-
-# ``Result.output_schema`` forward-references ``OutputConfig``, defined above but
-# only after ``Result``. Resolve the reference explicitly now that both exist, so
-# validation never depends on Pydantic's lazy first-use resolution (which would
-# break silently if this module were ever split).
-Result.model_rebuild()

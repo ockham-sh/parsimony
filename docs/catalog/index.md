@@ -103,9 +103,8 @@ Catalog(name: str, *, indexes: dict[str, CatalogIndex] | None = None, default_fi
 | `default_field` | The field used for broad (plain-text) search. Defaults to `"title"` when a `title` index exists, otherwise broad search is disabled. |
 
 The keys of `indexes` are logical search-surface names — they are the field names you use in the
-query DSL (`FIELD: value`) and the names reported by errors. By convention a key matches an
-`Entity` field, but a composite index such as `DisMaxIndex` may expose one surface name while
-reading several entity fields internally.
+query DSL (`FIELD: value`) and the names reported by errors. A key matches an `Entity` field;
+each index is scoped to exactly one field.
 
 !!! warning "default_field must have a backing index"
     If you pass an explicit `indexes` dict together with a `default_field` that the dict does not
@@ -137,7 +136,7 @@ print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 any of `set_index` / `set_indexes` / `update_indexes` permanently switches the catalog off the
 default policy. Use this when you want a vector or hybrid backend on a specific field, or want to
 restrict search to a known set of surfaces. The available index types — `BM25Index`,
-`VectorIndex`, `HybridIndex`, `DisMaxIndex` — are covered in [Indexes](indexes.md).
+`VectorIndex`, `HybridIndex` — are covered in [Indexes](indexes.md).
 
 ## Structured versus broad search at a glance
 
@@ -196,10 +195,10 @@ print(len(loaded), loaded.entities[0].code)  # -> 1 A
 !!! note "Loaded catalogs keep exactly what was serialized"
     A loaded catalog is non-dirty and immediately searchable, and the default index policy is
     forced off. Its indexes are precisely what the snapshot stored — calling `build()` on a loaded
-    catalog will not re-derive metadata-key indexes. Only `BM25Index`, `VectorIndex`,
-    `HybridIndex`, and `DisMaxIndex` are serializable; any other `CatalogIndex` raises `TypeError`
-    at save time. The full layout, integrity model, and the higher-level `load_or_build_catalog`
-    lazy-cache helper are in [Snapshots and persistence](snapshots.md).
+    catalog will not re-derive metadata-key indexes. Only `BM25Index`, `VectorIndex`, and
+    `HybridIndex` are serializable; any other `CatalogIndex` raises `TypeError` at save time. The
+    full layout, integrity model, and the higher-level `load_or_build_catalog` lazy-cache helper
+    are in [Snapshots and persistence](snapshots.md).
 
 ## The catalog subsystem
 
@@ -209,8 +208,8 @@ This section breaks the catalog down into focused pages:
   DataFrames become entities.
 - **[Building and searching](search.md)** — the full `Catalog` API, the query DSL,
   `CatalogMatch`, and the search-time exceptions.
-- **[Indexes](indexes.md)** — the `CatalogIndex` protocol and the BM25, vector, hybrid, and
-  DisMax backends, plus the adaptive selection policies.
+- **[Indexes](indexes.md)** — the `CatalogIndex` protocol and the BM25, vector, and hybrid
+  backends, plus the adaptive selection policies.
 - **[Ranking and fusion](ranking-and-fusion.md)** — `Ranking`, the `Ranker` protocol, and the
   `RRF` / `ZScoreFusion` / `MinMaxScoreFusion` fusion strategies.
 - **[Embedders](embedders.md)** — the `EmbeddingProvider` implementations used by vector and

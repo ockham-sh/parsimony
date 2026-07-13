@@ -1,7 +1,7 @@
 # Public API & import map
 
 This page is the canonical map of what to import from where. Parsimony exposes a small,
-curated **top-level** surface (`from parsimony import ...`) of 36 names, plus a larger set of
+curated **top-level** surface (`from parsimony import ...`) of 37 names, plus a larger set of
 symbols that live only in submodules. When a name is not in the top-level list below, import it
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
@@ -17,7 +17,7 @@ print(len(parsimony.__all__))  # number of top-level exports
 
 ## Top-level names
 
-These 36 names are re-exported from the package root and make up `parsimony.__all__`. They are
+These 37 names are re-exported from the package root and make up `parsimony.__all__`. They are
 grouped below by concern; the grouping is editorial — at runtime they are a flat namespace.
 
 ### Connectors
@@ -38,11 +38,12 @@ and [Loaders and enumerators](../connectors/loaders-and-enumerators.md).
 
 | Name | Kind | Import |
 |---|---|---|
-| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_schema`); tabular when `data` is a DataFrame | `from parsimony import Result` |
-| `OutputConfig` | class — declarative output schema | `from parsimony import OutputConfig` |
+| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_spec`); tabular when `data` is a DataFrame | `from parsimony import Result` |
+| `OutputSpec` | class — passive, declarative output schema (never applied to the data) | `from parsimony import OutputSpec` |
 | `Column` | class — one schema column | `from parsimony import Column` |
 | `ColumnRole` | enum — `DATA` / `KEY` / `TITLE` / `METADATA` | `from parsimony import ColumnRole` |
 | `Provenance` | class — framework-built fetch metadata | `from parsimony import Provenance` |
+| `EntityResult` | class — one entity's data + metadata + provenance, from `Result.entities`/`to_entities()` | `from parsimony import EntityResult` |
 
 See [Results and output schemas](../connectors/results.md).
 
@@ -56,7 +57,7 @@ See [Results and output schemas](../connectors/results.md).
 | `RateLimitError` | rate limit / quota (HTTP 429) | `from parsimony import RateLimitError` |
 | `ProviderError` | 5xx, other 4xx, or timeout (carries `status_code`) | `from parsimony import ProviderError` |
 | `EmptyDataError` | HTTP 200 but no rows | `from parsimony import EmptyDataError` |
-| `ParseError` | HTTP 200 but unparseable (also a schema-application failure) | `from parsimony import ParseError` |
+| `ParseError` | HTTP 200 but unparseable | `from parsimony import ParseError` |
 | `InvalidParameterError` | call-time parameter validation failure | `from parsimony import InvalidParameterError` |
 
 See [Errors](../connectors/errors.md). Note `CatalogNotFoundError` is **not** top-level — see below.
@@ -115,7 +116,7 @@ See [Data stores](../catalog/data-store.md).
 See [Caching](../caching.md) and [Discovering installed providers](../plugins/discovery.md).
 
 !!! note "These are the only top-level names"
-    `from parsimony import <name>` works **only** for the 35 names above. Anything else raises
+    `from parsimony import <name>` works **only** for the 37 names above. Anything else raises
     `AttributeError`. Import every other symbol from its submodule, using the paths in the next
     section.
 
@@ -141,7 +142,6 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 
 | Name | Kind |
 |---|---|
-| `DisMaxIndex` | class — DisMax index over several entity fields under one surface name |
 | `StructuredQuery` | class — parsed structured query (`FIELD: v1, v2 && ...`) |
 | `parse_query` | function — parse a query string into broad/structured form |
 | `UnknownIndexedFieldError` | exception — structured clause names an unindexed field |
@@ -155,7 +155,6 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 
 ```python
 from parsimony.catalog import (
-    DisMaxIndex,
     StructuredQuery,
     parse_query,
     UnknownIndexedFieldError,

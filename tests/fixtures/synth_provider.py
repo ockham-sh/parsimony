@@ -16,18 +16,18 @@ from __future__ import annotations
 import pandas as pd
 
 from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-SYNTH_FETCH_OUTPUT = OutputConfig(
+SYNTH_FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="synth"),
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="date", dtype="datetime", role=ColumnRole.DATA),
-        Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+        Column(name="date", role=ColumnRole.DATA),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-SYNTH_ENUMERATE_OUTPUT = OutputConfig(
+SYNTH_ENUMERATE_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="synth"),
         Column(name="title", role=ColumnRole.TITLE),
@@ -40,8 +40,8 @@ def synth_fetch(key: str) -> pd.DataFrame:
     """Fetch a synthetic observation series. Returns a two-row example table."""
     return pd.DataFrame(
         [
-            {"key": key, "title": f"Synthetic: {key}", "date": "2024-01-01", "value": 1.0},
-            {"key": key, "title": f"Synthetic: {key}", "date": "2024-02-01", "value": 2.0},
+            {"key": key, "title": f"Synthetic: {key}", "date": pd.Timestamp("2024-01-01"), "value": 1.0},
+            {"key": key, "title": f"Synthetic: {key}", "date": pd.Timestamp("2024-02-01"), "value": 2.0},
         ]
     )
 

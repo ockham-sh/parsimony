@@ -13,8 +13,8 @@ import logging
 import pandas as pd
 from pydantic import BaseModel
 
-from parsimony.entity import entity_key, normalize_entity_code, normalize_namespace
-from parsimony.result import ColumnRole, Result
+from parsimony.entity import entity_key
+from parsimony.result import Result
 
 logger = logging.getLogger(__name__)
 
@@ -26,50 +26,6 @@ class LoadResult(BaseModel):
     loaded: int = 0
     skipped: int = 0
     errors: int = 0
-
-
-def _data_from_result(table: Result) -> list[tuple[str, str, pd.DataFrame]]:
-    """Extract (namespace, code, data_frame) per distinct KEY value.
-
-    Namespace comes from the KEY column's ``namespace=...``. The returned
-    DataFrame contains only DATA columns; KEY is consumed for identity.
-    """
-    if table.output_schema is None:
-        raise ValueError("Result must have an output_schema for data loading")
-    if not isinstance(table.data, (pd.DataFrame, pd.Series)):
-        raise TypeError(f"load expected tabular data, got {type(table.data).__name__}")
-    df = table.df
-    if df.empty:
-        return []
-
-    cols = table.output_schema.columns
-    key_cols = [c for c in cols if c.role == ColumnRole.KEY]
-    if len(key_cols) != 1:
-        raise ValueError(
-            f"Result must have exactly one KEY column in output_schema for data loading, found {len(key_cols)}"
-        )
-    key_col = key_cols[0]
-    if not key_col.namespace:
-        raise ValueError("KEY column must declare namespace=... on the schema for DataStore.load_result")
-    key_name = key_col.name
-    if key_name not in df.columns:
-        raise ValueError(f"Result missing KEY column {key_name!r}. Available: {list(df.columns)}")
-
-    data_names = [c.name for c in cols if c.role == ColumnRole.DATA]
-    if not data_names:
-        raise ValueError("Result must declare at least one DATA column in output_schema for data loading")
-    for dn in data_names:
-        if dn not in df.columns:
-            raise ValueError(f"Result missing DATA column {dn!r}. Available: {list(df.columns)}")
-
-    ns = normalize_namespace(key_col.namespace)
-    # Single hash-grouping pass, O(N) in row count.
-    sub_df = df[[key_name, *data_names]]
-    out: list[tuple[str, str, pd.DataFrame]] = []
-    for raw_code, group in sub_df.groupby(key_name, sort=False, dropna=True):
-        code = normalize_entity_code(str(raw_code))
-        out.append((ns, code, group[data_names].copy()))
-    return out
 
 
 class InMemoryDataStore:
@@ -111,30 +67,27 @@ class InMemoryDataStore:
         *,
         force: bool = False,
     ) -> LoadResult:
-        """Extract DATA columns from *table* and persist each entity.
+        """Persist each entity's DATA rows from *table*'s entity projection.
 
         With ``force=False``, skip entities already present in the store. With
-        ``force=True``, upsert all entities.
+        ``force=True``, upsert all entities. Delegates identity and grouping
+        entirely to :attr:`Result.entities` — no second grouping pass here.
         """
         result = LoadResult()
-        rows = _data_from_result(table)
-        result.total = len(rows)
-        if not rows:
+        entities = table.entities
+        result.total = len(entities)
+        if not entities:
             return result
 
-        keys = [(ns, code) for ns, code, _ in rows]
-        if force:
-            existing: set[tuple[str, str]] = set()
-        else:
-            existing = self.exists(keys)
+        keys = list(entities)
+        existing: set[tuple[str, str]] = set() if force else self.exists(keys)
 
-        for ns, code, sub_df in rows:
-            k = (normalize_namespace(ns), normalize_entity_code(code))
-            if not force and k in existing:
+        for (ns, code), entity_result in entities.items():
+            if not force and (ns, code) in existing:
                 result.skipped += 1
                 continue
             try:
-                self.upsert(ns, code, sub_df)
+                self.upsert(ns, code, entity_result.data)
                 result.loaded += 1
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 logger.warning("InMemoryDataStore upsert failed for (%s, %s): %s", ns, code, exc)

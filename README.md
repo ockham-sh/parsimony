@@ -96,9 +96,9 @@ pip install 'parsimony-core[catalog]'
 ```python
 import pandas as pd
 
-from parsimony import Catalog, Column, ColumnRole, OutputConfig, connector, enumerator
+from parsimony import Catalog, Column, ColumnRole, OutputSpec, connector, enumerator
 
-SERIES_OUTPUT = OutputConfig(
+SERIES_OUTPUT = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="demo"),
         Column(name="title", role=ColumnRole.TITLE),
@@ -118,9 +118,9 @@ def list_series() -> pd.DataFrame:
         }
     )
 
-listed = list_series()
+listed = list_series()             # -> Result, carrying SERIES_OUTPUT as its output_spec
 catalog = Catalog("macro")
-catalog.set_entities(SERIES_OUTPUT.build_entities(listed.data))
+catalog.set_entities(listed.to_entities())
 catalog.build()
 
 @connector(tags=["search"])

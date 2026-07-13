@@ -17,15 +17,19 @@ from parsimony.catalog.source import lazy_catalog_dir
 from parsimony.connector import Connector, connector
 from parsimony.embedder import PARSIMONY_CATALOG_PACKAGE
 from parsimony.errors import CatalogNotFoundError, ConnectorError, EmptyDataError, InvalidParameterError, ProviderError
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SEARCH_COLUMNS: tuple[Column, ...] = (
-    Column(name="code", role=ColumnRole.KEY),
-    Column(name="title", role=ColumnRole.TITLE),
-    Column(name="score", role=ColumnRole.DATA),
-)
+
+def _default_search_columns(provider: str) -> tuple[Column, ...]:
+    """Search-result row schema for *provider*'s own catalog namespace."""
+    return (
+        Column(name="code", role=ColumnRole.KEY, namespace=provider),
+        Column(name="title", role=ColumnRole.TITLE),
+        Column(name="score", role=ColumnRole.DATA),
+    )
+
 
 CatalogBuilder = Callable[[], Catalog]
 
@@ -244,7 +248,7 @@ def make_local_search_connector(
     description: str,
     build_catalog: CatalogBuilder | None = None,
     catalog_subdirectory: str | None = None,
-    output_columns: Sequence[Column] = DEFAULT_SEARCH_COLUMNS,
+    output_columns: Sequence[Column] | None = None,
     code_column: str = "code",
     metadata_columns: Sequence[str] = (),
     empty_message: str | None = None,
@@ -252,7 +256,8 @@ def make_local_search_connector(
     """Factory for standard single-catalog search connectors."""
     resolved_env = catalog_url_env_var if env_var is None else env_var
     lazy_namespace = catalog_subdirectory or provider
-    output = OutputConfig(columns=list(output_columns))
+    columns = output_columns if output_columns is not None else _default_search_columns(provider)
+    output = OutputSpec(columns=list(columns))
     _lru = CatalogLRU()
 
     def _load_catalog(params: CatalogSearchParams) -> Catalog:

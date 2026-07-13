@@ -25,12 +25,11 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, Union, get_args, get_origin, get_type_hints, overload
 
-import pandas as pd
 from pydantic import BaseModel
 
 from parsimony.errors import ParseError
 from parsimony.namespace import Namespace
-from parsimony.result import ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import ColumnRole, OutputSpec, Provenance, Result
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -214,7 +213,7 @@ class Connector:
     description: str
     fn: Callable[..., Any]
     signature: inspect.Signature
-    output_config: OutputConfig | None = None
+    output_spec: OutputSpec | None = None
     tags: tuple[str, ...] = ()
     properties: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
@@ -252,7 +251,12 @@ class Connector:
         return self.fn(**kwargs)
 
     def _wrap_result(self, raw: Any, call_params: Mapping[str, Any]) -> Result:
-        """Wrap a connector return value in a :class:`Result` with framework-built provenance."""
+        """Wrap a connector return value in a :class:`Result` with framework-built provenance.
+
+        ``raw`` is attached unchanged: no copy, dtype coercion, rename,
+        reorder, dropped column, or emptiness check. ``output_spec`` is
+        attached alongside it as a passive declaration, never applied.
+        """
         if isinstance(raw, tuple):
             raise TypeError(
                 f"connector {self.name!r}: must return raw data, not (data, properties) tuples; "
@@ -273,16 +277,7 @@ class Connector:
             params=dict(safe_call_params),
             properties={},
         )
-
-        if self.output_config is not None and isinstance(raw, (pd.DataFrame, pd.Series)):
-            merge_unmapped = "enumerator" not in self.tags
-            result = self.output_config.build_table_result(raw, merge_unmapped_as_data=merge_unmapped)
-            if "enumerator" in self.tags:
-                _validate_enumerator_dataframe(result.data, self.output_config)
-            return result.model_copy(update={"provenance": provenance})
-        if isinstance(raw, (pd.DataFrame, pd.Series)):
-            return Result(data=pd.DataFrame(raw), provenance=provenance)
-        return Result(data=raw, provenance=provenance)
+        return Result(data=raw, provenance=provenance, output_spec=self.output_spec)
 
     def _bind_call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         exposed = self.exposed_signature
@@ -346,9 +341,9 @@ def describe_connector(c: Connector) -> str:
             lines.append(line)
         lines.append("")
 
-    if c.output_config is not None:
+    if c.output_spec is not None:
         lines.append("Output Schema:")
-        cols = c.output_config.columns
+        cols = c.output_spec.columns
         name_w = max((len(col.name) for col in cols), default=0) + 2
         for col in cols:
             role_str = col.role.value.upper()
@@ -364,7 +359,7 @@ def describe_connector(c: Connector) -> str:
     return "\n".join(lines).rstrip()
 
 
-def _returns_clause(output: OutputConfig) -> str:
+def _returns_clause(output: OutputSpec) -> str:
     """Trailing ``Returns: ...`` fragment for a connector's static output schema.
 
     Emits one ``name (ROLE)`` token per LLM-visible column, with ``ns:<namespace>``
@@ -386,8 +381,8 @@ def llm_card(c: Connector) -> str:
     lines.append(f"### {c.name}{tag_suffix}")
 
     desc = " ".join(c.description.split())
-    if c.output_config is not None:
-        desc += _returns_clause(c.output_config)
+    if c.output_spec is not None:
+        desc += _returns_clause(c.output_spec)
     lines.append(desc)
 
     for fname, typ, required in _exposed_param_rows(c):
@@ -422,7 +417,7 @@ def connector(
     *,
     name: str | None = None,
     description: str | None = None,
-    output: OutputConfig | None = None,
+    output: OutputSpec | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
@@ -435,7 +430,7 @@ def connector(
     *,
     name: str | None = None,
     description: str | None = None,
-    output: OutputConfig | None = None,
+    output: OutputSpec | None = None,
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
@@ -471,7 +466,7 @@ def connector(
             description=desc,
             fn=inner,
             signature=sig,
-            output_config=output,
+            output_spec=output,
             tags=tag_tup,
             properties=_mapping_proxy(properties),
             namespace_hints=ns_hints,
@@ -484,8 +479,12 @@ def connector(
     return decorator
 
 
-def _validate_enumerator_output(output: OutputConfig) -> None:
-    """Raise if *output* is not a strict entity-discovery schema."""
+def _validate_enumerator_output(output: OutputSpec) -> None:
+    """Raise if *output* does not have the declaration shape an enumerator requires.
+
+    Declaration-only: inspects ``output.columns``, never a connector's
+    returned data.
+    """
     cols = output.columns
     key_cols = [c for c in cols if c.role == ColumnRole.KEY]
     if len(key_cols) != 1:
@@ -508,18 +507,6 @@ def _validate_enumerator_output(output: OutputConfig) -> None:
         raise ValueError(f"Enumerator output has invalid column roles: {invalid!r}")
 
 
-def _validate_enumerator_dataframe(df: pd.DataFrame, output: OutputConfig) -> None:
-    """Raise if *df* columns do not match the declared enumerator schema."""
-    declared = {c.name for c in output.columns if c.name != "*"}
-    actual = set(df.columns)
-    missing = sorted(declared - actual)
-    if missing:
-        raise ValueError(f"Enumerator DataFrame missing declared columns: {missing}")
-    extra = sorted(actual - declared)
-    if extra:
-        raise ValueError(f"Enumerator DataFrame has undeclared columns: {extra}")
-
-
 def _validate_enumerator_return(fn: Callable[..., Any]) -> None:
     """Raise if *fn* does not annotate ``pd.DataFrame`` return."""
     try:
@@ -536,8 +523,12 @@ def _validate_enumerator_return(fn: Callable[..., Any]) -> None:
         raise ValueError(f"{fn.__name__}: enumerator must not return list[Entity]")
 
 
-def _validate_loader_output(output: OutputConfig) -> None:
-    """Raise if *output* is not valid for data loading via :func:`loader`."""
+def _validate_loader_output(output: OutputSpec) -> None:
+    """Raise if *output* does not have the declaration shape a loader requires.
+
+    Declaration-only: inspects ``output.columns``, never a connector's
+    returned data.
+    """
     cols = output.columns
     title_names = [c.name for c in cols if c.role == ColumnRole.TITLE]
     if title_names:
@@ -560,7 +551,7 @@ def _validate_loader_output(output: OutputConfig) -> None:
 
 def loader(
     *,
-    output: OutputConfig,
+    output: OutputSpec,
     name: str | None = None,
     description: str | None = None,
     tags: list[str] | None = None,
@@ -584,7 +575,7 @@ def loader(
 
 def enumerator(
     *,
-    output: OutputConfig,
+    output: OutputSpec,
     name: str | None = None,
     description: str | None = None,
     tags: list[str] | None = None,

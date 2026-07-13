@@ -26,7 +26,7 @@ def demo_search(query: str) -> pd.DataFrame:
 
 
 result = demo_search(query="GDP")
-print(result.data)                    # the returned DataFrame (no output= schema here; also .frame / .df)
+print(result.data)                    # the returned DataFrame (no output= schema here; also .frame)
 print(result.provenance.source)       # "demo_search"
 print(result.provenance.params)       # {"query": "GDP"}
 ```

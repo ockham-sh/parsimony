@@ -1,7 +1,7 @@
 """Catalog entries, indexes, ranking, and portable snapshots."""
 
 from parsimony.catalog.catalog import Catalog
-from parsimony.catalog.indexes import BM25Index, CatalogIndex, DisMaxIndex, HybridIndex, VectorIndex
+from parsimony.catalog.indexes import BM25Index, CatalogIndex, HybridIndex, VectorIndex
 from parsimony.catalog.models import (
     BroadSearchConfigError,
     BroadSearchUnavailableError,
@@ -26,7 +26,6 @@ __all__ = [
     "CatalogIndex",
     "CatalogMatch",
     "CatalogValueMatch",
-    "DisMaxIndex",
     "HybridIndex",
     "StructuredQuery",
     "UnknownIndexedFieldError",

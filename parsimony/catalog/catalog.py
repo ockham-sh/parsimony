@@ -23,10 +23,10 @@ from parsimony.catalog.contracts import CatalogBackendConfig, FilterSpec
 from parsimony.catalog.indexes import (
     BM25Index,
     CatalogIndex,
-    DisMaxIndex,
     HybridIndex,
     IndexBuildContext,
     VectorIndex,
+    consumed_value_tokens,
     embed_query_vectors,
     search_index_values,
 )
@@ -53,15 +53,9 @@ from parsimony.catalog.storage import (
 )
 from parsimony.catalog.urls import parse_catalog_url
 from parsimony.catalog.validation import compute_manifest_contract_sha256, validate_catalog_snapshot
-from parsimony.entity import Entity, entity_key, field_value, normalize_namespace
+from parsimony.entity import Entity, entity_key, field_value, field_values, normalize_namespace
 from parsimony.errors import InvalidParameterError
-from parsimony.ranking import Ranking, ranking_from_scores
-
-
-def _filter_namespaces(ranking: Ranking, namespaces: list[str]) -> Ranking:
-    allowed = {normalize_namespace(ns) for ns in namespaces}
-    rows = [(item.namespace, item.code, item.score) for item in ranking.items if item.namespace in allowed]
-    return ranking_from_scores(rows, limit=len(rows))
+from parsimony.indexes import tokenize
 
 
 def _default_indexes_from_entities(entries: list[Entity]) -> dict[str, CatalogIndex]:
@@ -87,10 +81,9 @@ class Catalog:
     dict to take full control — no extra indexes are added silently.
 
     Keys in ``indexes`` are *logical search-surface names*: they appear in the
-    DSL (``FIELD: value``) and in ``UnknownIndexedFieldError``. By convention
-    they match an Entity field name when an index reads exactly one Entity
-    field. Composite indexes such as :class:`~parsimony.catalog.indexes.DisMaxIndex`
-    may expose one surface name while reading multiple Entity fields internally.
+    DSL (``FIELD: value``) and in ``UnknownIndexedFieldError``. They match the
+    Entity field name each index reads. Multi-field scoring is a query-time
+    concern — pass ``fields=[...]`` to :meth:`search`.
 
     For large datasets, call :meth:`attach_parquet_rows` after :meth:`build`
     to switch the row store to a lazy parquet backend; the index entities act
@@ -238,12 +231,18 @@ class Catalog:
         query: str | None = None,
         limit: int = 50,
         *,
-        field: str | None = None,
+        fields: str | Sequence[str] | None = None,
         filter: FilterSpec | None = None,
         top_k_values: int = 50,
         namespaces: list[str] | None = None,
     ) -> list[CatalogMatch]:
-        """Search catalog rows.
+        """Search catalog rows, ranked by (coverage desc, fuzzy score desc).
+
+        *Coverage* is the fraction of the query's tokens consumed by the union
+        of the row's fully-consumed field values (a field value counts only when
+        all its tokens appear in the query). An exact value hit is coverage 1.0
+        and ranks first; near-misses stay visible below in the fuzzy band. When
+        no field value is contained in the query, the ranking is pure fuzzy.
 
         Parameters
         ----------
@@ -251,8 +250,13 @@ class Catalog:
             Free-text or structured ``FIELD: value`` query.  Omit for filter-only search.
         limit:
             Maximum results returned.
-        field:
-            Restrict soft scoring to this indexed field.  Requires *query*.
+        fields:
+            Declare the scoring surface: one indexed field name for single-field
+            scoring, or several to fuse (fuzzy score is the row's best per-field
+            score; coverage unions consumed tokens across the named fields).
+            Requires *query*, which is then literal text — never parsed as a
+            structured ``FIELD: value`` DSL.  Omit to search the catalog's
+            default field with DSL resolution.
         filter:
             Exact AND filter: ``{column: [allowed_values, …]}``.  Can combine with query.
         top_k_values:
@@ -262,27 +266,39 @@ class Catalog:
         """
         self._ensure_built("searched")
         filter_spec = dict(filter or {})
+        surface: list[str] | None
+        if fields is None:
+            surface = None
+        elif isinstance(fields, str):
+            surface = [fields]
+        else:
+            surface = list(fields)
 
         if query is None and not filter_spec:
             raise InvalidParameterError("catalog", "search requires query= and/or filter=")
-        if field is not None and query is None:
-            raise InvalidParameterError("catalog", "field= requires a non-empty query=")
-        if field is not None:
-            try:
-                self.index_for(field)
-            except KeyError as err:
-                raise UnknownIndexedFieldError(f"No index configured for field {field!r}") from err
+        if surface is not None:
+            if query is None:
+                raise InvalidParameterError("catalog", "fields= requires a non-empty query=")
+            if not surface:
+                raise InvalidParameterError("catalog", "fields= must name at least one indexed field")
+            for name in surface:
+                try:
+                    self.index_for(name)
+                except KeyError as err:
+                    raise UnknownIndexedFieldError(f"No index configured for field {name!r}") from err
 
-        # Resolve structured DSL queries ("FIELD: v1, v2") when no explicit field
+        # Resolve structured DSL queries ("FIELD: v1, v2") when no scope is declared.
+        # A single-name surface takes the plain single-field path below.
+        field: str | None = surface[0] if surface is not None and len(surface) == 1 else None
         multi_values: Sequence[str] | None = None
-        if query is not None and field is None:
+        if query is not None and surface is None:
             parsed = parse_query(query, known_fields=set(self._indexes))
             if parsed is not None:
                 if len(parsed.clauses) > 1:
                     raise InvalidParameterError(
                         "catalog",
                         "Multi-clause structured queries are not supported. "
-                        "Use filter= for exact constraints and field= for single-field soft search.",
+                        "Use filter= for exact constraints and fields= for soft search.",
                     )
                 field, multi_values = parsed.clauses[0]
                 query = None  # consumed by DSL
@@ -290,7 +306,12 @@ class Catalog:
         filter_spec = self._normalize_filter_spec(filter_spec)
 
         # Dispatch
-        if field is not None:
+        if surface is not None and len(surface) > 1:
+            assert query is not None  # guaranteed by the fields= validation above
+            matches = self._search_fields(
+                surface, query, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            )
+        elif field is not None:
             values: Sequence[str] = multi_values if multi_values is not None else (query,)  # type: ignore[assignment]
             matches = self._search_field(
                 field, values, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
@@ -299,7 +320,7 @@ class Catalog:
             broad_field = self._resolve_default_field()
             if broad_field is None:
                 raise BroadSearchUnavailableError(
-                    f"This catalog requires field= or filter=. "
+                    f"This catalog requires fields= or filter=. "
                     f"Indexed fields: [{', '.join(repr(f) for f in sorted(self._indexes))}]"
                 )
             matches = self._search_field(
@@ -321,10 +342,12 @@ class Catalog:
         *,
         limit: int = 20,
     ) -> list[CatalogValueMatch]:
-        """Return distinct indexed values for *field* ranked by *query*.
+        """Return distinct indexed values for *field*, ranked by (coverage, score).
 
-        If *field* is in ``field_links``, each result also carries the linked value
-        (e.g. the canonical code for a human-readable label).
+        A value fully consumed by *query* (an exact hit is coverage 1.0) ranks
+        above every fuzzy-only candidate. If *field* is in ``field_links``, each
+        result also carries the linked value (e.g. the canonical code for a
+        human-readable label).
         """
         self._ensure_built("searched")
         try:
@@ -335,10 +358,15 @@ class Catalog:
         scored = search_index_values(index, query, limit=limit, query_vectors=qvecs)
         link_field = self._field_links.get(field)
         if link_field is None:
-            return [CatalogValueMatch(value=text, score=score) for text, score in scored]
+            return [CatalogValueMatch(value=text, score=score, coverage=cov) for text, score, cov in scored]
         return [
-            CatalogValueMatch(value=text, score=score, linked_value=self._linked_value(field, text, link_field))
-            for text, score in scored
+            CatalogValueMatch(
+                value=text,
+                score=score,
+                coverage=cov,
+                linked_value=self._linked_value(field, text, link_field),
+            )
+            for text, score, cov in scored
         ]
 
     # ------------------------------------------------------------------
@@ -364,6 +392,18 @@ class Catalog:
             normalized[column] = values
         return normalized
 
+    def _search_fields(
+        self,
+        fields: list[str],
+        query: str,
+        *,
+        filter_spec: FilterSpec | None,
+        limit: int,
+        top_k_values: int,
+    ) -> list[CatalogMatch]:
+        """Multi-field surface search — one pass over candidate rows."""
+        return self._scored_search(fields, (query,), filter_spec=filter_spec, limit=limit, top_k_values=top_k_values)
+
     def _search_field(
         self,
         field: str,
@@ -373,65 +413,96 @@ class Catalog:
         limit: int,
         top_k_values: int,
     ) -> list[CatalogMatch]:
-        """Score rows by field index over *values* (multi-value → take max per row)."""
-        index = self.index_for(field)
-        if isinstance(self._backend, ParquetRowBackend):
-            return self._parquet_field_search(
-                index, field, values, filter_spec=filter_spec, limit=limit, top_k_values=top_k_values
-            )
-        return self._memory_field_search(index, values, filter_spec=filter_spec, limit=limit)
+        """Single-surface search (a DSL clause arrives as multiple *values*)."""
+        return self._scored_search([field], values, filter_spec=filter_spec, limit=limit, top_k_values=top_k_values)
 
-    def _memory_field_search(
+    def _scored_search(
         self,
-        index: CatalogIndex,
-        values: Sequence[str],
-        *,
-        filter_spec: FilterSpec | None,
-        limit: int,
-    ) -> list[CatalogMatch]:
-        merged: dict[int, float] = {}
-        for value in values:
-            qvecs = embed_query_vectors(value, [index])
-            for row_id, score in index.score_candidates(value, query_vectors=qvecs).items():
-                if score <= 0.0:
-                    continue
-                if filter_spec is not None and not entity_matches_filter(self._entities[row_id], filter_spec):
-                    continue
-                if score > merged.get(row_id, 0.0):
-                    merged[row_id] = score
-        ranking = ranking_from_scores(
-            [(self._entities[i].namespace, self._entities[i].code, s) for i, s in merged.items()],
-            limit=limit,
-        )
-        return self._matches_from_ranking(ranking)
-
-    def _parquet_field_search(
-        self,
-        index: CatalogIndex,
-        field: str,
+        fields: list[str],
         values: Sequence[str],
         *,
         filter_spec: FilterSpec | None,
         limit: int,
         top_k_values: int,
     ) -> list[CatalogMatch]:
-        backend = self._require_parquet_backend()
-        value_scores: dict[str, float] = {}
-        for value in values:
-            qvecs = embed_query_vectors(value, [index])
-            for text, score in search_index_values(index, value, limit=top_k_values, query_vectors=qvecs):
-                if score > value_scores.get(text, 0.0):
-                    value_scores[text] = score
-        ranked = backend.top_scored_rows(
-            filter_spec=filter_spec,
-            score_column=field,
-            value_scores=value_scores,
-            limit=limit,
-        )
+        """Rank rows by (coverage desc, score desc) in one backend pass.
+
+        Per query value and field, the index's distinct values are scored once
+        (top *top_k_values*, normalized by the field's best score) and the
+        fully-consumed values are gated (:func:`consumed_value_tokens`). Every
+        row matching any scored or consumed value is then graded in a single
+        scan: *coverage* is the fraction of the query's tokens consumed by the
+        union of the row's consumed field values; *score* sums the row's
+        normalized per-field relevance, so weak agreeing evidence across fields
+        accumulates while no single field's raw magnitude can dominate the
+        ranking. Multi-value queries (DSL clauses) keep each row's best pair.
+        Because candidates come straight from the backend, a deserving row can
+        never be lost to a per-field pool truncation.
+        """
+        plans = self._value_plans(fields, values, top_k_values=top_k_values)
+        if not plans:
+            return []
+        any_of: dict[str, set[str]] = {}
+        for _, tables, consumed in plans:
+            for column, scored in tables.items():
+                any_of.setdefault(column, set()).update(scored)
+            for column, gated in consumed.items():
+                any_of.setdefault(column, set()).update(gated)
+        candidates = {column: sorted(texts) for column, texts in any_of.items() if texts}
+        if not candidates:
+            return []
+
+        scored_rows: list[tuple[float, float, Entity]] = []
+        if isinstance(self._backend, ParquetRowBackend):
+            for row in self._backend.iter_rows(filter_spec=filter_spec or None, any_of=candidates):
+                row_values = {
+                    column: [str(row[column])] if row.get(column) is not None else [] for column in candidates
+                }
+                coverage, score = _grade_row(row_values, plans)
+                if coverage <= 0.0 and score <= 0.0:
+                    continue
+                scored_rows.append((coverage, score, entity_from_row(row, config=self._backend_config)))
+        else:
+            columns_by_field = {self._coverage_column(name): name for name in fields}
+            for entity in self._entities:
+                if filter_spec and not entity_matches_filter(entity, filter_spec):
+                    continue
+                row_values = {
+                    column: [str(v) for v in field_values(entity, name)] for column, name in columns_by_field.items()
+                }
+                coverage, score = _grade_row(row_values, plans)
+                if coverage <= 0.0 and score <= 0.0:
+                    continue
+                scored_rows.append((coverage, score, entity))
+
+        scored_rows.sort(key=lambda item: (-item[0], -item[1], item[2].namespace, item[2].code))
         return [
-            catalog_match_from_entity(entity_from_row(row, config=self._backend_config), score=score)
-            for row, score in ranked
+            catalog_match_from_entity(entity, score=score, coverage=coverage)
+            for coverage, score, entity in scored_rows[:limit]
         ]
+
+    def _value_plans(self, fields: list[str], values: Sequence[str], *, top_k_values: int) -> list[_ValuePlan]:
+        """Per query value: (query tokens, normalized score tables, consumed values) by column."""
+        plans: list[_ValuePlan] = []
+        for value in values:
+            if not value or not value.strip():
+                continue
+            query_vectors = embed_query_vectors(value, [self.index_for(name) for name in fields])
+            tables: dict[str, dict[str, float]] = {}
+            consumed: dict[str, dict[str, frozenset[str]]] = {}
+            for name in fields:
+                column = self._coverage_column(name)
+                index = self.index_for(name)
+                scored = search_index_values(index, value, limit=top_k_values, query_vectors=query_vectors)
+                top = max((score for _, score, _ in scored), default=0.0)
+                tables[column] = {text: score / top for text, score, _ in scored if top > 0.0 and score > 0.0}
+                consumed[column] = consumed_value_tokens(index, value)
+            plans.append((frozenset(tokenize(value)), tables, consumed))
+        return plans
+
+    def _coverage_column(self, field: str) -> str:
+        aliases = {"code": self._backend_config.code_column, "title": self._backend_config.title_column}
+        return aliases.get(field, field)
 
     def _search_filter_only(self, filter_spec: FilterSpec, *, limit: int) -> list[CatalogMatch]:
         if isinstance(self._backend, ParquetRowBackend):
@@ -636,13 +707,6 @@ class Catalog:
             ctx = IndexBuildContext(field=field, vector_cache=vector_cache)
             index.build(self._entities, ctx=ctx)
 
-    def _matches_from_ranking(self, ranking: Ranking) -> list[CatalogMatch]:
-        return [
-            catalog_match_from_entity(self._entities[idx], score=float(row.score))
-            for row in ranking.items
-            if (idx := self._key_to_idx.get((row.namespace, row.code))) is not None
-        ]
-
     def _require_parquet_backend(self) -> ParquetRowBackend:
         if not isinstance(self._backend, ParquetRowBackend):
             raise ValueError("Catalog parquet backend is not configured")
@@ -677,7 +741,7 @@ class Catalog:
     def _write_indexes(self, target: Path) -> None:
         target.mkdir(parents=True, exist_ok=True)
         for field, index in self._indexes.items():
-            if isinstance(index, (VectorIndex, BM25Index, HybridIndex, DisMaxIndex)):
+            if isinstance(index, (VectorIndex, BM25Index, HybridIndex)):
                 index.save(target / field)
             else:
                 raise TypeError(f"Catalog index for field {field!r} is runtime-only and cannot be serialized")
@@ -709,6 +773,37 @@ class Catalog:
         (target / META_FILENAME).write_text(meta.model_dump_json(indent=2))
 
 
+#: One query value's scoring plan: (query tokens, per-column normalized score
+#: tables, per-column consumed values with their token sets).
+_ValuePlan = tuple[frozenset[str], dict[str, dict[str, float]], dict[str, dict[str, frozenset[str]]]]
+
+
+def _grade_row(row_values: dict[str, list[str]], plans: list[_ValuePlan]) -> tuple[float, float]:
+    """Best (coverage, score) of one row across the query's values."""
+    best = (0.0, 0.0)
+    for qtokens, tables, consumed in plans:
+        union: set[str] = set()
+        matched = False
+        score = 0.0
+        for column, texts in row_values.items():
+            table = tables.get(column)
+            if table and texts:
+                score += max((table.get(text, 0.0) for text in texts), default=0.0)
+            gated = consumed.get(column)
+            if gated:
+                for text in texts:
+                    tokens = gated.get(text)
+                    if tokens is not None:
+                        matched = True
+                        union.update(tokens)
+        # A tokenless query only gathers string-equal values: full coverage.
+        coverage = len(union & qtokens) / len(qtokens) if qtokens else (1.0 if matched else 0.0)
+        pair = (coverage, score)
+        if pair > best:
+            best = pair
+    return best
+
+
 # ---------------------------------------------------------------------------
 # Index loading
 # ---------------------------------------------------------------------------
@@ -726,8 +821,6 @@ def _load_indexes(path: Path, *, index_fields: dict[str, str]) -> dict[str, Cata
             indexes[field] = BM25Index.load(field_path)
         elif kind == "hybrid":
             indexes[field] = HybridIndex.load(field_path)
-        elif kind == "dis_max":
-            indexes[field] = DisMaxIndex.load(field_path)
         else:
             raise ValueError(f"Unsupported catalog index kind {kind!r} for field {field!r}")
     return indexes

@@ -8,6 +8,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **BREAKING — `Catalog.search` replaces `field=` with `fields=`.** One
+  parameter declares the scoring surface: a single indexed field name
+  (`fields="title"`, exactly the old `field=` behavior) or several to fuse
+  (`fields=["title", "ITEM_label", ...]` — fuzzy score is the row's best
+  per-field score over the already-built indexes), so a caller can declare a
+  bare-query surface such as title + dimension labels without rebuilding
+  catalogs. Requires `query=`, which is then literal text — never parsed as
+  the ``FIELD: value`` DSL. `search_values` keeps its single `field` argument
+  (#69).
+- **BREAKING — search results rank by (coverage, score); the exact-match
+  sentinel is gone.** `CatalogMatch` and `CatalogValueMatch` gain
+  `coverage: float`: the fraction of the query's tokens consumed by the union
+  of the row's fully-consumed field values (a field value counts only when all
+  its tokens appear in the query; case-insensitive string equality covers
+  values that tokenize to nothing). An exact value hit is coverage 1.0 and
+  ranks first WITHOUT suppressing fuzzy near-misses ("Annual rate of change"
+  vs "Annual average rate of change" stay adjacent), value-level term
+  repetition ("Current account, Current transfers") gates to 0.0 instead of
+  outranking the consumed value, and a verbose query decomposes across a
+  multi-field surface ("current account … euro area … quarterly" → ITEM +
+  REF_AREA + FREQ). `EXACT_MATCH_SCORE = 1_000_000.0` no longer exists, and no
+  magic magnitude ever reaches a caller: `score` is the sum over searched fields of the row's
+  normalized per-field relevance (each field votes 0..1 of its own best
+  match), computed for every candidate row in one backend pass — agreeing
+  evidence across fields accumulates, no single field's raw magnitude
+  dominates, and a deserving row can never be lost to per-field pool
+  truncation. Chosen empirically over raw-max/min-max/RRF/DisMax fusion and
+  over hard auto-filtering on a 37-case, 17-class query-taxonomy battery
+  (MRR 0.81 vs 0.45 for the previous title-only search) (#69).
+- **BREAKING — `DisMaxIndex` is removed.** It had no consumers: its per-field
+  sub-indexes were byte-identical to standalone indexes (no blended term
+  statistics, no precomputation), it forced a uniform component kind, and it
+  could not ride the parquet path. Query-time `fields=` is the one multi-field
+  mechanism; the `dis_max` kind is no longer valid in catalog metadata (#69).
+
 - **BREAKING — transport error mapping now decides from the status code, not a
   raised `httpx.HTTPStatusError`.** `parsimony.transport.map_http_error`,
   `map_timeout_error`, `map_transport_error`, and the `classify=` callback are

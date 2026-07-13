@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import heapq
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -62,11 +61,15 @@ class InMemoryRowBackend:
         *,
         filter_spec: FilterSpec | None = None,
         columns: Sequence[str] | None = None,
+        any_of: Mapping[str, Sequence[str]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         del columns
+        allowed = {col: {str(v) for v in vals} for col, vals in (any_of or {}).items()}
         for entity in self._entities:
             row = self._entity_to_row(entity)
             if filter_spec is not None and not _row_matches_filter(row, filter_spec):
+                continue
+            if allowed and not any(str(row.get(col)) in vals for col, vals in allowed.items()):
                 continue
             yield row
 
@@ -112,8 +115,15 @@ class ParquetRowBackend:
         *,
         filter_spec: FilterSpec | None = None,
         columns: Sequence[str] | None = None,
+        any_of: Mapping[str, Sequence[str]] | None = None,
     ) -> Iterator[dict[str, Any]]:
         expr = _build_parquet_filter(filter_spec, schema_names=self._schema_names)
+        or_expr = _build_any_of_filter(any_of, schema_names=self._schema_names)
+        if any_of and or_expr is None:
+            # Every candidate column is absent from this parquet: no row can match.
+            return
+        if or_expr is not None:
+            expr = or_expr if expr is None else expr & or_expr
         scanner = self._dataset.scanner(
             filter=expr,
             columns=list(columns) if columns else None,
@@ -122,37 +132,26 @@ class ParquetRowBackend:
         for batch in scanner.to_batches():
             yield from batch.to_pylist()
 
-    def top_scored_rows(
-        self,
-        *,
-        filter_spec: FilterSpec | None,
-        score_column: str,
-        value_scores: dict[str, float],
-        limit: int,
-    ) -> list[tuple[dict[str, Any], float]]:
-        """Stream rows, keep top-*limit* by *value_scores* for *score_column*."""
-        if not value_scores:
-            return []
-        narrowed = dict(filter_spec or {})
-        narrowed = dict(narrowed)
-        narrowed[score_column] = list(value_scores.keys())
-        heap: list[tuple[float, int, dict[str, Any]]] = []
-        tie = 0
-        for row in self.iter_rows(filter_spec=narrowed):
-            raw = row.get(score_column)
-            if raw is None:
-                continue
-            score = value_scores.get(str(raw), 0.0)
-            if score <= 0.0:
-                continue
-            tie += 1
-            entry = (score, tie, row)
-            if len(heap) < limit:
-                heapq.heappush(heap, entry)
-            elif score > heap[0][0]:
-                heapq.heapreplace(heap, entry)
-        ranked = sorted(heap, key=lambda item: (-item[0], item[1]))
-        return [(row, score) for score, _, row in ranked]
+
+def _build_any_of_filter(
+    any_of: Mapping[str, Sequence[str]] | None,
+    *,
+    schema_names: set[str],
+) -> ds.Expression | None:
+    """OR filter: a row qualifies when ANY listed column holds one of its values."""
+    if not any_of:
+        return None
+    exprs: list[ds.Expression] = []
+    for col, values in any_of.items():
+        if col not in schema_names or not values:
+            continue
+        exprs.append(ds.field(col).isin([str(v) for v in values]))
+    if not exprs:
+        return None
+    combined = exprs[0]
+    for expr in exprs[1:]:
+        combined = combined | expr
+    return combined
 
 
 def _build_parquet_filter(

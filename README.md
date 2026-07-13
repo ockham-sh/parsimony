@@ -139,7 +139,7 @@ Some plugins use published catalogs from [Hugging Face](https://huggingface.co/p
 
 ## Using Parsimony with agents
 
-Parsimony becomes particularly useful for knowledge work when it's used alongside a coding agent. An agent that can run Python can use connectors as tools. It can list the available connectors, check their parameters, search for identifiers, and fetch data from public or internal sources -- all using a single access patern.
+Parsimony becomes particularly useful for knowledge work when it's used alongside a coding agent. An agent that can run Python can use connectors as tools. It can list the available connectors, check their parameters, search for identifiers, and fetch data from public or internal sources, all using a single access pattern.
 
 The included [Agent Skill](skills/parsimony/SKILL.md) gives Cursor, Claude Code, Codex, and other compatible agents these instructions:
 
@@ -155,6 +155,8 @@ Without a global Node installation, use `uvx npx-skills add ockham-sh/parsimony`
 - [Connectors](docs/connectors/index.md)
 - [Catalog](docs/catalog/index.md)
 - [API reference](docs/reference/api.md) — public imports
+
+The complete documentation is published at [docs.parsimony.dev](https://docs.parsimony.dev).
 
 ## Development
 

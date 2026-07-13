@@ -3,11 +3,13 @@
 A [catalog](index.md) holds [`Entity`](entities.md) records, but the actual matching is
 done by per-field **indexes**. An index is scoped to one searchable field, knows how to
 build itself from the entities, and knows how to score a query against them. Parsimony
-ships four index types — lexical (`BM25Index`), dense-vector (`VectorIndex`), their fusion
-(`HybridIndex`), and a multi-field DisMax (`DisMaxIndex`) — plus selection policies that
-pick a sensible index for a field automatically.
+ships three index types — lexical (`BM25Index`), dense-vector (`VectorIndex`), and their
+fusion (`HybridIndex`) — plus selection policies that pick a sensible index for a field
+automatically. Spanning several fields under one query is a call-time concern, not an
+index type: `Catalog.search`'s `fields=` fuses across whichever indexes you name — see
+[Search](search.md).
 
-This page covers the `CatalogIndex` protocol every index satisfies, the four concrete
+This page covers the `CatalogIndex` protocol every index satisfies, the three concrete
 index types, how values are deduplicated before scoring, the build-time embedding cache,
 the adaptive policies in `parsimony.catalog.policy`, and the low-level FAISS/tokenizer
 helpers in `parsimony.indexes`.
@@ -49,7 +51,7 @@ class CatalogIndex(Protocol):
     def load(cls, path: Path) -> Self: ...
 ```
 
-- **`kind`** is a class-level string tag (`"bm25"`, `"vector"`, `"hybrid"`, `"dis_max"`).
+- **`kind`** is a class-level string tag (`"bm25"`, `"vector"`, `"hybrid"`).
   Snapshots dispatch on it when reloading an index from disk.
 - **`build(entries, *, ctx)`** populates the index from the catalog's entities for the field
   named by `ctx.field`.
@@ -218,58 +220,6 @@ idx = HybridIndex(
 )
 ```
 
-## `DisMaxIndex`
-
-`DisMaxIndex` is different from the others: it spans **multiple Entity fields** under one
-logical search-surface name. You give it a list of `fields` and a `component_factory`; it
-builds one homogeneous sub-index per field (the same component kind for all). The per-row
-score is `max(per-field scores) + tie_breaker * sum(non-max scores)`.
-
-```python
-from parsimony.catalog import BM25Index, DisMaxIndex, Entity
-from parsimony.catalog.indexes import IndexBuildContext
-
-entries = [
-    Entity(namespace="ns", code="A", title="placeholder",
-           metadata={"short_title": "World Bank GDP growth",
-                     "long_title": "World Bank macro indicator"}),
-    Entity(namespace="ns", code="B", title="placeholder",
-           metadata={"short_title": "CPI inflation France",
-                     "long_title": "Consumer price index"}),
-]
-dismax = DisMaxIndex(
-    fields=["short_title", "long_title"],
-    component_factory=BM25Index,
-    tie_breaker=0.2,
-)   # kind == "dis_max"
-dismax.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
-scores = dismax.score_candidates("World Bank GDP")
-print(scores)  # {0: 3.4} — only row 0 matches; rows that score 0 are omitted
-```
-
-!!! note "Surface name vs. underlying fields"
-    The dict key under which a `DisMaxIndex` lives in `Catalog.indexes` is the *logical
-    search-surface name* a user types in the DSL (e.g. `title`). The `fields` list names the
-    actual Entity fields the sub-indexes read (e.g. `short_title`, `long_title`). A DisMax can
-    therefore expose one name while searching several underlying fields.
-
-`tie_breaker` controls how non-best per-field scores contribute. With `tie_breaker=0.0`
-(the default) the score is a pure `max`; with `tie_breaker=1.0` it is the full sum across
-fields. The constructor validates its inputs:
-
-```python
-from parsimony.catalog import BM25Index, DisMaxIndex
-
-DisMaxIndex(fields=[], component_factory=BM25Index)                        # ValueError: requires at least one field
-DisMaxIndex(fields=["a", "a"], component_factory=BM25Index)                # ValueError: fields must be unique
-DisMaxIndex(fields=["a"], component_factory=BM25Index, tie_breaker=2.0)    # ValueError: tie_breaker must be in [0.0, 1.0]
-```
-
-The factory must yield a single uniform component kind across all fields; a mix raises
-`ValueError`. `save` writes `meta.json` (fields, tie_breaker, component kind) and each
-sub-index under `per_field/<field>/`; `load(path, *, embedder=None)` checks each stored
-component kind against the recorded one and passes the embedder to vector sub-indexes.
-
 ## Index build context and the vector cache
 
 `build` receives an `IndexBuildContext` — a transient dataclass shared across every index in
@@ -289,8 +239,7 @@ ctx = IndexBuildContext(field="title", vector_cache={})
 The context's `embed_texts(embedder, texts)` method batches embedding work in chunks of
 256 and memoizes vectors per text. Because the **same** `vector_cache` is shared across all
 field indexes in a single catalog build, identical strings appearing in different fields are
-embedded only once. When a `DisMaxIndex` builds its per-field sub-indexes it retargets the
-context per field (cloning it with a new `field`) while reusing the same cache.
+embedded only once.
 
 You only construct `IndexBuildContext` directly when driving an index outside a `Catalog`
 (as in the examples above). Within [`Catalog.build`](search.md) it is created and shared for

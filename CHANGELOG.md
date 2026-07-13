@@ -8,6 +8,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **BREAKING — `OutputConfig` is renamed `OutputSpec` and no longer transforms
+  data.** It is now a purely declarative labeling of column roles: no `dtype=`
+  coercion, no `mapped_name=` renaming, no eager validation against the
+  returned DataFrame. `Column` drops both fields — cast and rename in the
+  connector body instead, before you return. `OutputSpec.build_entities(df)`,
+  `build_table_result`, and the module-level `entities_from_dataframe` are
+  removed; entity projection moves to `Result` itself: `result.to_entities()`
+  returns a `list[Entity]`, and the new lazy `result.entities` returns an
+  `EntityMap` — a `(namespace, code)`-keyed mapping to `EntityResult` (an
+  entity's `data`, `metadata`, and `provenance` together). Both are computed
+  from `result.data` against `result.output_spec` on access, so mutating
+  `result.data` and re-reading `result.entities` sees the update. A `KEY`
+  column may now omit `namespace=` at declaration time (e.g. a per-call
+  dynamic namespace); it is only required once something actually projects
+  entities — at that point a missing namespace raises `ValueError`, not at
+  `OutputSpec` construction. `@loader` and `@enumerator` still enforce it
+  eagerly at decoration time, since feeding a store/catalog is their entire
+  purpose (closes #72, #73).
+- **BREAKING — `Result.df` alias is removed.** Use `Result.frame` (raises
+  `TypeError` if the payload is not tabular).
 - **BREAKING — `Catalog.search` replaces `field=` with `fields=`.** One
   parameter declares the scoring surface: a single indexed field name
   (`fields="title"`, exactly the old `field=` behavior) or several to fuse

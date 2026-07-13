@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
 
 def _mk_connector(
@@ -95,7 +95,7 @@ def test_description_too_long_fails() -> None:
         assert_plugin_valid(mod)
 
 
-ENUMERATE_OUTPUT = OutputConfig(
+ENUMERATE_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="demo"),
         Column(name="title", role=ColumnRole.TITLE),

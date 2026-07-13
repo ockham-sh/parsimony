@@ -7,44 +7,37 @@ from typing import Annotated
 import pandas as pd
 
 from parsimony.connector import Connectors, _returns_clause, connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
         Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-KEY_NO_NS_OUTPUT = OutputConfig(
-    columns=[
-        Column(name="sym", role=ColumnRole.KEY),
-        Column(name="price", role=ColumnRole.DATA),
-    ]
-)
-
-TITLE_META_OUTPUT = OutputConfig(
+TITLE_META_OUTPUT = OutputSpec(
     columns=[
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="unit", role=ColumnRole.METADATA, namespace="unit"),
+        Column(name="unit", role=ColumnRole.METADATA),
         Column(name="description", role=ColumnRole.METADATA),
     ]
 )
 
-EXCLUDED_KEY_OUTPUT = OutputConfig(
+EXCLUDED_KEY_OUTPUT = OutputSpec(
     columns=[
-        Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
+        Column(name="internal_id", role=ColumnRole.KEY, namespace="internal", exclude_from_llm_view=True),
         Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-ALL_EXCLUDED_OUTPUT = OutputConfig(
+ALL_EXCLUDED_OUTPUT = OutputSpec(
     columns=[
-        Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
+        Column(name="internal_id", role=ColumnRole.KEY, namespace="internal", exclude_from_llm_view=True),
     ]
 )
 
-ORDER_OUTPUT = OutputConfig(
+ORDER_OUTPUT = OutputSpec(
     columns=[
         Column(name="alpha", role=ColumnRole.KEY, namespace="ns_a"),
         Column(name="beta", role=ColumnRole.DATA),
@@ -52,7 +45,7 @@ ORDER_OUTPUT = OutputConfig(
     ]
 )
 
-WILDCARD_OUTPUT = OutputConfig(
+WILDCARD_OUTPUT = OutputSpec(
     columns=[
         Column(name="*", role=ColumnRole.DATA),
     ]
@@ -95,12 +88,6 @@ def long_desc_connector(query: str) -> str:
 def ecb_search(query: str) -> pd.DataFrame:
     """Search ECB datasets for economic indicators."""
     return pd.DataFrame()
-
-
-@connector(output=KEY_NO_NS_OUTPUT)
-def quote_fetch(symbol: str) -> pd.DataFrame:
-    """Fetch a quote."""
-    return pd.DataFrame({"sym": ["X"], "price": [1.0]})
 
 
 @connector(output=TITLE_META_OUTPUT)
@@ -186,15 +173,10 @@ class TestConnectorToLlmReturns:
         text = fred_fetch.bind(api_key="secret").to_llm()
         assert "Returns: date (KEY ns:fred_series), value (DATA)." in text
 
-    def test_returns_key_without_namespace(self) -> None:
-        text = quote_fetch.to_llm()
-        assert "sym (KEY)" in text
-        assert "sym (KEY ns" not in text
-
     def test_returns_title_and_metadata_roles(self) -> None:
         text = title_meta_fetch.to_llm()
         assert "title (TITLE)" in text
-        assert "unit (METADATA ns:unit)" in text
+        assert "unit (METADATA)" in text
         assert "description (METADATA)" in text
 
     def test_returns_omits_excluded_columns(self) -> None:

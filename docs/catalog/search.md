@@ -40,10 +40,9 @@ Catalog(
 | `default_field` | `None` | The search-surface name used for broad (plain-text) search. If `None`, broad search falls back to `"title"` when a `"title"` index exists, otherwise broad search is disabled. |
 
 The keys of the `indexes` dict are *logical search-surface names*. They are what you type in
-the DSL (`FIELD: value`) and what appears in error messages. By convention a key matches the
-[`Entity`](entities.md) field its index reads (`code`, `title`, or a metadata key), but a
-composite index such as [`DisMaxIndex`](indexes.md) can expose one surface name while reading
-several entity fields internally.
+the DSL (`FIELD: value`) and what appears in error messages. A key matches the
+[`Entity`](entities.md) field its index reads (`code`, `title`, or a metadata key) — each
+index is scoped to exactly one field.
 
 A freshly constructed catalog is *dirty*: you must call `build()` before searching or saving.
 
@@ -321,12 +320,12 @@ caller (a sandboxed agent) has no embedder.
 
 This is a convenience for searching data you already hold, **not** the way catalogs are built.
 When you need column roles, key grouping, a vector index, or a persistable snapshot, use the
-`Catalog` lifecycle directly with [`entities_from_dataframe`](entities.md#entities_from_dataframe).
+`Catalog` lifecycle directly with [`Result.to_entities()`](entities.md#result-to_entities).
 BM25 works on a bare `pip install parsimony-core` — no extra needed.
 
 ## See also
 
 - [The Catalog](index.md) — the catalog lifecycle at a glance
-- [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, `DisMaxIndex`, and the selection policies
+- [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, and the selection policies
 - [Entities](entities.md) — the `Entity` model and how fields become searchable text
 - [Snapshots and persistence](snapshots.md) — `save`/`load` and the build gate on save

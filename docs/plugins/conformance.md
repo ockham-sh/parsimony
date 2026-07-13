@@ -270,16 +270,16 @@ descriptions and flat parameters:
 ```python
 import pandas as pd
 from parsimony.connector import Connectors, connector, enumerator
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="synth"),
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
-ENUM_OUTPUT = OutputConfig(
+ENUM_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="synth"),
         Column(name="title", role=ColumnRole.TITLE),

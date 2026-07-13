@@ -104,7 +104,7 @@ print(meta.name, meta.entry_count, meta.index_fields)
 | `name` | `str` | The catalog's normalized name. |
 | `namespaces` | `list[str]` | Sorted distinct namespaces across the entries. |
 | `entry_count` | `int` | Number of entities (`>= 0`). |
-| `index_fields` | `dict[str, str]` | Maps each index field to its kind string: `"bm25"`, `"vector"`, `"hybrid"`, or `"dis_max"`. |
+| `index_fields` | `dict[str, str]` | Maps each index field to its kind string: `"bm25"`, `"vector"`, or `"hybrid"`. |
 | `default_field` | `str \| None` | The broad-search surface, if one was configured. |
 | `build` | `BuildInfo` | Provenance for this snapshot (see below). |
 
@@ -144,9 +144,9 @@ Catalog snapshot integrity check failed for /tmp/parsimony/snapshot2:
 
 ## Which indexes are serializable
 
-`save()` serializes only the four built-in index types — `BM25Index`, `VectorIndex`,
-`HybridIndex`, and `DisMaxIndex`. Any other object satisfying the `CatalogIndex` protocol is
-treated as runtime-only:
+`save()` serializes only the three built-in index types — `BM25Index`, `VectorIndex`, and
+`HybridIndex`. Any other object satisfying the `CatalogIndex` protocol is treated as
+runtime-only:
 
 ```text
 TypeError: Catalog index for field 'custom' is runtime-only and cannot be serialized

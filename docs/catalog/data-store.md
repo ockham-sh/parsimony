@@ -77,20 +77,21 @@ normalized form instead.
 
 ## Loading a result
 
-The bridge from connector output to storage is `load_result`. It reads the
-table's `output_schema`, finds the single `KEY` column (which must declare a
-`namespace`), keeps the `DATA` columns, and groups rows by the `KEY` value into
-one DataFrame per distinct entity. The `KEY` column is consumed for identity;
-`TITLE`, `METADATA`, and any unmapped extra columns are dropped from the stored
+The bridge from connector output to storage is `load_result`. It delegates identity
+and grouping entirely to [`Result.entities`](../connectors/results.md#entity-projection)
+— the same lazy tuple-keyed projection covered on the results page — so there is no
+second grouping pass here. Each `EntityResult.data` (already narrowed to that entity's
+`DATA` columns) is upserted under its `(namespace, code)` key. `TITLE`, `METADATA`, and
+the `KEY` column itself are consumed by the projection and never land in the stored
 frame.
 
 ```python
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
-SCHEMA = OutputConfig(
+SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -103,11 +104,10 @@ table = Result(
         {
             "series_id": ["GDP", "GDP", "CPI"],
             "value": [1.0, 2.0, 3.0],
-            "note": ["a", "b", "c"],  # unmapped extra column
         }
     ),
     provenance=Provenance(source="fred", source_description="FRED"),
-    output_schema=SCHEMA,
+    output_spec=SCHEMA,
 )
 
 stats = store.load_result(table)
@@ -115,15 +115,15 @@ assert (stats.total, stats.loaded, stats.skipped, stats.errors) == (2, 2, 0, 0)
 
 gdp = store.get("fred", "GDP")
 assert gdp is not None
-assert list(gdp.columns) == ["value"]  # KEY consumed, extra dropped
+assert list(gdp.columns) == ["value"]  # KEY consumed
 assert len(gdp) == 2  # two rows for GDP collapsed into one frame
 ```
 
 The two `GDP` rows collapse into a single two-row frame under code `GDP`, while
 `CPI` becomes its own one-row entity — so `total` counts distinct entities, not
 input rows. The namespace is taken from the `KEY` column's `namespace=...`, not
-passed to `load_result`; a `KEY` (or `METADATA`) column is the only place a
-`Column` may set `namespace`.
+passed to `load_result`; a `KEY` column is the only place a `Column` may set
+`namespace`.
 
 ### Statistics: `LoadResult`
 
@@ -151,9 +151,9 @@ extracted entity unconditionally.
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
-SCHEMA = OutputConfig(
+SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -166,7 +166,7 @@ store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
 table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
     provenance=Provenance(source="fred", source_description="FRED"),
-    output_schema=SCHEMA,
+    output_spec=SCHEMA,
 )
 
 first = store.load_result(table, force=False)
@@ -198,9 +198,9 @@ import pandas as pd
 
 from parsimony import InMemoryDataStore
 from parsimony.connector import loader
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-LOAD_SCHEMA = OutputConfig(
+LOAD_SCHEMA = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
         Column(name="value", role=ColumnRole.DATA),
@@ -228,29 +228,29 @@ assert df is not None and list(df.columns) == ["value"] and len(df) == 2
 `load_result` distinguishes two failure modes.
 
 **Extraction-time validation** runs before any entity is written and *raises* —
-it is never counted in `errors`. The table's schema must be well-formed:
+it is never counted in `errors`. It is exactly the [entity projection
+contract](../connectors/results.md#requirements-and-errors) that `Result.entities`
+enforces: the table's schema must be well-formed.
 
 | Condition | Raises |
 | --- | --- |
-| `output_schema` is `None` | `ValueError` |
-| `data` is not a DataFrame/Series | `TypeError` |
+| `output_spec` is `None` | `ValueError` |
+| `data` is not a DataFrame | `TypeError` |
 | Not exactly one `KEY` column | `ValueError` |
 | `KEY` column has no `namespace` | `ValueError` |
-| `KEY` column name absent from the data | `ValueError` |
-| Zero `DATA` columns | `ValueError` |
-| A declared `DATA` column missing from the data | `ValueError` |
+| A declared column (`KEY`, `TITLE`, `METADATA`, `DATA`) is absent from the data | `ValueError` |
 
 ```python
 import pandas as pd
 
 from parsimony import InMemoryDataStore
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 store = InMemoryDataStore()
 table = Result(
     data=pd.DataFrame({"series_id": ["GDP"], "value": [1.0]}),
     provenance=Provenance(source="x", source_description="x"),
-    output_schema=OutputConfig(
+    output_spec=OutputSpec(
         columns=[
             Column(name="series_id", role=ColumnRole.KEY),  # no namespace
             Column(name="value", role=ColumnRole.DATA),
@@ -279,6 +279,6 @@ continues with the remaining entities. A single bad entity does not abort a load
 ## See also
 
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — the loader verb that produces the `Result` a store consumes.
-- [Results and output schemas](../connectors/results.md) — `Result`, `OutputConfig`, `Column`, and `ColumnRole`.
+- [Results and output schemas](../connectors/results.md) — `Result`, `OutputSpec`, `Column`, `ColumnRole`, and the `entities` projection `load_result` delegates to.
 - [Entities](entities.md) — namespace/code normalization and the `entity_key` canonical key.
 - [The Catalog](index.md) — the discovery layer; an enumerator's output feeds a catalog, a loader's feeds a data store.

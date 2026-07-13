@@ -1,4 +1,4 @@
-"""Tests for Result and OutputConfig."""
+"""Tests for Result, OutputSpec, and the entity projection."""
 
 from __future__ import annotations
 
@@ -6,10 +6,12 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
+from parsimony.entity import Entity
 from parsimony.result import (
     Column,
     ColumnRole,
-    OutputConfig,
+    EntityResult,
+    OutputSpec,
     Provenance,
     Result,
 )
@@ -21,114 +23,35 @@ def _prov(**kwargs: object) -> Provenance:
     return Provenance(**base)  # type: ignore[arg-type]
 
 
-def test_build_table_result_rename_and_dtypes() -> None:
-    raw = pd.DataFrame(
-        {
-            "d": ["2020-01-01", "2021-06-15"],
-            "v": ["1", "2.5"],
-            "meta": ["x", "y"],
-        }
-    )
-    cfg = OutputConfig(
-        columns=[
-            Column(name="d", dtype="datetime", role=ColumnRole.DATA),
-            Column(name="v", dtype="numeric", role=ColumnRole.DATA, mapped_name="value"),
-            Column(name="meta", role=ColumnRole.METADATA),
-        ]
-    )
-    r = cfg.build_table_result(raw)
-    assert r.is_tabular
-    assert r.output_schema is not None
-    assert list(r.data.columns) == ["d", "value", "meta"]
-    assert r.provenance.properties.get("metadata") is None
-    assert len(r.metadata_columns) == 1
-    assert r.metadata_columns[0].name == "meta"
-    assert r.metadata_columns[0].role == ColumnRole.METADATA
+# ---------------------------------------------------------------------------
+# Column declaration invariants
+# ---------------------------------------------------------------------------
 
 
-def test_mapped_name_with_literal_percent_is_plain_rename() -> None:
-    # mapped_name is a plain rename — a literal '%' must not be treated as a
-    # format spec (the old `mapped_name % params` path raised on this).
-    raw = pd.DataFrame({"v": [1, 2]})
-    cfg = OutputConfig(columns=[Column(name="v", role=ColumnRole.DATA, mapped_name="growth_%")])
-    r = cfg.build_table_result(raw)
-    assert list(r.data.columns) == ["growth_%"]
+def test_column_has_no_dtype_or_mapped_name_fields() -> None:
+    c = Column(name="x")
+    assert not hasattr(c, "dtype")
+    assert not hasattr(c, "mapped_name")
 
 
-def test_build_table_result_wildcard() -> None:
-    raw = pd.DataFrame({"a": [1], "b": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="*", dtype="numeric", role=ColumnRole.DATA),
-        ]
-    )
-    r = cfg.build_table_result(raw)
-    assert set(r.data.columns) == {"a", "b"}
+def test_column_namespace_only_allowed_on_key() -> None:
+    assert Column(name="k", role=ColumnRole.KEY, namespace="fred").namespace == "fred"
+    with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
+        Column(name="m", role=ColumnRole.METADATA, namespace="currency")
+    with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
+        Column(name="v", role=ColumnRole.DATA, namespace="fred")
 
 
-def test_column_kind_alias_maps_to_role() -> None:
-    c = Column.model_validate({"name": "m", "kind": "metadata"})
-    assert c.role == ColumnRole.METADATA
+def test_column_namespace_must_be_non_empty_when_set() -> None:
+    with pytest.raises(ValidationError, match="non-empty"):
+        Column(name="k", role=ColumnRole.KEY, namespace="   ")
 
 
-def test_entity_keys() -> None:
-    df = pd.DataFrame({"sym": ["A", "B"], "title": ["Alpha", "Beta"], "v": [1, 2]})
-    cols = [
-        Column(name="sym", role=ColumnRole.KEY),
-        Column(name="title", role=ColumnRole.TITLE),
-        Column(name="v", role=ColumnRole.DATA),
-    ]
-    r = Result(data=df, output_schema=OutputConfig(columns=cols))
-    assert list(r.entity_keys.columns) == ["sym"]
-
-
-def test_build_table_result_rejects_empty_frame() -> None:
-    cfg = OutputConfig(columns=[Column(name="x", role=ColumnRole.DATA)])
-    with pytest.raises(ValueError, match="empty"):
-        cfg.build_table_result(pd.DataFrame())
-
-
-def test_output_config_requires_data_key_or_title() -> None:
-    with pytest.raises(ValidationError, match="at least one data, key, or title"):
-        OutputConfig(
-            columns=[
-                Column(name="m", role=ColumnRole.METADATA),
-            ]
-        )
-
-
-def test_output_config_rejects_multiple_key_columns() -> None:
-    with pytest.raises(ValidationError, match="at most one KEY"):
-        OutputConfig(
-            columns=[
-                Column(name="a", role=ColumnRole.KEY),
-                Column(name="b", role=ColumnRole.KEY),
-                Column(name="c", role=ColumnRole.DATA),
-            ]
-        )
-
-
-def test_output_config_rejects_multiple_title_columns() -> None:
-    with pytest.raises(ValidationError, match="at most one TITLE"):
-        OutputConfig(
-            columns=[
-                Column(name="a", role=ColumnRole.TITLE),
-                Column(name="b", role=ColumnRole.TITLE),
-                Column(name="c", role=ColumnRole.DATA),
-            ]
-        )
-
-
-def test_key_without_title_output_config_valid_for_loader() -> None:
-    """KEY + DATA without TITLE is valid for :func:`loader` schemas."""
-    cfg = OutputConfig(
-        columns=[
-            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
-            Column(name="v", role=ColumnRole.DATA),
-        ]
-    )
-    assert len([c for c in cfg.columns if c.role == ColumnRole.KEY]) == 1
-    assert len([c for c in cfg.columns if c.role == ColumnRole.DATA]) == 1
+def test_column_exclude_from_llm_view_not_allowed_for_data_or_title() -> None:
+    with pytest.raises(ValidationError, match="not allowed for data"):
+        Column(name="v", role=ColumnRole.DATA, exclude_from_llm_view=True)
+    with pytest.raises(ValidationError, match="not allowed for title"):
+        Column(name="t", role=ColumnRole.TITLE, exclude_from_llm_view=True)
 
 
 def test_column_llm_annotation() -> None:
@@ -137,24 +60,379 @@ def test_column_llm_annotation() -> None:
     assert Column(name="m", role=ColumnRole.METADATA).llm_annotation() == "(METADATA)"
 
 
-def test_column_namespace_only_on_key_or_metadata() -> None:
-    assert Column(name="m", role=ColumnRole.METADATA, namespace="currency").namespace == "currency"
-    with pytest.raises(ValidationError, match="namespace is only allowed on KEY or METADATA"):
-        Column(name="x", role=ColumnRole.DATA, namespace="fred")
+# ---------------------------------------------------------------------------
+# OutputSpec declaration invariants
+# ---------------------------------------------------------------------------
 
 
-def test_result_from_dataframe_infers_data_columns() -> None:
+def test_output_spec_is_a_pure_ordered_declaration() -> None:
+    spec = OutputSpec(columns=[Column(name="a"), Column(name="b")])
+    assert not hasattr(spec, "build_table_result")
+    assert not hasattr(spec, "build_entities")
+    assert not hasattr(spec, "validate_columns")
+
+
+def test_output_spec_rejects_duplicate_names() -> None:
+    with pytest.raises(ValidationError, match="unique"):
+        OutputSpec(columns=[Column(name="a"), Column(name="a")])
+
+
+def test_output_spec_rejects_multiple_key_columns() -> None:
+    with pytest.raises(ValidationError, match="at most one KEY"):
+        OutputSpec(
+            columns=[
+                Column(name="a", role=ColumnRole.KEY, namespace="ns"),
+                Column(name="b", role=ColumnRole.KEY, namespace="ns"),
+            ]
+        )
+
+
+def test_output_spec_rejects_multiple_title_columns() -> None:
+    with pytest.raises(ValidationError, match="at most one TITLE"):
+        OutputSpec(
+            columns=[
+                Column(name="a", role=ColumnRole.TITLE),
+                Column(name="b", role=ColumnRole.TITLE),
+            ]
+        )
+
+
+def test_output_spec_allows_key_without_namespace() -> None:
+    """A KEY column may omit namespace at declaration time (e.g. a per-call
+
+    dynamic namespace resolved later). Namespace is only required when a
+    projection is actually requested — see
+    ``test_entities_requires_key_namespace_for_projection``.
+    """
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY)])
+    assert spec.columns[0].namespace is None
+
+
+def test_entities_requires_key_namespace_for_projection() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY), Column(name="v", role=ColumnRole.DATA)])
+    df = pd.DataFrame({"k": ["a"], "v": [1]})
+    r = Result(data=df, output_spec=spec)
+    with pytest.raises(ValueError, match="must declare namespace"):
+        _ = r.entities
+
+
+def test_output_spec_rejects_multiple_wildcards() -> None:
+    with pytest.raises(ValidationError, match="one '\\*' wildcard"):
+        OutputSpec(
+            columns=[
+                Column(name="*", role=ColumnRole.DATA),
+                Column(name="*", role=ColumnRole.METADATA),
+            ]
+        )
+
+
+def test_output_spec_wildcard_cannot_be_key_or_title() -> None:
+    with pytest.raises(ValidationError, match="DATA or METADATA"):
+        OutputSpec(columns=[Column(name="*", role=ColumnRole.KEY, namespace="ns")])
+    with pytest.raises(ValidationError, match="DATA or METADATA"):
+        OutputSpec(columns=[Column(name="*", role=ColumnRole.TITLE)])
+
+
+# ---------------------------------------------------------------------------
+# Connector execution contract: data attached unchanged
+# ---------------------------------------------------------------------------
+
+
+def test_result_data_is_the_exact_raw_object() -> None:
     df = pd.DataFrame({"a": [1], "b": ["x"]})
-    r = Result.from_dataframe(df)
-    assert r.is_tabular
-    assert list(r.data.columns) == ["a", "b"]
-    assert r.output_schema is None
-    assert r.columns == []
+    r = Result(data=df, provenance=_prov())
+    assert r.data is df
 
 
-def test_result_from_dataframe_rejects_empty() -> None:
-    with pytest.raises(ValueError, match="empty"):
-        Result.from_dataframe(pd.DataFrame())
+def test_result_has_no_transforming_methods() -> None:
+    r = Result(data=pd.DataFrame({"a": [1]}))
+    assert not hasattr(r, "to_table")
+    assert not hasattr(r, "from_dataframe")
+
+
+def test_result_is_tabular_only_for_dataframe() -> None:
+    assert Result(data=pd.DataFrame({"a": [1]})).is_tabular
+    assert not Result(data=pd.Series([1, 2])).is_tabular
+    assert not Result(data={"a": 1}).is_tabular
+
+
+def test_result_frame_raises_when_not_tabular() -> None:
+    with pytest.raises(TypeError, match="not tabular"):
+        _ = Result(data={"a": 1}).frame
+
+
+# ---------------------------------------------------------------------------
+# Entity projection
+# ---------------------------------------------------------------------------
+
+
+def _series_output() -> OutputSpec:
+    return OutputSpec(
+        columns=[
+            Column(name="series_id", role=ColumnRole.KEY, namespace="fred"),
+            Column(name="title", role=ColumnRole.TITLE),
+            Column(name="units", role=ColumnRole.METADATA),
+            Column(name="date", role=ColumnRole.DATA),
+            Column(name="value", role=ColumnRole.DATA),
+        ]
+    )
+
+
+def test_entities_tuple_lookup_and_shared_provenance() -> None:
+    df = pd.DataFrame(
+        {
+            "series_id": ["UNRATE", "UNRATE", "GDP"],
+            "title": ["Unemployment Rate", "Unemployment Rate", "Gross Domestic Product"],
+            "units": ["Percent", "Percent", "Billions"],
+            "date": ["2020-01-01", "2020-02-01", "2020-01-01"],
+            "value": [3.5, 3.6, 21000.0],
+        }
+    )
+    prov = _prov()
+    r = Result(data=df, provenance=prov, output_spec=_series_output())
+    entities = r.entities
+    unrate = entities["fred", "UNRATE"]
+    assert isinstance(unrate, EntityResult)
+    assert unrate.namespace == "fred"
+    assert unrate.code == "UNRATE"
+    assert unrate.title == "Unemployment Rate"
+    assert unrate.metadata == {"units": "Percent"}
+    assert list(unrate.data.columns) == ["date", "value"]
+    assert len(unrate.data) == 2
+    assert unrate.provenance is prov
+
+
+def test_entities_preserve_first_appearance_order() -> None:
+    df = pd.DataFrame(
+        {
+            "series_id": ["GDP", "UNRATE", "GDP"],
+            "title": ["GDP", "Unemployment Rate", "GDP"],
+            "units": [None, None, None],
+            "date": ["1", "2", "3"],
+            "value": [1.0, 2.0, 3.0],
+        }
+    )
+    r = Result(data=df, output_spec=_series_output())
+    assert list(r.entities.keys()) == [("fred", "GDP"), ("fred", "UNRATE")]
+
+
+def test_entities_normalizes_colliding_codes() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    df = pd.DataFrame({"k": [" a ", "a"]})
+    r = Result(data=df, output_spec=spec)
+    assert list(r.entities.keys()) == [("ns", "a")]
+
+
+def test_entities_to_entities_is_lossy_identity_projection() -> None:
+    df = pd.DataFrame(
+        {
+            "series_id": ["UNRATE"],
+            "title": ["Unemployment Rate"],
+            "units": ["Percent"],
+            "date": ["2020-01-01"],
+            "value": [3.5],
+        }
+    )
+    r = Result(data=df, output_spec=_series_output())
+    entries = r.to_entities()
+    expected = Entity(namespace="fred", code="UNRATE", title="Unemployment Rate", metadata={"units": "Percent"})
+    assert entries == [expected]
+
+
+def test_entities_per_row_namespace_convention() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="code", role=ColumnRole.KEY, namespace="__row__"),
+            Column(name="entity_namespace", role=ColumnRole.METADATA),
+            Column(name="title", role=ColumnRole.TITLE),
+        ]
+    )
+    df = pd.DataFrame(
+        {
+            "code": ["A", "B"],
+            "entity_namespace": ["ns1", "ns2"],
+            "title": ["Alpha", "Beta"],
+        }
+    )
+    r = Result(data=df, output_spec=spec)
+    assert set(r.entities.keys()) == {("ns1", "A"), ("ns2", "B")}
+    # entity_namespace is consumed for identity, not stored as metadata.
+    assert r.entities["ns1", "A"].metadata == {}
+
+
+def test_entities_row_namespace_requires_entity_namespace_column() -> None:
+    spec = OutputSpec(columns=[Column(name="code", role=ColumnRole.KEY, namespace="__row__")])
+    r = Result(data=pd.DataFrame({"code": ["A"]}), output_spec=spec)
+    with pytest.raises(ValueError, match="entity_namespace"):
+        _ = r.entities
+
+
+def test_entities_wildcard_data_captures_unclaimed_columns() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="*", role=ColumnRole.DATA),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a", "a"], "x": [1, 2], "y": [3, 4]})
+    r = Result(data=df, output_spec=spec)
+    assert list(r.entities["ns", "a"].data.columns) == ["x", "y"]
+
+
+def test_entities_wildcard_metadata_captures_unclaimed_columns() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="*", role=ColumnRole.METADATA),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a"], "extra": ["hi"]})
+    r = Result(data=df, output_spec=spec)
+    assert r.entities["ns", "a"].metadata == {"extra": "hi"}
+    assert list(r.entities["ns", "a"].data.columns) == []
+
+
+def test_entities_undeclared_columns_ignored_without_wildcard() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    df = pd.DataFrame({"k": ["a"], "untouched": [1]})
+    r = Result(data=df, output_spec=spec)
+    assert list(r.entities["ns", "a"].data.columns) == []
+    assert "untouched" in r.data.columns  # untouched in the raw payload
+
+
+def test_entities_requires_output_spec() -> None:
+    r = Result(data=pd.DataFrame({"a": [1]}))
+    with pytest.raises(ValueError, match="OutputSpec"):
+        _ = r.entities
+
+
+def test_entities_requires_tabular_data() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    r = Result(data=pd.Series([1, 2]), output_spec=spec)
+    with pytest.raises(TypeError, match="tabular"):
+        _ = r.entities
+
+
+def test_entities_requires_exactly_one_key_column() -> None:
+    spec = OutputSpec(columns=[Column(name="v", role=ColumnRole.DATA)])
+    r = Result(data=pd.DataFrame({"v": [1]}), output_spec=spec)
+    with pytest.raises(ValueError, match="exactly one KEY"):
+        _ = r.entities
+
+
+def test_entities_raises_on_missing_declared_columns() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="missing", role=ColumnRole.DATA),
+        ]
+    )
+    r = Result(data=pd.DataFrame({"k": ["a"]}), output_spec=spec)
+    with pytest.raises(ValueError, match="missing"):
+        _ = r.entities
+
+
+def test_entities_raises_on_duplicate_dataframe_labels() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    df = pd.DataFrame([[1, 2]], columns=["k", "k"])
+    r = Result(data=df, output_spec=spec)
+    with pytest.raises(ValueError, match="duplicate labels"):
+        _ = r.entities
+
+
+def test_entities_raises_on_null_key() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    r = Result(data=pd.DataFrame({"k": ["a", None]}), output_spec=spec)
+    with pytest.raises(ValueError, match="null values"):
+        _ = r.entities
+
+
+def test_entities_raises_on_conflicting_title() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="title", role=ColumnRole.TITLE),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a", "a"], "title": ["X", "Y"]})
+    r = Result(data=df, output_spec=spec)
+    with pytest.raises(ValueError, match="conflicting values"):
+        _ = r.entities
+
+
+def test_entities_raises_on_conflicting_metadata() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="m", role=ColumnRole.METADATA),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a", "a"], "m": ["X", "Y"]})
+    r = Result(data=df, output_spec=spec)
+    with pytest.raises(ValueError, match="conflicting values"):
+        _ = r.entities
+
+
+def test_entities_accepts_null_plus_one_distinct_metadata_value() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="m", role=ColumnRole.METADATA),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a", "a"], "m": ["X", None]})
+    r = Result(data=df, output_spec=spec)
+    assert r.entities["ns", "a"].metadata == {"m": "X"}
+
+
+def test_entities_all_null_metadata_is_omitted() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="m", role=ColumnRole.METADATA),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a"], "m": [None]})
+    r = Result(data=df, output_spec=spec)
+    assert r.entities["ns", "a"].metadata == {}
+
+
+def test_entities_missing_title_falls_back_to_code() -> None:
+    spec = OutputSpec(
+        columns=[
+            Column(name="k", role=ColumnRole.KEY, namespace="ns"),
+            Column(name="title", role=ColumnRole.TITLE),
+        ]
+    )
+    df = pd.DataFrame({"k": ["a"], "title": [None]})
+    r = Result(data=df, output_spec=spec)
+    assert r.entities["ns", "a"].title == "a"
+
+
+def test_entities_empty_frame_with_declared_columns_returns_empty_mapping() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    df = pd.DataFrame({"k": pd.Series([], dtype=object)})
+    r = Result(data=df, output_spec=spec)
+    assert dict(r.entities) == {}
+
+
+def test_entities_empty_frame_missing_declared_column_still_raises() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    r = Result(data=pd.DataFrame(), output_spec=spec)
+    with pytest.raises(ValueError, match="missing declared columns"):
+        _ = r.entities
+
+
+def test_entities_mapping_is_read_only() -> None:
+    spec = OutputSpec(columns=[Column(name="k", role=ColumnRole.KEY, namespace="ns")])
+    r = Result(data=pd.DataFrame({"k": ["a"]}), output_spec=spec)
+    with pytest.raises(TypeError):
+        r.entities["ns", "a"] = None  # type: ignore[index]
+
+
+# ---------------------------------------------------------------------------
+# Provenance
+# ---------------------------------------------------------------------------
 
 
 def test_provenance_field_set_is_locked() -> None:
@@ -178,176 +456,6 @@ def test_provenance_requires_source_and_description() -> None:
         Provenance.model_validate({})  # type: ignore[arg-type]
     with pytest.raises(ValidationError):
         Provenance.model_validate({"source": "fred"})  # type: ignore[arg-type]
-
-
-def test_build_table_result_metadata_columns_are_schema_roles() -> None:
-    raw = pd.DataFrame(
-        {
-            "series_id": ["UNRATE"],
-            "title": ["Unemployment Rate"],
-            "units": ["Percent"],
-            "date": ["2020-01-01"],
-            "value": [3.5],
-        }
-    )
-    cfg = OutputConfig(
-        columns=[
-            Column(name="series_id", role=ColumnRole.KEY),
-            Column(name="title", role=ColumnRole.TITLE),
-            Column(name="units", role=ColumnRole.METADATA),
-            Column(name="date", role=ColumnRole.DATA),
-            Column(name="value", role=ColumnRole.DATA),
-        ]
-    )
-    r = cfg.build_table_result(raw)
-    assert r.provenance.properties == {}
-    assert [c.name for c in r.metadata_columns] == ["units"]
-    assert r.data.loc[0, "units"] == "Percent"
-
-
-def test_result_with_properties_is_cumulative() -> None:
-    df = pd.DataFrame({"a": [1]})
-    r = Result.from_dataframe(df)._with_properties(a=1)._with_properties(b=2)
-    assert r.provenance.properties == {"a": 1, "b": 2}
-
-
-def test_result_to_table_adds_unmapped_as_data() -> None:
-    df = pd.DataFrame({"k": ["a"], "title": ["T"], "obs": [1.0]})
-    r = Result(data=df, provenance=_prov())
-    schema = OutputConfig(
-        columns=[
-            Column(name="k", role=ColumnRole.KEY),
-            Column(name="title", role=ColumnRole.TITLE),
-        ]
-    )
-    t = r.to_table(schema)
-    assert t.is_tabular
-    assert t.output_schema is not None
-    roles = {c.name: c.role for c in t.output_schema.columns}
-    assert roles["obs"] == ColumnRole.DATA
-
-
-def test_table_result_to_table_reapplies_schema() -> None:
-    df = pd.DataFrame({"a": [1], "b": [2]})
-    t1 = Result.from_dataframe(df)
-    t2 = t1.to_table(
-        OutputConfig(
-            columns=[
-                Column(name="a", role=ColumnRole.KEY),
-                Column(name="b", role=ColumnRole.TITLE),
-            ]
-        )
-    )
-    assert t2.entity_keys.shape == (1, 1)
-
-
-# ---------------------------------------------------------------------------
-# Column-match diagnostics
-# ---------------------------------------------------------------------------
-
-
-def test_build_table_result_no_warning_when_all_match(caplog) -> None:
-    """Fully matched config should emit no warning."""
-    raw = pd.DataFrame({"a": [1], "b": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="a", role=ColumnRole.DATA),
-            Column(name="b", role=ColumnRole.DATA),
-        ]
-    )
-    with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw)
-    assert not caplog.records
-
-
-def test_build_table_result_raises_on_unmatched_column() -> None:
-    """Partial match should fail fast naming the missing column and available columns."""
-    raw = pd.DataFrame({"a": [1], "b": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="a", role=ColumnRole.DATA),
-            Column(name="missing_col", role=ColumnRole.DATA),
-        ]
-    )
-    with pytest.raises(ValueError, match="missing_col"):
-        cfg.build_table_result(raw)
-
-
-def test_build_table_result_raises_on_multiple_unmatched_columns() -> None:
-    """Multiple unmatched columns should all appear in the error message."""
-    raw = pd.DataFrame({"a": [1]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="a", role=ColumnRole.DATA),
-            Column(name="gone_x", role=ColumnRole.DATA),
-            Column(name="gone_y", role=ColumnRole.DATA),
-        ]
-    )
-    with pytest.raises(ValueError, match="gone_x") as exc_info:
-        cfg.build_table_result(raw)
-    assert "gone_y" in str(exc_info.value)
-
-
-def test_build_table_result_wildcard_not_reported_as_unmatched(caplog) -> None:
-    """Wildcard '*' should never appear as an unmatched column."""
-    raw = pd.DataFrame({"x": [1], "y": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="*", role=ColumnRole.DATA),
-        ]
-    )
-    with caplog.at_level("WARNING", logger="parsimony.result"):
-        cfg.build_table_result(raw)
-    assert not caplog.records
-
-
-def test_validate_columns_returns_unmatched() -> None:
-    """validate_columns should return unmatched config column names."""
-    df = pd.DataFrame({"a": [1], "b": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="a", role=ColumnRole.DATA),
-            Column(name="missing", role=ColumnRole.DATA),
-        ]
-    )
-    assert cfg.validate_columns(df) == ["missing"]
-
-
-def test_validate_columns_returns_empty_when_all_match() -> None:
-    """validate_columns should return empty list when all columns match."""
-    df = pd.DataFrame({"a": [1], "b": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="a", role=ColumnRole.DATA),
-            Column(name="b", role=ColumnRole.DATA),
-        ]
-    )
-    assert cfg.validate_columns(df) == []
-
-
-def test_validate_columns_excludes_wildcard() -> None:
-    """Wildcard '*' should not appear in validate_columns output."""
-    df = pd.DataFrame({"x": [1]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="*", role=ColumnRole.DATA),
-        ]
-    )
-    assert cfg.validate_columns(df) == []
-
-
-def test_build_table_result_raises_on_total_mismatch() -> None:
-    """When all config columns are absent, raise ValueError."""
-    raw = pd.DataFrame({"x": [1], "y": [2]})
-    cfg = OutputConfig(
-        columns=[
-            Column(name="absent_a", role=ColumnRole.DATA),
-            Column(name="absent_b", role=ColumnRole.DATA),
-        ]
-    )
-    with pytest.raises(ValueError, match="absent_a") as exc_info:
-        cfg.build_table_result(raw)
-    assert "absent_b" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -428,7 +536,7 @@ def _preview_df_schema() -> Result:
         Column(name="value", role=ColumnRole.DATA),
         Column(name="note", role=ColumnRole.METADATA),
     ]
-    return Result(data=df, output_schema=OutputConfig(columns=cols))
+    return Result(data=df, output_spec=OutputSpec(columns=cols))
 
 
 def test_preview_shape_line() -> None:
@@ -444,7 +552,7 @@ def test_preview_schema_lists_dtype_role_namespace() -> None:
 
 def test_preview_without_schema_shows_dtype_only() -> None:
     df = pd.DataFrame({"a": [1, 2], "b": ["x", "y"]})
-    out = Result.from_dataframe(df).to_llm()
+    out = Result(data=df).to_llm()
     assert "- a: int64" in out
     assert "(DATA)" not in out
 
@@ -452,10 +560,10 @@ def test_preview_without_schema_shows_dtype_only() -> None:
 def test_preview_omits_excluded_columns() -> None:
     df = pd.DataFrame({"internal_id": [1, 2], "value": [10.0, 20.0]})
     cols = [
-        Column(name="internal_id", role=ColumnRole.KEY, exclude_from_llm_view=True),
+        Column(name="internal_id", role=ColumnRole.KEY, namespace="ns", exclude_from_llm_view=True),
         Column(name="value", role=ColumnRole.DATA),
     ]
-    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    out = Result(data=df, output_spec=OutputSpec(columns=cols)).to_llm()
     assert "internal_id" not in out
     assert "- value: float64 (DATA)" in out
     assert "(1 hidden from LLM view)" in out
@@ -469,7 +577,7 @@ def test_preview_small_frame_shows_all_rows() -> None:
 
 def test_preview_large_frame_first_page_no_tail() -> None:
     df = pd.DataFrame({"i": list(range(100))})
-    out = Result.from_dataframe(df).to_llm(max_rows=4)
+    out = Result(data=df).to_llm(max_rows=4)
     assert "Rows (showing 4 of 100):" in out
     # Honest first page: the first rows are shown, the tail is NOT smuggled
     # in as a head/tail sample masquerading as the whole.
@@ -480,14 +588,14 @@ def test_preview_large_frame_first_page_no_tail() -> None:
 
 def test_preview_truncates_wide_cells() -> None:
     df = pd.DataFrame({"text": ["A" * 200, "B" * 200]})
-    out = Result.from_dataframe(df).to_llm()
+    out = Result(data=df).to_llm()
     assert "…" in out
     assert "A" * 200 not in out
 
 
 def test_preview_max_rows_param() -> None:
     df = pd.DataFrame({"i": list(range(100))})
-    out = Result.from_dataframe(df).to_llm(max_rows=2)
+    out = Result(data=df).to_llm(max_rows=2)
     assert "Rows (showing 2 of 100):" in out
 
 
@@ -499,8 +607,8 @@ def test_preview_empty_frame() -> None:
 
 def test_preview_all_columns_hidden() -> None:
     df = pd.DataFrame({"k": [1, 2]})
-    cols = [Column(name="k", role=ColumnRole.KEY, exclude_from_llm_view=True)]
-    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    cols = [Column(name="k", role=ColumnRole.KEY, namespace="ns", exclude_from_llm_view=True)]
+    out = Result(data=df, output_spec=OutputSpec(columns=cols)).to_llm()
     assert "(all hidden from LLM view)" in out
 
 
@@ -515,7 +623,9 @@ def test_preview_handles_integer_column_labels() -> None:
 
 def test_preview_handles_duplicate_column_names() -> None:
     # Duplicate column names (common in SQL joins) must not crash: frame[name]
-    # would return a DataFrame and .dtype would raise.
+    # would return a DataFrame and .dtype would raise. With no schema (or a
+    # schema whose length doesn't match the frame), governed_view falls back
+    # to unannotated name-based display rather than crashing.
     df = pd.DataFrame([[1, 2, 3]], columns=["a", "a", "b"])
     out = Result(data=df).to_llm()
     assert "1 rows × 3 columns" in out
@@ -524,17 +634,18 @@ def test_preview_handles_duplicate_column_names() -> None:
 
 
 def test_governance_pairs_schema_to_frame_by_position() -> None:
-    # Two columns share the name "x": one hidden, one visible. Name-based hiding
-    # would drop BOTH; positional pairing keeps the visible one (its value 20),
-    # drops only the hidden one (value 10).
-    df = pd.DataFrame([[1, 10, 20]], columns=["id", "x", "x"])
+    # A schema covering the frame one-to-one is paired by position, not by
+    # name — so annotations land on the right column even when a later
+    # positional column happens to share an earlier one's dtype/shape.
+    df = pd.DataFrame([[1, 10, 20]], columns=["id", "hidden", "visible"])
     cols = [
         Column(name="id", role=ColumnRole.DATA),
-        Column(name="x", role=ColumnRole.METADATA, exclude_from_llm_view=True),
-        Column(name="x", role=ColumnRole.DATA),
+        Column(name="hidden", role=ColumnRole.METADATA, exclude_from_llm_view=True),
+        Column(name="visible", role=ColumnRole.DATA),
     ]
-    out = Result(data=df, output_schema=OutputConfig(columns=cols)).to_llm()
+    out = Result(data=df, output_spec=OutputSpec(columns=cols)).to_llm()
     assert "1 hidden from LLM view" in out
-    assert out.count("- x:") == 1  # only the visible sibling
+    assert "- visible:" in out
+    assert "- hidden:" not in out
     assert "20" in out  # visible value kept
     assert "10" not in out  # hidden value suppressed

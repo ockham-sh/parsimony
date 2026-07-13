@@ -22,7 +22,7 @@ for programmer or usage errors.
 
     - Calling a connector with an unknown keyword, or binding an already-bound
       parameter, raises `TypeError`.
-    - Building a malformed `OutputConfig`, or a bad `Entity`, raises `ValueError`
+    - Building a malformed `OutputSpec`, or a bad `Entity`, raises `ValueError`
       or a Pydantic `ValidationError`.
 
     The typed `ConnectorError` family is reserved for the connector–provider
@@ -263,38 +263,30 @@ class ParseError(ConnectorError):
 ```
 
 The provider returned `200` but the body could not be turned into the declared
-shape — connector-side schema drift, or an upstream that broke its own contract.
-Retrying the same call will not help, and the default message says so.
+shape — a non-JSON/non-CSV response body, or an upstream that broke its own
+contract. Retrying the same call will not help, and the default message says
+so.
 
-`ParseError` is also raised **by the framework itself**: when a connector returns
-raw data that fails to coerce against its declared
-[`OutputConfig`](results.md), `Connector.__call__` catches the underlying
-`ValueError` and re-raises it as `ParseError(self.name, str(exc))`. You generally
-do not raise `ParseError` for schema-coercion failures yourself — the framework
-does it for you, with `provider` set to the connector's name.
+Raise it yourself from a connector body when you parse a provider's response
+and the shape is wrong; the [`fetch_json` / `fetch_csv` helpers](http-transport.md)
+already do this for the common case of an unparseable response body.
 
 ```python
-import pandas as pd
-
-from parsimony import Column, ColumnRole, OutputConfig, ParseError, connector
-
-
-@connector(
-    output=OutputConfig(
-        columns=[Column(name="value", dtype="numeric", role=ColumnRole.DATA)]
-    )
-)
-def broken() -> pd.DataFrame:
-    """Return values that cannot be coerced to numeric, forcing a ParseError."""
-    return pd.DataFrame({"value": ["not", "a", "number"]})
-
+from parsimony.errors import ParseError
 
 try:
-    broken()
-except ParseError as exc:
-    print(exc.provider)        # broken — the connector's name
-    print(isinstance(exc, ParseError))  # True
+    ...  # parse a provider response
+except ValueError as exc:
+    raise ParseError("fmp", f"fmp: unexpected response shape: {exc}") from exc
 ```
+
+!!! note "OutputSpec never raises ParseError"
+    `OutputSpec` is a passive declaration — the framework does not coerce or
+    validate a connector's returned data against it, so there is no
+    schema-mismatch path that surfaces as `ParseError`. A `KEY` column missing
+    its namespace, or data missing a declared column, raises a plain
+    `ValueError` later, at [entity projection](results.md#requirements-and-errors)
+    time — not from the connector call itself.
 
 ### InvalidParameterError — bad call-time arguments
 
@@ -428,7 +420,7 @@ URL.
 
 ## See also
 
-- [Defining connectors](defining-connectors.md) — where a schema `ValueError` becomes a `ParseError`
+- [Defining connectors](defining-connectors.md) — the decoration-time checks that raise `ValueError`/`TypeError` before a connector ever runs
 - [Calling, binding, and composing](calling-binding-composing.md) — the `TypeError` boundary for framework misuse
 - [Results and output schemas](results.md) — the success counterpart these errors are raised in lieu of
 - [HTTP transport](http-transport.md) — the layer that maps HTTP statuses and timeouts to these typed errors

@@ -7,7 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from parsimony.catalog import Entity, field_values, normalize_entity_code, normalize_namespace
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 
 def test_normalize_namespace_accepts_snake_case() -> None:
@@ -55,7 +55,7 @@ def test_catalog_entry_rejects_old_first_class_fields() -> None:
         Entity(namespace="fred", code="X", title="T", tags=["old"])  # type: ignore[call-arg]
 
 
-def test_build_entities_populates_metadata_columns() -> None:
+def test_to_entities_populates_metadata_columns() -> None:
     df = pd.DataFrame(
         {
             "code": ["UNRATE", "UNRATE"],
@@ -64,7 +64,7 @@ def test_build_entities_populates_metadata_columns() -> None:
             "description": ["Civilian unemployment rate", "Civilian unemployment rate"],
         }
     )
-    schema = OutputConfig(
+    schema = OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="fred"),
             Column(name="title", role=ColumnRole.TITLE),
@@ -72,7 +72,8 @@ def test_build_entities_populates_metadata_columns() -> None:
             Column(name="description", role=ColumnRole.METADATA),
         ]
     )
-    entries = schema.build_entities(df)
+    provenance = Provenance(source="t", source_description="t")
+    entries = Result(data=df, provenance=provenance, output_spec=schema).to_entities()
     assert len(entries) == 1
     assert entries[0].metadata == {
         "frequency": "M",
@@ -80,19 +81,20 @@ def test_build_entities_populates_metadata_columns() -> None:
     }
 
 
-def test_build_entities_requires_key_namespace() -> None:
-    df = pd.DataFrame({"code": ["A"], "title": ["Alpha"]})
-    schema = OutputConfig(
+def test_to_entities_requires_key_namespace() -> None:
+    schema = OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY),
             Column(name="title", role=ColumnRole.TITLE),
         ]
     )
-    with pytest.raises(ValueError, match="KEY column must declare namespace"):
-        schema.build_entities(df)
+    df = pd.DataFrame({"code": ["A"], "title": ["Alpha"]})
+    result = Result(data=df, provenance=Provenance(source="t", source_description="t"), output_spec=schema)
+    with pytest.raises(ValueError, match="must declare namespace"):
+        result.to_entities()
 
 
-def test_build_entities_allows_metadata_constant_per_entity_key() -> None:
+def test_to_entities_allows_metadata_constant_per_entity_key() -> None:
     df = pd.DataFrame(
         {
             "code": ["A", "A", "B"],
@@ -100,18 +102,18 @@ def test_build_entities_allows_metadata_constant_per_entity_key() -> None:
             "sector": ["Tech", "Tech", "Energy"],
         }
     )
-    schema = OutputConfig(
+    schema = OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="demo"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="sector", role=ColumnRole.METADATA),
         ]
     )
-    entries = schema.build_entities(df)
+    entries = Result(data=df, output_spec=schema).to_entities()
     assert {e.code: e.metadata["sector"] for e in entries} == {"A": "Tech", "B": "Energy"}
 
 
-def test_build_entities_rejects_varying_metadata_within_entity_key() -> None:
+def test_to_entities_rejects_varying_metadata_within_entity_key() -> None:
     df = pd.DataFrame(
         {
             "code": ["bench", "bench"],
@@ -119,20 +121,21 @@ def test_build_entities_rejects_varying_metadata_within_entity_key() -> None:
             "isin": ["US123", "US456"],
         }
     )
-    schema = OutputConfig(
+    schema = OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="demo"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="isin", role=ColumnRole.METADATA),
         ]
     )
-    with pytest.raises(ValueError, match="not entity metadata"):
-        schema.build_entities(df)
+    with pytest.raises(ValueError, match="conflicting values"):
+        Result(data=df, output_spec=schema).to_entities()
 
 
-def test_metadata_column_namespace_is_allowed_as_annotation() -> None:
-    column = Column(name="currency", role=ColumnRole.METADATA, namespace="iso_currency")
-    assert column.namespace == "iso_currency"
+def test_metadata_column_namespace_is_no_longer_allowed() -> None:
+    """namespace has no enforced behavior on METADATA; it is KEY-only now."""
+    with pytest.raises(ValidationError, match="namespace is only allowed on KEY"):
+        Column(name="currency", role=ColumnRole.METADATA, namespace="iso_currency")
 
 
 def test_field_values_scalar_and_missing() -> None:

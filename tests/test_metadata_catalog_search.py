@@ -8,7 +8,7 @@ import pandas as pd
 
 from parsimony.catalog import BM25Index, Catalog, Entity
 from parsimony.embedder import EmbedderInfo
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 
 class _StubEmbedder:
@@ -31,18 +31,18 @@ class _StubEmbedder:
         return EmbedderInfo(model="stub/hash-sha256", dim=self.DIM, normalize=True, package="test-stub")
 
 
-def _enumeration_schema() -> OutputConfig:
-    return OutputConfig(
+def _enumeration_schema() -> OutputSpec:
+    return OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="test_ns"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="description", role=ColumnRole.METADATA),
-            Column(name="unit", role=ColumnRole.METADATA, namespace="unit"),
+            Column(name="unit", role=ColumnRole.METADATA),
         ]
     )
 
 
-def test_build_entities_keeps_description_as_metadata() -> None:
+def test_to_entities_keeps_description_as_metadata() -> None:
     df = pd.DataFrame(
         {
             "code": ["A.1", "B.2"],
@@ -51,7 +51,7 @@ def test_build_entities_keeps_description_as_metadata() -> None:
             "unit": ["USD", "USD"],
         }
     )
-    entries = _enumeration_schema().build_entities(df)
+    entries = Result(data=df, output_spec=_enumeration_schema()).to_entities()
 
     by_code = {entry.code: entry for entry in entries}
     assert by_code["A.1"].metadata["description"] == "All outstanding debt held by the public."
@@ -69,7 +69,7 @@ def test_metadata_is_searchable_only_when_index_targets_it() -> None:
             "unit": ["USD"] * 10 + ["MWh"],
         }
     )
-    entries = _enumeration_schema().build_entities(df)
+    entries = Result(data=df, output_spec=_enumeration_schema()).to_entities()
 
     title_only = Catalog(name="test_ns")
     title_only.set_entities(entries)

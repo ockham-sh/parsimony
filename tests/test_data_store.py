@@ -6,10 +6,10 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, loader
-from parsimony.result import Column, ColumnRole, OutputConfig, Provenance, Result
-from parsimony.stores import InMemoryDataStore, LoadResult, _data_from_result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
+from parsimony.stores import InMemoryDataStore, LoadResult
 
-LOAD_SCHEMA = OutputConfig(
+LOAD_SCHEMA = OutputSpec(
     columns=[
         Column(name="code_col", role=ColumnRole.KEY, namespace="test_ns"),
         Column(name="obs", role=ColumnRole.DATA),
@@ -23,22 +23,20 @@ def demo_loader(q: str = "x") -> pd.DataFrame:
     return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
 
 
-def test_data_from_result_extracts_data_columns_only() -> None:
+def test_result_entities_extracts_data_columns_only() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
-    rows = _data_from_result(table)
-    assert len(rows) == 1
-    ns, code, df = rows[0]
-    assert ns == "test_ns"
-    assert code == "X"
-    assert list(df.columns) == ["obs"]
-    assert df["obs"].iloc[0] == 42.0
+    entities = table.entities
+    assert len(entities) == 1
+    entity_result = entities["test_ns", "X"]
+    assert list(entity_result.data.columns) == ["obs"]
+    assert entity_result.data["obs"].iloc[0] == 42.0
 
 
-def test_data_from_result_groups_by_key() -> None:
+def test_result_entities_groups_by_key() -> None:
     table = Result(
         data=pd.DataFrame(
             {
@@ -47,29 +45,24 @@ def test_data_from_result_groups_by_key() -> None:
             }
         ),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
-    rows = _data_from_result(table)
-    assert len(rows) == 2
-    by_code = {code: df for _, code, df in rows}
-    assert len(by_code["A"]) == 2
-    assert len(by_code["B"]) == 1
-    assert list(by_code["A"].columns) == ["obs"]
+    entities = table.entities
+    assert len(entities) == 2
+    assert len(entities["test_ns", "A"].data) == 2
+    assert len(entities["test_ns", "B"].data) == 1
+    assert list(entities["test_ns", "A"].data.columns) == ["obs"]
 
 
-def test_data_from_result_requires_key_namespace() -> None:
-    table = Result(
-        data=pd.DataFrame({"code_col": ["a"], "obs": [1.0]}),
-        provenance=Provenance(source="t", source_description="t"),
-        output_schema=OutputConfig(
-            columns=[
-                Column(name="code_col", role=ColumnRole.KEY),
-                Column(name="obs", role=ColumnRole.DATA),
-            ]
-        ),
+def test_loader_requires_key_namespace() -> None:
+    unnamespaced = OutputSpec(
+        columns=[
+            Column(name="code_col", role=ColumnRole.KEY),
+            Column(name="obs", role=ColumnRole.DATA),
+        ]
     )
-    with pytest.raises(ValueError, match="namespace"):
-        _data_from_result(table)
+    with pytest.raises(ValueError, match="non-empty namespace"):
+        loader(output=unnamespaced)(pd.DataFrame)
 
 
 def test_load_result_skips_existing_keys() -> None:
@@ -79,7 +72,7 @@ def test_load_result_skips_existing_keys() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     r = store.load_result(table, force=False)
     assert r.total == 2
@@ -98,7 +91,7 @@ def test_load_result_force_upserts_existing() -> None:
     table = Result(
         data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t", source_description="t"),
-        output_schema=LOAD_SCHEMA,
+        output_spec=LOAD_SCHEMA,
     )
     r = store.load_result(table, force=True)
     assert r.total == 1

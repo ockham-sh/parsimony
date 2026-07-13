@@ -1,10 +1,10 @@
 # Core concepts
 
-Parsimony is a connector framework for financial data — typed fetch and a hybrid-search
-catalog. This page gives you the mental model that ties the library together: what a
-connector is, how the framework wraps its output, how connectors compose and bind, how
-plugins are discovered, and how the catalog turns discovered entities into a searchable
-index. Once these pieces click, the rest of the docs are just detail.
+Parsimony is a connector framework for financial data, built to do as little as possible —
+see [the index page](../index.md) for why. This page gives you the mental model that ties the
+library together: what a connector is, how the framework wraps its output, how connectors
+compose and bind, how plugins are discovered, and how the catalog turns discovered entities
+into a searchable index. Once these pieces click, the rest of the docs are just detail.
 
 Parsimony has two pillars:
 
@@ -52,9 +52,9 @@ Three rules are worth internalizing now, because everything else follows from th
 
 !!! note "Why return raw data?"
     Keeping connectors to "fetch and return a DataFrame" makes them trivial to write, test,
-    and reason about. Provenance, schema coercion, and the typed-error envelope are
-    cross-cutting concerns the framework owns once, so every connector gets them for free and
-    none of them can drift between providers.
+    and reason about. Provenance and the typed-error envelope are cross-cutting concerns the
+    framework owns once, so every connector gets them for free and none of them can drift
+    between providers.
 
 ## The framework wraps the return value into a Result
 
@@ -62,7 +62,7 @@ When you call a connector, the framework calls your function, then wraps the raw
 into a single [`Result`](../connectors/results.md) and attaches a
 [`Provenance`](../connectors/results.md) record describing the fetch. There is one result
 type: when `data` is a DataFrame the result is *tabular* (`result.is_tabular`) and may carry
-an `output_schema`; any other payload simply lands on `result.data`:
+an `output_spec`; any other payload simply lands on `result.data`:
 
 ```text
 connector(**kwargs)
@@ -71,8 +71,8 @@ connector(**kwargs)
    your fn ──returns──> raw DataFrame / Series / scalar / dict
         │
         ▼
-   framework wraps:
-     DataFrame/Series ──> Result(data=<frame>, output_schema=…)   # is_tabular
+   framework wraps, attaching output_spec unchanged, never applied to the data:
+     DataFrame/Series ──> Result(data=<frame>, output_spec=…)   # is_tabular
      scalar/dict      ──> Result(data=…)
    and builds Provenance(source, source_description, params, fetched_at)
 ```
@@ -82,11 +82,11 @@ connector `name` as `source`, the description as `source_description`, a UTC `fe
 timestamp, and the call-time `params`. Connector authors put provider facts in returned
 DataFrame columns, not in provenance.
 
-If you attach an [`OutputConfig`](../connectors/results.md) (via `output=`), the framework
-applies that declarative schema to a DataFrame/Series return — coercing dtypes and assigning
-column roles. A schema or coercion `ValueError` during wrapping surfaces as a typed
-[`ParseError`](../connectors/errors.md), so the caller always sees Parsimony's
-[typed, agent-facing error taxonomy](../connectors/errors.md) rather than a raw pandas error.
+If you attach an [`OutputSpec`](../connectors/results.md) (via `output=`), the framework
+attaches it to the result verbatim — it never coerces a dtype, renames, reorders, or drops a
+column. `OutputSpec` is a passive declaration of column roles; any type conversion your data
+needs (parsing a date string, casting to numeric) is the connector's job, in the function body,
+before you return.
 
 ## Binding fixes parameters and hides secrets
 
@@ -140,8 +140,9 @@ A **loader** fetches observations — the actual values for a series. An **enume
 discovers entities — the catalog of *what is fetchable*. The shape of their output schemas
 encodes that difference: a loader produces values keyed by identity; an enumerator produces
 titled entity records with no data columns. An enumerator must also annotate a
-`pd.DataFrame`/`Series` return (not `list[Entity]`), and its returned columns are checked
-against the declared schema at call time.
+`pd.DataFrame`/`Series` return (not `list[Entity]`); that annotation is checked at decoration
+time, but the returned frame's actual columns are only checked later, when something projects
+entities from it (`result.to_entities()`).
 
 ## Collections compose connectors
 
@@ -204,7 +205,8 @@ you compose loaded bundles with `+` exactly like any other collection.
 Where connectors *fetch*, the [`Catalog`](../catalog/index.md) helps you *discover*. A catalog
 is a portable, in-memory index over normalized [`Entity`](../catalog/entities.md) records,
 with pluggable per-field [indexes](../catalog/indexes.md) and structured plus broad search.
-Its lifecycle is a fixed sequence:
+(See [Why entities](../index.md#why-entities) for the reasoning behind that shape.) Its
+lifecycle is a fixed sequence:
 
 ```text
 Catalog(name, indexes=…)        # construct
@@ -245,29 +247,30 @@ Loaders and enumerators are the bridges between the two pillars. An enumerator's
 a catalog; a loader's output feeds a data store:
 
 ```text
-enumerator ──DataFrame──> OutputConfig.build_entities ──> [Entity, …] ──> Catalog
-   (discover what is fetchable)                                            (search it)
+enumerator ──DataFrame──> result.to_entities() ──> [Entity, …] ──> Catalog
+   (discover what is fetchable)                                    (search it)
 
 loader     ──DataFrame──> InMemoryDataStore.load_result ──> stored DATA columns
    (fetch the values)                                        keyed by (namespace, code)
 ```
 
-- An **enumerator** returns a discovery frame. `OutputConfig.build_entities` projects that
+- An **enumerator** returns a discovery frame. `result.to_entities()` projects that
   frame into `Entity` records using the schema's column roles — the `KEY` column's namespace
   plus the `TITLE` and `METADATA` columns. Those entities go into a `Catalog` via
   `set_entities`, and after `build()` you can search them.
 - A **loader** returns an observation frame. A [data store](../catalog/data-store.md) extracts
-  the `DATA` columns and persists one DataFrame per distinct entity, keyed by
-  `(namespace, code)`. The store's `load_result(table, force=…)` returns a `LoadResult` tally
-  of `total` / `loaded` / `skipped` / `errors`:
+  the `DATA` columns (via the same underlying projection, `result.entities`) and persists one
+  DataFrame per distinct entity, keyed by `(namespace, code)`. The store's
+  `load_result(table, force=…)` returns a `LoadResult` tally of
+  `total` / `loaded` / `skipped` / `errors`:
 
 ```python
 import pandas as pd
-from parsimony import Column, ColumnRole, InMemoryDataStore, OutputConfig, loader
+from parsimony import Column, ColumnRole, InMemoryDataStore, OutputSpec, loader
 
-LOAD = OutputConfig(columns=[
+LOAD = OutputSpec(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-    Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+    Column(name="value", role=ColumnRole.DATA),
 ])
 
 
@@ -311,7 +314,7 @@ observations refer to the same thing.
 
 !!! tip "Import paths"
     The framework essentials — `connector`, `loader`, `enumerator`, `Connector`, `Connectors`,
-    `Result`, `OutputConfig`, `Column`, `ColumnRole`, `Provenance`, the error types,
+    `Result`, `OutputSpec`, `Column`, `ColumnRole`, `Provenance`, the error types,
     `Catalog`, `Entity`, `BM25Index`, `InMemoryDataStore`, `discover` — are importable from the
     top-level `parsimony` package. The catalog names are lazy re-exports, so for catalog-heavy
     code `from parsimony.catalog import Catalog, Entity, BM25Index, …` is the clearest

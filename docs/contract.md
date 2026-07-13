@@ -50,7 +50,7 @@ Pick the decorator that matches the verb:
 | `@enumerator(output=...)` | exactly one namespaced `KEY`, ≥1 `TITLE`, **no** `DATA`; `pd.DataFrame` return | Catalog entity discovery |
 | `@loader(output=...)` | exactly one namespaced `KEY`, ≥1 `DATA`, **no** `TITLE`/`METADATA` | Observation loading into a data store |
 
-Column roles (`KEY`, `TITLE`, `DATA`, `METADATA`) and `OutputConfig` are documented in
+Column roles (`KEY`, `TITLE`, `DATA`, `METADATA`) and `OutputSpec` are documented in
 [Results and output schemas](connectors/results.md).
 
 ## Credentials

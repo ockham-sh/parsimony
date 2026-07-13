@@ -93,7 +93,7 @@ subclass — a connector is a `def` plus metadata.
 import pandas as pd
 
 from parsimony.connector import connector, enumerator, Connectors
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 ```
 
 Three rules govern every connector you write:
@@ -105,14 +105,15 @@ Three rules govern every connector you write:
   pydantic `BaseModel`).
 - **Return raw data.** A connector returns a `DataFrame`, `Series`, scalar, or `dict`; the
   framework wraps it in a [`Result`](../connectors/results.md) with framework-built
-  [`Provenance`](../connectors/results.md). Returning a `Result` or a `(data, props)` tuple
+  [`Provenance`](../connectors/results.md), attaching `output=` verbatim as `result.output_spec`
+  — never coercing dtypes or touching a column. Returning a `Result` or a `(data, props)` tuple
   raises `TypeError`.
 
 Pick the decorator that matches the verb:
 
 | Decorator | Output contract | Feeds |
 |---|---|---|
-| `@connector` | optional `output=`; merges unmapped columns into DATA | anything |
+| `@connector` | optional `output=`, attached unchanged, never applied to the data | anything |
 | `@loader(output=...)` | exactly one namespaced KEY, ≥1 DATA, no TITLE/METADATA | a [data store](../catalog/data-store.md) |
 | `@enumerator(output=...)` | exactly one namespaced KEY, ≥1 TITLE, no DATA; must annotate a `pd.DataFrame` return | a [catalog](../catalog/index.md) |
 
@@ -214,7 +215,7 @@ normalize_namespace("acme_series")  # -> "acme_series" (raises if not snake_case
 `code_token` lowercases, collapses separators to single underscores, drops disallowed
 characters, and prefixes a leading-digit token with `v_`. `normalize_namespace` enforces
 the `^[a-z][a-z0-9_]*$` pattern and raises `ValueError` on anything else. Declare the KEY
-column's namespace on your loader/enumerator `OutputConfig`, and tie a parameter to a
+column's namespace on your loader/enumerator `OutputSpec`, and tie a parameter to a
 namespace for LLM cards with an `Annotated[str, "ns:<namespace>"]` hint. See
 [entities](../catalog/entities.md) for how these flow into a catalog.
 
@@ -254,17 +255,17 @@ network is involved — the bodies return synthetic frames).
 import pandas as pd
 
 from parsimony.connector import connector, enumerator, Connectors
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="key", role=ColumnRole.KEY, namespace="acme"),
-        Column(name="date", dtype="datetime", role=ColumnRole.DATA),
-        Column(name="value", dtype="numeric", role=ColumnRole.DATA),
+        Column(name="date", role=ColumnRole.DATA),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
-ENUM_OUTPUT = OutputConfig(
+ENUM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="title", role=ColumnRole.TITLE),
@@ -275,13 +276,15 @@ ENUM_OUTPUT = OutputConfig(
 @connector(output=FETCH_OUTPUT, tags=["acme", "tool"], secrets=("api_key",))
 def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch a series of observations for the given series_id from the ACME API."""
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {
             "key": [series_id, series_id],
             "date": ["2024-01-01", "2024-02-01"],
             "value": [1.0, 2.0],
         }
     )
+    df["date"] = pd.to_datetime(df["date"])
+    return df
 
 
 @enumerator(output=ENUM_OUTPUT, tags=["acme"])
@@ -299,8 +302,9 @@ Two details worth noting:
   `CONNECTORS.bind(api_key=...)` (binding is scoped per-connector — only connectors that
   actually expose `api_key` receive it).
 - `acme_enumerate` is an enumerator, so its schema has a namespaced KEY and a TITLE, no
-  DATA columns, and the function annotates a `pd.DataFrame` return. The enumerator
-  validates its returned columns against the declared schema at call time.
+  DATA columns, and the function annotates a `pd.DataFrame` return. That shape is checked
+  at decoration time; the returned frame's actual columns are only checked later, if and
+  when something calls `result.to_entities()` on its output.
 
 ## Validate before you publish
 

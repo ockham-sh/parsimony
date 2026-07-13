@@ -54,12 +54,12 @@ or dict unchanged.
 
 ```python
 from parsimony.connector import connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-OUTPUT = OutputConfig(
+OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -79,7 +79,7 @@ def fetch(series_id: str, api_key: str) -> pd.DataFrame:
 | --- | --- | --- |
 | `name` | `fn.__name__` | Connector identity; becomes `provenance.source`. |
 | `description` | stripped `fn.__doc__` | **Required.** Human/agent-facing summary. |
-| `output` | `None` | An [`OutputConfig`](results.md) schema applied to a DataFrame/Series return. |
+| `output` | `None` | An [`OutputSpec`](results.md) — a passive declaration of column roles attached to the result, never applied to the data. |
 | `tags` | `()` | Free-form labels (`loader`/`enumerator` set them automatically). |
 | `properties` | `{}` | Read-only metadata you can filter the [collection](calling-binding-composing.md) on. |
 | `secrets` | `()` | Parameter names stripped from provenance; validated against the signature. |
@@ -140,14 +140,15 @@ dict. The framework builds the output envelope (the `Result` and its
 !!! warning "Returning the wrong shape raises `TypeError`"
     Returning a `Result`, or a `(data, properties)` tuple, raises `TypeError`
     from inside the call — put provider facts in DataFrame columns and let the
-    framework wrap them. When an `output` schema is set, a schema/coercion
-    `ValueError` during wrapping is re-raised as a typed [`ParseError`](errors.md).
+    framework wrap them.
 
 Why raw data? It keeps the connector author's job to one thing — fetch and shape
-the data — while the framework owns provenance, secret stripping, and the
-declarative [output schema](results.md). It also means a connector cannot
+the data — while the framework owns provenance, secret stripping, and attaching
+the declarative [output schema](results.md). It also means a connector cannot
 fabricate provenance: `Provenance.source`, `fetched_at`, and `params` are always
-framework-built.
+framework-built. The `output` schema, if set, is attached to the result as-is —
+the framework never coerces, renames, reorders, or drops a column based on it; any
+type conversion the data needs is your connector's job, in the function body.
 
 ### Secrets are declared, not exposed
 
@@ -167,12 +168,12 @@ installed — no network, no plugins, no optional extras.
 ```python
 import pandas as pd
 from parsimony.connector import Connectors, connector
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 
-OUTPUT = OutputConfig(
+OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="demo"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -181,7 +182,7 @@ OUTPUT = OutputConfig(
 def demo_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch demo observations for a series id."""
     # A real connector would call an HTTP API here using api_key.
-    return pd.DataFrame({"date": ["2020-01-01", "2020-02-01"], "value": ["1", "2"]})
+    return pd.DataFrame({"date": ["2020-01-01", "2020-02-01"], "value": [1.0, 2.0]})
 
 
 # Bind the secret once; it disappears from the call surface and provenance.
@@ -193,7 +194,7 @@ result = bundle["demo_fetch"](series_id="X1")
 
 print(result.provenance.source)             # demo_fetch
 print(result.provenance.params)             # {'series_id': 'X1'} — api_key stripped
-print(result.data["value"].tolist())        # [1, 2] — coerced to numeric
+print(result.data["value"].tolist())        # [1.0, 2.0]
 ```
 
 A few things to notice:
@@ -203,8 +204,9 @@ A few things to notice:
   **name**, not an integer index.
 - `bind` returns a *new* connector — `Connector` is frozen — with `api_key`
   fixed and removed from the public signature.
-- The `OutputConfig` coerced the string `value` column to numeric because the
-  column declared `dtype="numeric"`.
+- `result.data["value"]` is exactly the `float` values the function returned —
+  `OutputSpec` declares `value` as `DATA` but never touches the values
+  themselves.
 
 You merge bundles with the `+` operator (`bundle_a + bundle_b`); there is no
 `.merge` method. The collection also gives you `filter`, `search`,
@@ -217,7 +219,7 @@ collection-wide `bind`, and the `describe()` / `to_llm()` prompt projections.
 | [Defining connectors](defining-connectors.md) | The `@connector` decorator in depth: defaults, validation timings, namespace hints, and the `describe()` / `to_llm()` projections. |
 | [Loaders and enumerators](loaders-and-enumerators.md) | The two stricter verbs — fetching observation values vs discovering entities — and their output-schema contracts. |
 | [Calling, binding, and composing](calling-binding-composing.md) | Invoking connectors, `bind`, and the immutable `Connectors` collection. |
-| [Results and output schemas](results.md) | `Result` (tabular when `data` is a DataFrame), `OutputConfig` / `Column` / `ColumnRole`, `Provenance`, and the dtype coercion rules. |
+| [Results and output schemas](results.md) | `Result` (tabular when `data` is a DataFrame), `OutputSpec` / `Column` / `ColumnRole`, `Provenance`, and the entity projection. |
 | [Errors](errors.md) | The typed, agent-facing exception taxonomy connector authors raise. |
 | [HTTP transport](http-transport.md) | The HTTP layer (`HttpClient`, retry policy, redaction) that connector authors build on. |
 

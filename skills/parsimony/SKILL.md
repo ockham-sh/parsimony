@@ -33,12 +33,12 @@ from parsimony import discover
 connectors = discover.load_all()                 # every installed parsimony-* connector, as one bundle
 result = connectors["fred_fetch"](series_id="UNRATE")
 
-result.data                  # the payload — a pandas DataFrame for a series fetch
+result.raw                   # the payload — a pandas DataFrame for a series fetch
 result.provenance.source     # 'fred_fetch' — every result records where it came from
 result.to_llm()              # a bounded, schema-aware text preview to drop into context
 ```
 
-- `result.data` is the payload (a `DataFrame` for a tabular fetch; some connectors return other
+- `result.raw` is the payload (a `DataFrame` for a tabular fetch; some connectors return other
   shapes). `result.provenance` carries `source`, `params`, and `fetched_at`. Prefer
   `result.to_llm()` for a governed, length-bounded preview rather than dumping the raw frame.
 - `discover.load_all()` is forgiving (skips broken/uninstalled plugins); `discover.load("fred")`
@@ -93,7 +93,7 @@ then read the returned result to pick the id:
 ```python
 hits = connectors["sdmx_datasets_search"](query="euro area unemployment rate", limit=5)
 print(hits.to_llm())         # bounded preview: the result's columns + first rows
-ids = hits.data              # the full result frame; columns vary by connector — read them, don't assume
+ids = hits.raw               # the full result frame; columns vary by connector — read them, don't assume
 ```
 
 A fetch parameter shown with a `namespace=` hint in `.describe()` means its legal values come

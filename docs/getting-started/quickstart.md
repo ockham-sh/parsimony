@@ -17,7 +17,7 @@ pip install parsimony-core
 
 ## 1. Define and call a connector
 
-A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves. When `Result.data` is a DataFrame the result is *tabular* (`result.is_tabular`).
+A connector is a small **synchronous** function plus metadata. The function's parameters *are* the connector's call surface, and the function returns **raw data** — a `pandas` DataFrame, Series, scalar, or dict. The framework wraps that raw value into a [`Result`](../connectors/results.md) and attaches framework-built [`Provenance`](../connectors/results.md); connectors never construct those carriers themselves. When `Result.raw` is a DataFrame the result is *tabular* (`result.is_tabular`).
 
 The `@connector` decorator turns a plain `def` into a frozen `Connector`. When you attach an [`OutputSpec`](../connectors/results.md), it is attached to the result verbatim as `result.output_spec` — the framework never inspects, coerces, renames, or reorders the DataFrame you return; it just tags each declared column with a role for later consumers (a catalog, a data store) to read.
 
@@ -53,9 +53,9 @@ def daily_close(symbol: str) -> pd.DataFrame:
 result = daily_close(symbol="ACME")
 
 assert isinstance(result, Result)
-assert result.is_tabular                   # data is a DataFrame
-print(result.data)                         # exactly what the function returned
-print(result.data["close"].dtype)          # float64 — cast in daily_close, not by the schema
+assert result.is_tabular                   # raw is a DataFrame
+print(result.raw)                          # exactly what the function returned
+print(result.raw["close"].dtype)           # float64 — cast in daily_close, not by the schema
 print(result.provenance.source)            # "daily_close" (defaults to the function name)
 print(result.provenance.params)            # {"symbol": "ACME"}
 print([c.name for c in result.columns if c.role == ColumnRole.DATA])  # ["close"]
@@ -110,7 +110,7 @@ print(list(wired["fetch_series"].exposed_signature.parameters))  # ["series_id"]
 
 # Invoke by name.
 titles = wired["search_titles"](query="GDP")
-print(len(titles.data))  # 2
+print(len(titles.raw))  # 2
 
 series = wired["fetch_series"](series_id="UNRATE")
 print(series.provenance.params)  # {"series_id": "UNRATE"} — api_key is stripped

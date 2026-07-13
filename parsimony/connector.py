@@ -277,7 +277,7 @@ class Connector:
             params=dict(safe_call_params),
             properties={},
         )
-        return Result(data=raw, provenance=provenance, output_spec=self.output_spec)
+        return Result(raw=raw, provenance=provenance, output_spec=self.output_spec)
 
     def _bind_call(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
         exposed = self.exposed_signature

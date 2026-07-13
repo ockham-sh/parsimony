@@ -61,8 +61,8 @@ Three rules are worth internalizing now, because everything else follows from th
 When you call a connector, the framework calls your function, then wraps the raw return value
 into a single [`Result`](../connectors/results.md) and attaches a
 [`Provenance`](../connectors/results.md) record describing the fetch. There is one result
-type: when `data` is a DataFrame the result is *tabular* (`result.is_tabular`) and may carry
-an `output_spec`; any other payload simply lands on `result.data`:
+type: when `raw` is a DataFrame the result is *tabular* (`result.is_tabular`) and may carry
+an `output_spec`; any other payload simply lands on `result.raw`:
 
 ```text
 connector(**kwargs)
@@ -72,8 +72,8 @@ connector(**kwargs)
         │
         ▼
    framework wraps, attaching output_spec unchanged, never applied to the data:
-     DataFrame/Series ──> Result(data=<frame>, output_spec=…)   # is_tabular
-     scalar/dict      ──> Result(data=…)
+     DataFrame/Series ──> Result(raw=<frame>, output_spec=…)   # is_tabular
+     scalar/dict      ──> Result(raw=…)
    and builds Provenance(source, source_description, params, fetched_at)
 ```
 
@@ -142,7 +142,7 @@ encodes that difference: a loader produces values keyed by identity; an enumerat
 titled entity records with no data columns. An enumerator must also annotate a
 `pd.DataFrame`/`Series` return (not `list[Entity]`); that annotation is checked at decoration
 time, but the returned frame's actual columns are only checked later, when something projects
-entities from it (`result.to_entities()`).
+entities from it (`result.entities`).
 
 ## Collections compose connectors
 
@@ -159,7 +159,7 @@ print(bundle.names())            # -> ['demo_search', 'keyed']  (sorted)
 print("demo_search" in bundle)   # -> True
 
 result = bundle["demo_search"](query="cpi")
-print(len(result.data))          # -> 2
+print(len(result.raw))           # -> 2
 ```
 
 Construction (and `+`) raises `ValueError` on duplicate connector names. `__getitem__` looks
@@ -247,19 +247,19 @@ Loaders and enumerators are the bridges between the two pillars. An enumerator's
 a catalog; a loader's output feeds a data store:
 
 ```text
-enumerator ──DataFrame──> result.to_entities() ──> [Entity, …] ──> Catalog
-   (discover what is fetchable)                                    (search it)
+enumerator ──DataFrame──> result.entities ──> {EntityRef: Entity, …} ──> Catalog
+   (discover what is fetchable)                                          (search it)
 
 loader     ──DataFrame──> InMemoryDataStore.load_result ──> stored DATA columns
    (fetch the values)                                        keyed by (namespace, code)
 ```
 
-- An **enumerator** returns a discovery frame. `result.to_entities()` projects that
+- An **enumerator** returns a discovery frame. `result.entities` projects that
   frame into `Entity` records using the schema's column roles — the `KEY` column's namespace
   plus the `TITLE` and `METADATA` columns. Those entities go into a `Catalog` via
-  `set_entities`, and after `build()` you can search them.
+  `set_entities(result.entities.values())`, and after `build()` you can search them.
 - A **loader** returns an observation frame. A [data store](../catalog/data-store.md) extracts
-  the `DATA` columns (via the same underlying projection, `result.entities`) and persists one
+  the `DATA` columns (via the parallel projection, `result.data`) and persists one
   DataFrame per distinct entity, keyed by `(namespace, code)`. The store's
   `load_result(table, force=…)` returns a `LoadResult` tally of
   `total` / `loaded` / `skipped` / `errors`:

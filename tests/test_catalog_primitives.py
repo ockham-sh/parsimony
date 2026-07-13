@@ -27,23 +27,23 @@ def _sample_output() -> OutputSpec:
     )
 
 
-def test_to_entities_from_tabular_result() -> None:
+def test_entities_from_tabular_result() -> None:
     output = _sample_output()
     result = Result(
-        data=pd.DataFrame({"code": ["a"], "title": ["Alpha"], "topic": ["prices"]}),
+        raw=pd.DataFrame({"code": ["a"], "title": ["Alpha"], "topic": ["prices"]}),
         output_spec=output,
     )
-    entities = result.to_entities()
+    entities = list(result.entities.values())
     assert len(entities) == 1
     assert entities[0].namespace == "demo"
     assert entities[0].code == "a"
 
 
-def test_to_entities_rejects_non_tabular_data() -> None:
+def test_entities_rejects_non_tabular_data() -> None:
     output = _sample_output()
-    result = Result(data=[Entity(namespace="demo", code="a", title="Alpha")], output_spec=output)
+    result = Result(raw=[Entity(namespace="demo", code="a", title="Alpha")], output_spec=output)
     with pytest.raises(TypeError, match="tabular"):
-        result.to_entities()
+        _ = result.entities
 
 
 def test_discovery_indexes_switch_at_threshold() -> None:

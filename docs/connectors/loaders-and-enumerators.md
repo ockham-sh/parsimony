@@ -14,7 +14,7 @@ from parsimony import loader, enumerator
 | You are fetching… | Use | Output shape | Consumed by |
 |---|---|---|---|
 | Observation/value data (a time series, prices, a panel) | `@loader` | exactly one namespaced KEY + ≥1 DATA, no TITLE/METADATA | [`InMemoryDataStore.load_result`](../catalog/data-store.md) |
-| Discoverable entities (what series exist, their titles) | `@enumerator` | exactly one namespaced KEY + ≥1 TITLE, no DATA | [`Catalog`](../catalog/search.md) via [`Result.to_entities()`](../catalog/entities.md) |
+| Discoverable entities (what series exist, their titles) | `@enumerator` | exactly one namespaced KEY + ≥1 TITLE, no DATA | [`Catalog`](../catalog/search.md) via [`Result.entities`](../catalog/entities.md) |
 | Anything else (scalars, dicts, ad-hoc frames) | `@connector` | free-form, optional schema | you, directly |
 
 The split is structural, not advisory: an enumerator literally cannot declare a DATA column, and a loader literally cannot declare a TITLE column. That guarantee is what lets the data store and the catalog trust the shape of what they receive.
@@ -47,10 +47,10 @@ def load_observations(series_id: str) -> pd.DataFrame:
 
 result = load_observations(series_id="batch")
 assert load_observations.tags == ("loader", "demo")
-assert list(result.data.columns) == ["series_code", "date", "value"]
+assert list(result.raw.columns) == ["series_code", "date", "value"]
 ```
 
-`@loader` prepends `"loader"` to your tags, so `load_observations.tags == ("loader", "demo")`. The function still returns **raw data** — a DataFrame — and the framework wraps it into a [`Result`](results.md) (a tabular one, since `data` is a DataFrame) and attaches framework-built [`Provenance`](results.md). You never construct a `Result` yourself.
+`@loader` prepends `"loader"` to your tags, so `load_observations.tags == ("loader", "demo")`. The function still returns **raw data** — a DataFrame — and the framework wraps it into a [`Result`](results.md) (a tabular one, since `raw` is a DataFrame) and attaches framework-built [`Provenance`](results.md). You never construct a `Result` yourself.
 
 !!! tip "OutputSpec never coerces — the connector body does"
     Note `date` is parsed with `pd.to_datetime` and `value` is a native float **in the function body**, not via the schema. `OutputSpec` only declares roles; it has no dtype-coercion mechanism. If a provider hands you string-typed dates or numbers, convert them yourself before returning — see the [dtype coercion note](results.md#column).
@@ -74,7 +74,7 @@ The KEY namespace is mandatory because the data store derives each entity's iden
 
 ### Feeding a data store
 
-A loader's output is shaped precisely so [`InMemoryDataStore.load_result`](../catalog/data-store.md) can persist it. The store delegates to [`Result.entities`](results.md#entity-projection), which groups rows by the KEY value, derives the namespace from the KEY column's `namespace=`, and keeps the DATA columns per entity:
+A loader's output is shaped precisely so [`InMemoryDataStore.load_result`](../catalog/data-store.md) can persist it. The store delegates to [`Result.data`](results.md#entity-projection), which groups rows by the KEY value, derives the namespace from the KEY column's `namespace=`, and keeps the DATA columns per entity:
 
 ```python
 import pandas as pd
@@ -133,7 +133,7 @@ def list_series(prefix: str = "") -> pd.DataFrame:
     })
 
 result = list_series(prefix="g")
-assert list(result.data.columns) == ["code", "title", "frequency"]
+assert list(result.raw.columns) == ["code", "title", "frequency"]
 ```
 
 `@enumerator` prepends `"enumerator"` to your tags (so `list_series.tags == ("enumerator",)`) and sets `role="enumerator"` on the returned :class:`~parsimony.connector.Connector`. As with loaders, the function returns a **raw DataFrame**; the framework wraps it.
@@ -174,11 +174,11 @@ The check has two stages. First, the annotation must mention `DataFrame` or `Ser
 `ValueError("<name>: enumerator must not return list[Entity]")`. Either way the outcome is the same rule: an enumerator returns the raw discovery frame; the framework — not your function — turns it into entities. Returning `list[Entity]` directly is forbidden.
 
 !!! note "No column-shape check at call time"
-    `OutputSpec` is a passive declaration — the framework never inspects the returned frame's columns against it at call time, and never drops or reorders anything you return. If a declared column is missing from the data, that surfaces later, as a `ValueError` from [entity projection](results.md#requirements-and-errors) (`Result.entities` / `Result.to_entities()`) — not from the enumerator call itself. Keep the returned frame's actual columns consistent with what you declared; nothing enforces it for you until something projects entities from it.
+    `OutputSpec` is a passive declaration — the framework never inspects the returned frame's columns against it at call time, and never drops or reorders anything you return. If a declared column is missing from the data, that surfaces later, as a `ValueError` from [entity projection](results.md#requirements-and-errors) (`Result.entities`) — not from the enumerator call itself. Keep the returned frame's actual columns consistent with what you declared; nothing enforces it for you until something projects entities from it.
 
 ### Feeding a catalog
 
-An enumerator's output is shaped to become [`Entity`](../catalog/entities.md) records directly. Call [`Result.to_entities()`](results.md#to_entities) on the returned result:
+An enumerator's output is shaped to become [`Entity`](../catalog/entities.md) records directly. Access [`Result.entities`](results.md#entity-projection) on the returned result:
 
 ```python
 import pandas as pd
@@ -201,14 +201,14 @@ def list_series() -> pd.DataFrame:
     })
 
 result = list_series()
-entities = result.to_entities()
-for e in entities:
+entities = result.entities
+for e in entities.values():
     print(e.namespace, e.code, e.title, e.metadata)
 # demo_series unrate Unemployment {'frequency': 'monthly'}
 # demo_series gdpc1 Real GDP {'frequency': 'quarterly'}
 ```
 
-`to_entities()` groups rows by the KEY value, uses the KEY column's `namespace=` as the entity namespace, the TITLE column for `title`, and METADATA columns (including a `"*"` wildcard for "every column not otherwise claimed") for `metadata`. Those `Entity` records are exactly what you load into a `Catalog`. See [Entities](../catalog/entities.md) for the full mapping rules and the "metadata varies within key" error.
+`entities` groups rows by the KEY value, uses the KEY column's `namespace=` as the entity namespace, the TITLE column for `title`, and METADATA columns (including a `"*"` wildcard for "every column not otherwise claimed") for `metadata`. Those `Entity` records — via `entities.values()` — are exactly what you load into a `Catalog`. See [Entities](../catalog/entities.md) for the full mapping rules and the "metadata varies within key" error.
 
 ### Per-row namespaces with `__row__`
 
@@ -235,13 +235,13 @@ def discover_mixed() -> pd.DataFrame:
     })
 
 result = discover_mixed()
-for e in result.to_entities():
+for e in result.entities.values():
     print(e.namespace, e.code)
 # fred_series unrate
 # stock_ticker aapl
 ```
 
-If you set `namespace="__row__"` but omit the `entity_namespace` METADATA column, decoration fails with `Enumerator with namespace="__row__" requires entity_namespace METADATA column`. At entity-projection time, `to_entities()` reads each row's namespace from that column (and each must be valid lowercase snake_case, like any [namespace](../catalog/entities.md)).
+If you set `namespace="__row__"` but omit the `entity_namespace` METADATA column, decoration fails with `Enumerator with namespace="__row__" requires entity_namespace METADATA column`. At entity-projection time, `entities` reads each row's namespace from that column (and each must be valid lowercase snake_case, like any [namespace](../catalog/entities.md)).
 
 ## Validation timing summary
 
@@ -255,7 +255,7 @@ Knowing *when* each rule fires saves debugging time — most failures surface at
 | `secrets=` names match real parameters | decoration | `ValueError` |
 | Function must be synchronous | decoration | `TypeError` |
 | Connector returned `Result`/tuple | every call | `TypeError` |
-| KEY namespace present, declared columns exist in data | entity projection (`result.entities` / `result.to_entities()`) | `ValueError` |
+| KEY namespace present, declared columns exist in data | entity projection (`result.entities` / `result.data`) | `ValueError` |
 
 Everything `@connector` does — [binding](calling-binding-composing.md), `secrets=` stripping from provenance, [`Connectors`](calling-binding-composing.md) composition with `+`, `describe()` / `to_llm()` cards — applies unchanged to loaders and enumerators. The verbs only add the schema contract on top.
 

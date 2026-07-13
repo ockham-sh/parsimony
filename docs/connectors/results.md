@@ -5,9 +5,10 @@ A connector returns **raw data** — a DataFrame, Series, scalar, or dict. The f
 These types live in `parsimony.result` and are all re-exported at the top level, so either import path works:
 
 ```python
-from parsimony import Result, OutputSpec, Column, ColumnRole, Provenance, EntityResult
+from parsimony import Result, OutputSpec, Column, ColumnRole, Provenance, EntityRef
 # equivalently, the explicit submodule path:
-from parsimony.result import Result, OutputSpec, Column, ColumnRole, Provenance, EntityResult
+from parsimony.result import Result, OutputSpec, Column, ColumnRole, Provenance
+from parsimony.entity import EntityRef
 ```
 
 !!! note "You rarely construct these directly"
@@ -15,25 +16,25 @@ from parsimony.result import Result, OutputSpec, Column, ColumnRole, Provenance,
 
 ## Result
 
-`Result` is the one envelope for every payload: any `data` plus provenance, optionally tabular. There is no separate type for DataFrames — a result is *tabular* exactly when its `data` is a `pandas.DataFrame`, and the tabular-only accessors (`frame`, `columns`, `entities`, Arrow/Parquet serialization) apply only then.
+`Result` is the one envelope for every payload: any `raw` value plus provenance, optionally tabular. There is no separate type for DataFrames — a result is *tabular* exactly when `raw` is a `pandas.DataFrame`, and the tabular-only accessors (`frame`, `columns`, `entities`, `data`, Arrow/Parquet serialization) apply only then.
 
 | Field | Type | Default |
 |---|---|---|
-| `data` | `Any` | required |
+| `raw` | `Any` | required |
 | `provenance` | `Provenance` | `Provenance(source="", source_description="")` |
 | `output_spec` | `OutputSpec \| None` | `None` |
 
-The model allows arbitrary types (`arbitrary_types_allowed`), so `data` is not deep-validated. The framework **never copies, coerces, renames, or reorders** whatever a connector returned — `data` is exactly that object. `data` is the canonical payload accessor: a DataFrame for tabular fetches, but it may equally be a Series, scalar, `dict`, `str`, or `bytes`. The members worth knowing:
+The model allows arbitrary types (`arbitrary_types_allowed`), so `raw` is not deep-validated. The framework **never copies, coerces, renames, or reorders** whatever a connector returned — `raw` is exactly that object, named for that guarantee. It may be a DataFrame, Series, scalar, `dict`, `str`, or `bytes`. The members worth knowing:
 
 | Member | Kind | Returns |
 |---|---|---|
-| `data` | field | the raw payload, whatever its type |
-| `is_tabular` | property | `True` when `data` is a `pandas.DataFrame` |
+| `raw` | field | the payload, exactly as the connector returned it, whatever its type |
+| `is_tabular` | property | `True` when `raw` is a `pandas.DataFrame` |
 | `frame` | property | the DataFrame payload; raises `TypeError` if not tabular |
-| `text` | property | `data` unchanged if already a `str`, otherwise `str(data)` |
+| `text` | property | `raw` unchanged if already a `str`, otherwise `str(raw)` |
 | `columns` | property | `output_spec.columns`, or `[]` when there is no schema |
-| `entities` | property | lazy tuple-keyed entity projection — see [Entity projection](#entity-projection) |
-| `to_entities()` | method | `list[Entity]` — lossy catalog conversion built on `entities` |
+| `entities` | property | lazy, ref-keyed identity projection — see [Entity projection](#entity-projection) |
+| `data` | property | lazy, ref-keyed `DATA`-column projection — see [Entity projection](#entity-projection) |
 | `to_llm()` | method | a governed, length-bounded text preview — the right thing to print for an agent |
 
 Use `is_tabular` to branch on payload shape — never `isinstance(result, ...)`:
@@ -42,8 +43,8 @@ Use `is_tabular` to branch on payload shape — never `isinstance(result, ...)`:
 import pandas as pd
 from parsimony.result import Result
 
-tabular = Result(data=pd.DataFrame({"v": [1, 2]}))
-scalar = Result(data=4.25)
+tabular = Result(raw=pd.DataFrame({"v": [1, 2]}))
+scalar = Result(raw=4.25)
 
 print(tabular.is_tabular)   # True
 print(scalar.is_tabular)    # False
@@ -60,7 +61,7 @@ class OutputSpec(BaseModel):
     columns: list[Column]
 ```
 
-`OutputSpec` never sees data. It has **no methods that accept a DataFrame** — no coercion, no renaming, no matching side effects, no result construction. The framework attaches it to `Result.output_spec` unchanged; it becomes operational only when a caller asks for an [entity projection](#entity-projection) (`Result.entities`) or a governed presentation (`Result.to_llm()`) — both interpret the declaration against `Result.data` without modifying it.
+`OutputSpec` never sees data. It has **no methods that accept a DataFrame** — no coercion, no renaming, no matching side effects, no result construction. The framework attaches it to `Result.output_spec` unchanged; it becomes operational only when a caller asks for an [entity projection](#entity-projection) (`Result.entities` / `Result.data`) or a governed presentation (`Result.to_llm()`) — both interpret the declaration against `Result.raw` without modifying it.
 
 ```python
 import pandas as pd
@@ -72,7 +73,7 @@ schema = OutputSpec(columns=[
     Column(name="title", role=ColumnRole.TITLE),
     Column(name="v", role=ColumnRole.DATA),
 ])
-result = Result(data=df, output_spec=schema)
+result = Result(raw=df, output_spec=schema)
 
 print([c.name for c in result.columns])  # ['sym', 'title', 'v']
 ```
@@ -116,10 +117,18 @@ schema = OutputSpec(columns=[
 
 ## Entity projection
 
-`Result.entities` is a lazy, read-only, tuple-keyed view (`Mapping[tuple[str, str], EntityResult]`) grouping a tabular result's rows into one [`EntityResult`](#entityresult) per `(namespace, code)`. It is the single place `OutputSpec` roles are interpreted against real data — the same algorithm backs `Result.to_entities()`, catalog construction, and data-store loading.
+A tabular `Result` offers two parallel, ref-keyed views over the same grouping: `entities` for identity, `data` for observations. Both are `Mapping[EntityRef, ...]`, keyed by the same `(namespace, code)` pairs — `result.entities.keys() == result.data.keys()`. `EntityRef` is a two-field `NamedTuple` (`namespace`, `code`); it compares and hashes equal to a plain tuple, so `("fred", "unrate")` works as a lookup key too.
+
+| Property | Returns | Built from |
+|---|---|---|
+| `entities` | `Mapping[EntityRef, Entity]` | that entity's `TITLE` + `METADATA` columns |
+| `data` | `Mapping[EntityRef, pd.DataFrame]` | that entity's `DATA`-role columns only |
+
+This is the single place `OutputSpec` roles are interpreted against real data — the same algorithm backs catalog construction (`catalog.set_entities(result.entities.values())`) and data-store loading.
 
 ```python
 import pandas as pd
+from parsimony.entity import EntityRef
 from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame({
@@ -136,32 +145,35 @@ schema = OutputSpec(columns=[
     Column(name="date", role=ColumnRole.DATA),
     Column(name="value", role=ColumnRole.DATA),
 ])
-result = Result(data=df, output_spec=schema)
+result = Result(raw=df, output_spec=schema)
 
 entities = result.entities                 # bind once; the property is uncached
-unrate = entities["fred", "unrate"]
+data = result.data                         # same keys, the DATA-column counterpart
+unrate = entities[EntityRef("fred", "unrate")]
 print(unrate.title)                        # 'Unemployment'
 print(unrate.metadata)                     # {'freq': 'monthly'}
-print(list(unrate.data.columns))           # ['date', 'value']
-print(len(unrate.data))                    # 2 rows for this entity
+frame = data[EntityRef("fred", "unrate")]
+print(list(frame.columns))                 # ['date', 'value']
+print(len(frame))                          # 2 rows for this entity
 ```
 
 ### Requirements and errors
 
-`Result.entities` requires:
+Both `entities` and `data` require:
 
-- a tabular `data` (`TypeError` otherwise)
+- a tabular `raw` (`TypeError` otherwise)
 - an `output_spec` declaring **exactly one** `KEY` column (`ValueError` otherwise)
 - that `KEY` column must declare a non-empty `namespace` (`ValueError`: `"KEY column ... must declare namespace=... for entity projection"`) — this is checked here, at projection time, not at `OutputSpec` construction
 - every declared non-wildcard column (`KEY`, `TITLE`, `METADATA`, `DATA`) must actually be present in the frame (`ValueError` listing the missing names)
 - no duplicate DataFrame column labels among the columns the projection reads (`ValueError`)
 - no null values in the `KEY` column (`ValueError`)
-- **consistent** `TITLE`/`METADATA` values within one entity's rows — a `TITLE` or `METADATA` column may vary row-to-row *only* if it resolves to the same non-null value throughout that entity's group; otherwise `ValueError`
 
-Rows are grouped by the normalized `(namespace, code)` pair (see [`normalize_namespace`/`normalize_entity_code`](../catalog/entities.md)), in first-appearance order. Each `EntityResult.data` contains exactly that entity's `DATA`-role rows and columns — `KEY`, `TITLE`, and `METADATA` columns are consumed into the entity's identity, not duplicated into `data`.
+`entities` additionally enforces **consistent** `TITLE`/`METADATA` values within one entity's rows — a `TITLE` or `METADATA` column may vary row-to-row *only* if it resolves to the same non-null value throughout that entity's group; otherwise `ValueError`. `data` does not run this check: slicing `DATA` columns is not an identity concern, so conflicting metadata elsewhere in the row never blocks it.
+
+Rows are grouped by the normalized `(namespace, code)` pair (see [`normalize_namespace`/`normalize_entity_code`](../catalog/entities.md)), in first-appearance order. Each `data` value contains exactly that entity's `DATA`-role rows and columns, in original row order and index — `KEY`, `TITLE`, and `METADATA` columns are consumed into `entities`, not duplicated into `data`.
 
 !!! warning "Intentionally uncached"
-    `Result.data` is a mutable raw object, so caching the projection would risk a stale view after in-place mutation. `Result.entities` recomputes on every access — bind it to a local once for repeated lookups (`entities = result.entities`) rather than re-accessing the property in a loop.
+    `Result.raw` is a mutable object, so caching the projection would risk a stale view after in-place mutation. `entities` and `data` recompute on every access — bind each to a local once for repeated lookups (`entities = result.entities`) rather than re-accessing the property in a loop.
 
 ### Per-row namespace
 
@@ -177,31 +189,12 @@ schema = OutputSpec(columns=[
 ])
 ```
 
-### EntityResult
+### Feeding a catalog
 
-`EntityResult` is a frozen dataclass — one entity's slice of a tabular `Result`: identity plus `DATA` rows.
-
-| Field / property | Type | Notes |
-|---|---|---|
-| `entity` | `Entity` | the resolved identity (see [Entities](../catalog/entities.md)) |
-| `data` | `pd.DataFrame` | only this entity's `DATA`-role columns, in original row order and index |
-| `provenance` | `Provenance` | the **same** call-level object as the parent `Result` — shared, not copied |
-| `namespace` | `str` | delegates to `entity.namespace` |
-| `code` | `str` | delegates to `entity.code` |
-| `title` | `str` | delegates to `entity.title` |
-| `metadata` | `Mapping[str, Any]` | delegates to `entity.metadata` |
-
-### to_entities()
+`Mapping.values()` is exactly the iterable `Catalog.set_entities()` wants:
 
 ```python
-to_entities() -> list[Entity]
-```
-
-A lossy catalog conversion: identity, title, and metadata only — no `DATA` rows. This is what catalog-build code calls to turn a connector's `Result` into the records a [`Catalog`](../catalog/index.md) indexes.
-
-```python
-entities = result.to_entities()
-print(entities[0].namespace, entities[0].code)  # fred unrate
+catalog.set_entities(result.entities.values())
 ```
 
 ## Column
@@ -248,7 +241,7 @@ These roles drive [entity projection](#entity-projection) and are what a [data s
 
 ## The `to_llm()` view
 
-`to_llm()` renders a compact, **schema-in-context** view of a result for an LLM prompt — type and shape, not the full payload. It is the framework-owned counterpart to dumping `result.data`: the size it adds to context is O(schema) for tables and O(structure) for opaque payloads, not O(rows) or O(bytes). A single `Result.to_llm()` covers both cases, branching internally on `is_tabular`.
+`to_llm()` renders a compact, **schema-in-context** view of a result for an LLM prompt — type and shape, not the full payload. It is the framework-owned counterpart to dumping `result.raw`: the size it adds to context is O(schema) for tables and O(structure) for opaque payloads, not O(rows) or O(bytes). A single `Result.to_llm()` covers both cases, branching internally on `is_tabular`.
 
 `to_llm()` is the data layer's single convention for "the governed string an LLM may see of this object" — the same method name carries the connector card (`Connector.to_llm()`), the bundle listing (`Connectors.to_llm()`), and this result view. (A runtime such as `parsimony-agents` has its own, separate `to_llm(mode) -> blocks` convention for *assembling* a message; it delegates the *content* of a governed object back to these methods.)
 
@@ -269,7 +262,7 @@ import pandas as pd
 from parsimony.result import Column, ColumnRole, OutputSpec, Result
 
 df = pd.DataFrame({"date": pd.to_datetime(["2020-01-01", "2020-01-02"]), "value": [1.0, 2.0]})
-result = Result(data=df, output_spec=OutputSpec(columns=[
+result = Result(raw=df, output_spec=OutputSpec(columns=[
     Column(name="date", role=ColumnRole.KEY, namespace="fred_series"),
     Column(name="value", role=ColumnRole.DATA),
 ]))
@@ -288,18 +281,18 @@ With no `output_spec` the schema lines carry dtype only (no role annotation). Fo
 
 ### Opaque preview
 
-For non-tabular `data` (dict/JSON, list, str, scalar, bytes, pydantic model) `to_llm()` emits a depth-limited structural summary — one level of expansion, with nested values collapsed to a `type[shape]` token:
+For non-tabular `raw` (dict/JSON, list, str, scalar, bytes, pydantic model) `to_llm()` emits a depth-limited structural summary — one level of expansion, with nested values collapsed to a `type[shape]` token:
 
 ```python
 from parsimony.result import Result
 
-print(Result(data={"name": "Alice", "items": [1, 2, 3], "meta": {"a": 1}}).to_llm())
+print(Result(raw={"name": "Alice", "items": [1, 2, 3], "meta": {"a": 1}}).to_llm())
 # Result (dict): 3 keys
 # - name: str
 # - items: list[3]
 # - meta: dict[1 keys]
 
-print(Result(data=4.25).to_llm())   # Result (float): 4.25
+print(Result(raw=4.25).to_llm())   # Result (float): 4.25
 ```
 
 !!! note "One owner for governed rendering"
@@ -327,7 +320,7 @@ import pandas as pd
 from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 result = Result(
-    data=pd.DataFrame({"code": ["UNRATE"], "title": ["Unemployment"]}),
+    raw=pd.DataFrame({"code": ["UNRATE"], "title": ["Unemployment"]}),
     provenance=Provenance(source="fred", source_description="FRED", params={"q": "unemployment"}),
     output_spec=OutputSpec(columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="fred"),
@@ -377,4 +370,4 @@ print(dumped["params"])  # {'truncated': True, 'byte_length': ..., 'field': 'par
 - [Defining connectors](defining-connectors.md) — how `output=` schemas are declared and attached to a `Result`
 - [Loaders and enumerators](loaders-and-enumerators.md) — the stricter `OutputSpec` shapes the two verbs require
 - [Errors](errors.md) — the typed `ConnectorError` taxonomy a connector raises itself; entity-projection failures stay plain `ValueError`
-- [Entities](../catalog/entities.md) — what `to_entities()` produces and how DataFrames become catalog records
+- [Entities](../catalog/entities.md) — what `Result.entities` produces and how DataFrames become catalog records

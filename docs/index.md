@@ -23,7 +23,7 @@ Parsimony is built around two complementary ideas.
   call surface — there is no bundled `params` object. A connector returns **raw data** (a
   DataFrame, Series, scalar, or dict); the framework wraps it in a
   [`Result`](connectors/results.md) carrying framework-built
-  [`Provenance`](connectors/results.md). When `data` is a DataFrame the result
+  [`Provenance`](connectors/results.md). When `raw` is a DataFrame the result
   is *tabular* (`result.is_tabular`). The immutable
   [`Connectors`](connectors/calling-binding-composing.md) collection composes connectors
   and is invoked with `connectors[name](**kwargs)`.
@@ -106,7 +106,7 @@ def demo_fetch(series_id: str) -> pd.DataFrame:
 
 
 result = demo_fetch(series_id="GDP")
-print(result.data)                     # exactly the DataFrame you returned
+print(result.raw)                      # exactly the DataFrame you returned
 print(result.provenance.source)        # 'demo_fetch'
 print(result.provenance.params)        # {'series_id': 'GDP'}
 ```
@@ -132,7 +132,7 @@ A few things this shows:
 
     bundle = Connectors([demo_fetch]) + Connectors([another_connector])
     result = bundle["demo_fetch"](series_id="GDP")
-    print(result.data)
+    print(result.raw)
     ```
 
     There is no `.merge` method — `+` is the composition primitive. See

@@ -91,8 +91,8 @@ def test_catalog_build_entities_static_indexes_and_ranker() -> None:
 
 def test_catalog_build_result_uses_key_namespace() -> None:
     catalog = Catalog("artifact", indexes={"title": BM25Index()})
-    result = Result(data=_enumeration_df(), output_spec=_enumeration_schema(namespace="series"))
-    catalog.set_entities(result.to_entities())
+    result = Result(raw=_enumeration_df(), output_spec=_enumeration_schema(namespace="series"))
+    catalog.set_entities(result.entities.values())
 
     catalog.build()
 
@@ -100,9 +100,9 @@ def test_catalog_build_result_uses_key_namespace() -> None:
 
 
 def test_entity_projection_requires_key_namespace() -> None:
-    result = Result(data=_enumeration_df(), output_spec=_enumeration_schema(namespace=None))
+    result = Result(raw=_enumeration_df(), output_spec=_enumeration_schema(namespace=None))
     with pytest.raises(ValueError, match="must declare namespace"):
-        result.to_entities()
+        _ = result.entities
 
 
 def test_catalog_mutation_methods_require_rebuild(tmp_path: Path) -> None:

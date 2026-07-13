@@ -304,7 +304,7 @@ Two details worth noting:
 - `acme_enumerate` is an enumerator, so its schema has a namespaced KEY and a TITLE, no
   DATA columns, and the function annotates a `pd.DataFrame` return. That shape is checked
   at decoration time; the returned frame's actual columns are only checked later, if and
-  when something calls `result.to_entities()` on its output.
+  when something accesses `result.entities` on its output.
 
 ## Validate before you publish
 

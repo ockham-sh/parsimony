@@ -5,7 +5,6 @@ from __future__ import annotations
 __all__ = [
     "Column",
     "ColumnRole",
-    "EntityResult",
     "OutputSpec",
     "Provenance",
     "REDACTED",
@@ -33,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from parsimony.entity import (
     Entity,
+    EntityRef,
     _metadata_value,
     normalize_entity_code,
     normalize_namespace,
@@ -71,8 +71,8 @@ class Column(BaseModel):
     Purely declarative: a ``Column`` never inspects, transforms, or renames
     the connector's returned data. It binds semantics (role, namespace,
     description, visibility) to a column name so that a later, explicit
-    projection (:attr:`Result.entities`) or presentation (:meth:`Result.to_llm`)
-    can interpret the raw payload.
+    projection (:attr:`Result.entities` / :attr:`Result.data`) or
+    presentation (:meth:`Result.to_llm`) can interpret the raw payload.
     """
 
     name: str
@@ -179,7 +179,7 @@ def _homogeneous_elem_type(value: Sequence[Any] | set[Any] | frozenset[Any]) -> 
 
 
 def _preview_value(value: Any, *, max_chars: int) -> str:
-    """Depth-limited structural preview of an opaque ``Result.data`` payload."""
+    """Depth-limited structural preview of an opaque ``Result.raw`` payload."""
     tname = type(value).__name__
     if value is None:
         return "Result (NoneType): None"
@@ -276,9 +276,9 @@ class OutputSpec(BaseModel):
     An ``OutputSpec`` never sees data. It has no methods that accept a
     DataFrame: no coercion, renaming, matching side effects, or result
     construction. It becomes operational only when a caller asks for an
-    entity projection (:attr:`Result.entities`) or a governed presentation
-    (:meth:`Result.to_llm`) — both interpret the declaration against
-    ``Result.data`` without modifying it.
+    entity     projection (:attr:`Result.entities` / :attr:`Result.data`) or a governed
+    presentation (:meth:`Result.to_llm`) — all interpret the declaration
+    against ``Result.raw`` without modifying it.
 
     ``"*"`` is the sole dynamic rule: a wildcard column assigns its role to
     every returned column not named explicitly elsewhere in the declaration.
@@ -311,41 +311,13 @@ class OutputSpec(BaseModel):
         return self
 
 
-@dataclass(frozen=True)
-class EntityResult:
-    """One entity's slice of a tabular :class:`Result`: identity plus DATA rows.
-
-    Produced only by :attr:`Result.entities`. ``data`` contains exactly the
-    columns resolved as ``DATA`` by the parent result's :class:`OutputSpec`,
-    in original row order and index. ``provenance`` is the same call-level
-    object as the parent :class:`Result` — shared, not copied or mixed into
-    metadata.
-    """
-
-    entity: Entity
-    data: pd.DataFrame
-    provenance: Provenance
-
-    @property
-    def namespace(self) -> str:
-        return self.entity.namespace
-
-    @property
-    def code(self) -> str:
-        return self.entity.code
-
-    @property
-    def title(self) -> str:
-        return self.entity.title
-
-    @property
-    def metadata(self) -> Mapping[str, Any]:
-        return self.entity.metadata
-
-
 # ---------------------------------------------------------------------------
-# Entity projection — the one grouping algorithm shared by Result.entities,
-# Result.to_entities(), catalog construction, and data-store loading.
+# Entity projection — one shared resolver + grouping pass, consumed by two
+# independent, differently-strict views: Result.entities (identity, with
+# TITLE/METADATA consistency enforcement) and Result.data (DATA-column
+# slices, no identity concerns). Neither wraps the other's output; both read
+# the same resolved groups so there is exactly one place that knows how to
+# find the KEY, resolve the namespace, and expand the "*" wildcard.
 # ---------------------------------------------------------------------------
 
 
@@ -376,21 +348,31 @@ def _consistent_non_null(values: pd.Series, *, label: str, entity_ref: str) -> A
     return non_null[0]
 
 
-def _project_entities(
-    data: Any,
-    output_spec: OutputSpec | None,
-    provenance: Provenance,
-) -> Mapping[tuple[str, str], EntityResult]:
-    """Group a tabular payload into one :class:`EntityResult` per ``(namespace, code)``.
+@dataclass(frozen=True)
+class _ResolvedGroups:
+    """Shared, pre-validated shape for both entity-keyed views of a Result."""
 
-    See ``Result.entities`` for the full contract. Errors are raised as
-    direct ``TypeError``/``ValueError`` with entity and column context.
+    title_col: Column | None
+    meta_names: list[str]
+    data_names: list[str]
+    groups: list[tuple[EntityRef, pd.DataFrame]]
+
+
+def _resolve_entity_groups(raw: Any, output_spec: OutputSpec | None) -> _ResolvedGroups:
+    """Validate *output_spec* against *raw* and group rows by ``(namespace, code)``.
+
+    Owns every check that both :attr:`Result.entities` and :attr:`Result.data`
+    need before they can read a row: exactly one namespaced KEY column,
+    declared columns present, no duplicate DataFrame labels, non-null
+    KEY/namespace values, and ``"*"`` wildcard expansion. Raises direct
+    ``TypeError``/``ValueError`` with column context. Groups are in
+    first-appearance order.
     """
     if output_spec is None:
         raise ValueError("Result has no OutputSpec; cannot project entities")
-    if not isinstance(data, pd.DataFrame):
-        raise TypeError(f"Entity projection requires a tabular Result (payload type: {type(data).__name__})")
-    frame = data
+    if not isinstance(raw, pd.DataFrame):
+        raise TypeError(f"Entity projection requires a tabular Result (payload type: {type(raw).__name__})")
+    frame = raw
 
     columns = output_spec.columns
     key_cols = [c for c in columns if c.role == ColumnRole.KEY]
@@ -432,15 +414,15 @@ def _project_entities(
     wildcard_names = _resolve_wildcard_names(frame, claimed) if wildcard is not None else []
 
     meta_names = [c.name for c in meta_cols if c.name != namespace_col_name]
-    full_data_names = [c.name for c in data_cols]
+    data_names = [c.name for c in data_cols]
     if wildcard is not None:
         if wildcard.role == ColumnRole.DATA:
-            full_data_names = [*full_data_names, *wildcard_names]
+            data_names = [*data_names, *wildcard_names]
         else:
             meta_names = [*meta_names, *wildcard_names]
 
     if frame.empty:
-        return MappingProxyType({})
+        return _ResolvedGroups(title_col=title_col, meta_names=meta_names, data_names=data_names, groups=[])
 
     key_series = frame[key_col.name]
     if key_series.isna().any():
@@ -458,36 +440,60 @@ def _project_entities(
         namespaces = pd.Series([static_ns] * len(frame), index=frame.index)
 
     work = frame.assign(__ns__=namespaces, __code__=codes)
+    groups = [(EntityRef(ns, code), sub) for (ns, code), sub in work.groupby(["__ns__", "__code__"], sort=False)]
+    return _ResolvedGroups(title_col=title_col, meta_names=meta_names, data_names=data_names, groups=groups)
 
-    out: dict[tuple[str, str], EntityResult] = {}
-    for (ns, code), sub in work.groupby(["__ns__", "__code__"], sort=False):
-        entity_ref = f"({ns}, {code})"
 
-        title = code
-        if title_col is not None:
-            title_label = f"TITLE column {title_col.name!r}"
-            resolved_title = _consistent_non_null(sub[title_col.name], label=title_label, entity_ref=entity_ref)
+def _project_entities(raw: Any, output_spec: OutputSpec | None) -> Mapping[EntityRef, Entity]:
+    """Group a tabular payload into one :class:`Entity` per ``(namespace, code)``.
+
+    See :attr:`Result.entities` for the full contract. Enforces the identity
+    contract: TITLE and METADATA values must be consistent within an
+    entity's rows.
+    """
+    resolved = _resolve_entity_groups(raw, output_spec)
+    out: dict[EntityRef, Entity] = {}
+    for ref, sub in resolved.groups:
+        entity_ref = f"({ref.namespace}, {ref.code})"
+
+        title = ref.code
+        if resolved.title_col is not None:
+            title_name = resolved.title_col.name
+            title_label = f"TITLE column {title_name!r}"
+            resolved_title = _consistent_non_null(sub[title_name], label=title_label, entity_ref=entity_ref)
             if resolved_title is not None:
                 title = str(resolved_title)
 
         metadata: dict[str, Any] = {}
-        for name in meta_names:
+        for name in resolved.meta_names:
             value = _consistent_non_null(sub[name], label=f"METADATA column {name!r}", entity_ref=entity_ref)
             if value is not None:
                 metadata[name] = value
 
-        entity = Entity(namespace=ns, code=code, title=title, metadata=metadata)
-        entity_data = sub[full_data_names].copy() if full_data_names else pd.DataFrame(index=sub.index)
-        out[(ns, code)] = EntityResult(entity=entity, data=entity_data, provenance=provenance)
+        out[ref] = Entity(namespace=ref.namespace, code=ref.code, title=title, metadata=metadata)
+    return MappingProxyType(out)
+
+
+def _project_data(raw: Any, output_spec: OutputSpec | None) -> Mapping[EntityRef, pd.DataFrame]:
+    """Group a tabular payload into one DATA-column slice per ``(namespace, code)``.
+
+    See :attr:`Result.data` for the full contract. Deliberately dumber than
+    :func:`_project_entities`: slicing DATA columns is not an identity
+    concern, so no TITLE/METADATA consistency check runs here.
+    """
+    resolved = _resolve_entity_groups(raw, output_spec)
+    out: dict[EntityRef, pd.DataFrame] = {}
+    for ref, sub in resolved.groups:
+        out[ref] = sub[resolved.data_names].copy() if resolved.data_names else pd.DataFrame(index=sub.index)
     return MappingProxyType(out)
 
 
 class Result(BaseModel):
     """Connector output: any payload plus provenance, optionally tabular.
 
-    One result type for every payload. ``data`` is exactly the object a
+    One result type for every payload. ``raw`` is exactly the object a
     connector returned — the framework never copies, coerces, renames, or
-    reorders it. When ``data`` is a :class:`~pandas.DataFrame` the result is
+    reorders it. When ``raw`` is a :class:`~pandas.DataFrame` the result is
     *tabular* (``is_tabular``) and may carry an :class:`OutputSpec` — a
     passive declaration of column roles, namespaces, and
     ``exclude_from_llm_view`` governance. The framework wraps connector
@@ -499,7 +505,7 @@ class Result(BaseModel):
 
     model_config = {"arbitrary_types_allowed": True}
 
-    data: Any
+    raw: Any
     provenance: Provenance = Field(default_factory=lambda: Provenance(source="", source_description=""))
     output_spec: OutputSpec | None = Field(default=None)
 
@@ -507,21 +513,21 @@ class Result(BaseModel):
 
     @property
     def is_tabular(self) -> bool:
-        """Whether ``data`` is a DataFrame (so frame/schema accessors apply)."""
-        return isinstance(self.data, pd.DataFrame)
+        """Whether ``raw`` is a DataFrame (so frame/schema accessors apply)."""
+        return isinstance(self.raw, pd.DataFrame)
 
     @property
     def frame(self) -> pd.DataFrame:
         """The tabular payload. Raises if this result is not tabular."""
         if not self.is_tabular:
-            raise TypeError(f"Result payload is not tabular (data type: {type(self.data).__name__})")
-        return self.data
+            raise TypeError(f"Result payload is not tabular (data type: {type(self.raw).__name__})")
+        return self.raw
 
     @property
     def text(self) -> str:
-        if isinstance(self.data, str):
-            return self.data
-        return str(self.data)
+        if isinstance(self.raw, str):
+            return self.raw
+        return str(self.raw)
 
     @property
     def columns(self) -> list[Column]:
@@ -532,31 +538,49 @@ class Result(BaseModel):
     # -- entity projection --------------------------------------------------
 
     @property
-    def entities(self) -> Mapping[tuple[str, str], EntityResult]:
-        """Lazy, read-only, tuple-keyed view of this result's entities.
+    def entities(self) -> Mapping[EntityRef, Entity]:
+        """Lazy, read-only, ref-keyed view of this result's entity identities.
 
-        Requires a tabular ``data`` and an ``output_spec`` declaring exactly
+        Requires a tabular ``raw`` and an ``output_spec`` declaring exactly
         one namespaced KEY column. Groups rows by the normalized
         ``(namespace, code)`` pair (per-row namespace when the KEY declares
         ``namespace="__row__"`` via a METADATA column named
-        ``entity_namespace``), in first-appearance order. Each
-        :class:`EntityResult` carries only that entity's ``DATA`` columns.
+        ``entity_namespace``), in first-appearance order. Each value is an
+        :class:`~parsimony.entity.Entity` built from that entity's TITLE and
+        METADATA columns — never its DATA. Feed this straight to
+        ``Catalog.set_entities(result.entities.values())``.
 
-        Intentionally uncached — ``Result.data`` is a mutable raw object, so
+        Intentionally uncached — ``Result.raw`` is a mutable object, so
         caching would create stale views. Bind the mapping once for repeated
-        access: ``entities = result.entities; unrate = entities["fred", "UNRATE"]``.
+        access: ``entities = result.entities; unrate =
+        entities[EntityRef("fred", "UNRATE")]``. A plain ``("fred",
+        "UNRATE")`` tuple also works at lookup time (``EntityRef`` compares
+        and hashes equal to a bare tuple), but only the constructor form
+        type-checks under a ``Mapping[EntityRef, ...]`` key type.
 
         Raises ``ValueError``/``TypeError`` (with entity and column context)
         when the declaration or data cannot support a projection: missing
         KEY/namespace, missing declared columns, duplicate DataFrame labels,
         null KEY/namespace values, or conflicting TITLE/METADATA values
-        within one entity.
+        within one entity. Shares one grouping pass with :attr:`data` — the
+        two are parallel views over the same keys, never one built from the
+        other.
         """
-        return _project_entities(self.data, self.output_spec, self.provenance)
+        return _project_entities(self.raw, self.output_spec)
 
-    def to_entities(self) -> list[Entity]:
-        """Lossy catalog conversion: identity, title, and metadata only."""
-        return [item.entity for item in self.entities.values()]
+    @property
+    def data(self) -> Mapping[EntityRef, pd.DataFrame]:
+        """Lazy, read-only, ref-keyed view of this result's DATA columns.
+
+        Same grouping as :attr:`entities` — identical keys
+        (``result.entities.keys() == result.data.keys()``) — but each value
+        is a DataFrame holding only that entity's ``DATA``-role columns, in
+        original row order and index. Never raises about conflicting
+        TITLE/METADATA; that is :attr:`entities`' concern, not this one's.
+
+        Intentionally uncached, for the same reason as :attr:`entities`.
+        """
+        return _project_data(self.raw, self.output_spec)
 
     # -- LLM view ---------------------------------------------------------
 
@@ -577,7 +601,7 @@ class Result(BaseModel):
         are accepted for a single uniform signature.
         """
         if not self.is_tabular:
-            return _preview_value(self.data, max_chars=max_chars)
+            return _preview_value(self.raw, max_chars=max_chars)
         frame = self.frame
         visible_frame, hidden_count, schema_lines = governed_view(frame, self.columns)
         lines = [f"Result (table): {shape_descriptor(frame, hidden_count)}"]
@@ -616,10 +640,10 @@ class Result(BaseModel):
         Parquet/Arrow files remain readable.
         """
         df = table.to_pandas()
-        raw = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
-        if not raw:
-            return cls(data=df)
-        payload = json.loads(raw.decode("utf-8"))
+        meta_bytes = (table.schema.metadata or {}).get(_RESULT_SCHEMA_META_KEY)
+        if not meta_bytes:
+            return cls(raw=df)
+        payload = json.loads(meta_bytes.decode("utf-8"))
         provenance = Provenance.model_validate(payload.get("provenance", {}))
         cols_raw = payload.get("columns") or []
         if cols_raw:
@@ -638,11 +662,11 @@ class Result(BaseModel):
                     )
                 )
             return cls(
-                data=df,
+                raw=df,
                 provenance=provenance,
                 output_spec=OutputSpec(columns=columns),
             )
-        return cls(data=df, provenance=provenance)
+        return cls(raw=df, provenance=provenance)
 
     def to_parquet(self, path: str | Path) -> None:
         """Write a tabular result to Parquet with embedded column schema and provenance."""

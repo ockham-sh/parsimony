@@ -78,12 +78,12 @@ normalized form instead.
 ## Loading a result
 
 The bridge from connector output to storage is `load_result`. It delegates identity
-and grouping entirely to [`Result.entities`](../connectors/results.md#entity-projection)
-— the same lazy tuple-keyed projection covered on the results page — so there is no
-second grouping pass here. Each `EntityResult.data` (already narrowed to that entity's
-`DATA` columns) is upserted under its `(namespace, code)` key. `TITLE`, `METADATA`, and
-the `KEY` column itself are consumed by the projection and never land in the stored
-frame.
+and grouping entirely to [`Result.data`](../connectors/results.md#entity-projection)
+— the same lazy ref-keyed projection covered on the results page — so there is no
+second grouping pass here. Each value in that mapping (already narrowed to that
+entity's `DATA` columns) is upserted under its `(namespace, code)` key. `TITLE`,
+`METADATA`, and the `KEY` column itself are consumed by the projection and never
+land in the stored frame.
 
 ```python
 import pandas as pd
@@ -100,7 +100,7 @@ SCHEMA = OutputSpec(
 
 store = InMemoryDataStore()
 table = Result(
-    data=pd.DataFrame(
+    raw=pd.DataFrame(
         {
             "series_id": ["GDP", "GDP", "CPI"],
             "value": [1.0, 2.0, 3.0],
@@ -164,7 +164,7 @@ store = InMemoryDataStore()
 store.upsert("fred", "GDP", pd.DataFrame({"value": [0.0]}))
 
 table = Result(
-    data=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
+    raw=pd.DataFrame({"series_id": ["GDP"], "value": [9.0]}),
     provenance=Provenance(source="fred", source_description="FRED"),
     output_spec=SCHEMA,
 )
@@ -229,13 +229,13 @@ assert df is not None and list(df.columns) == ["value"] and len(df) == 2
 
 **Extraction-time validation** runs before any entity is written and *raises* —
 it is never counted in `errors`. It is exactly the [entity projection
-contract](../connectors/results.md#requirements-and-errors) that `Result.entities`
+contract](../connectors/results.md#requirements-and-errors) that `Result.data`
 enforces: the table's schema must be well-formed.
 
 | Condition | Raises |
 | --- | --- |
 | `output_spec` is `None` | `ValueError` |
-| `data` is not a DataFrame | `TypeError` |
+| `raw` is not a DataFrame | `TypeError` |
 | Not exactly one `KEY` column | `ValueError` |
 | `KEY` column has no `namespace` | `ValueError` |
 | A declared column (`KEY`, `TITLE`, `METADATA`, `DATA`) is absent from the data | `ValueError` |

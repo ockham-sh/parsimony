@@ -320,7 +320,7 @@ caller (a sandboxed agent) has no embedder.
 
 This is a convenience for searching data you already hold, **not** the way catalogs are built.
 When you need column roles, key grouping, a vector index, or a persistable snapshot, use the
-`Catalog` lifecycle directly with [`Result.to_entities()`](entities.md#result-to_entities).
+`Catalog` lifecycle directly with [`Result.entities`](entities.md#result-entities).
 BM25 works on a bare `pip install parsimony-core` — no extra needed.
 
 ## See also

@@ -14,18 +14,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   returned DataFrame. `Column` drops both fields — cast and rename in the
   connector body instead, before you return. `OutputSpec.build_entities(df)`,
   `build_table_result`, and the module-level `entities_from_dataframe` are
-  removed; entity projection moves to `Result` itself: `result.to_entities()`
-  returns a `list[Entity]`, and the new lazy `result.entities` returns an
-  `EntityMap` — a `(namespace, code)`-keyed mapping to `EntityResult` (an
-  entity's `data`, `metadata`, and `provenance` together). Both are computed
-  from `result.data` against `result.output_spec` on access, so mutating
-  `result.data` and re-reading `result.entities` sees the update. A `KEY`
-  column may now omit `namespace=` at declaration time (e.g. a per-call
-  dynamic namespace); it is only required once something actually projects
-  entities — at that point a missing namespace raises `ValueError`, not at
-  `OutputSpec` construction. `@loader` and `@enumerator` still enforce it
-  eagerly at decoration time, since feeding a store/catalog is their entire
+  removed. A `KEY` column may now omit `namespace=` at declaration time (e.g.
+  a per-call dynamic namespace); it is only required once something actually
+  projects entities — at that point a missing namespace raises `ValueError`,
+  not at `OutputSpec` construction. `@loader` and `@enumerator` still enforce
+  it eagerly at decoration time, since feeding a store/catalog is their entire
   purpose (closes #72, #73).
+- **BREAKING — `Result.data` is renamed `Result.raw`.** The field name now
+  states the framework's core guarantee — this is exactly what the connector
+  returned, untouched — rather than a name that collided with the new
+  entity-keyed `data` accessor below.
+- **BREAKING — entity projection is two parallel `Mapping` views, not a
+  method.** `Result.to_entities()` and `EntityResult` are removed. A tabular
+  `Result` now exposes `entities: Mapping[EntityRef, Entity]` (identity: that
+  entity's `TITLE` + `METADATA`) and `data: Mapping[EntityRef, pd.DataFrame]`
+  (that entity's `DATA` columns only), sharing one key type and one set of
+  keys (`result.entities.keys() == result.data.keys()`). `EntityRef` is a new
+  two-field `NamedTuple` (`namespace`, `code`) that compares and hashes equal
+  to a plain tuple. Both properties are computed from `result.raw` against
+  `result.output_spec` on every access — uncached, so mutating `result.raw`
+  and re-reading either property sees the update. Feed a catalog with
+  `catalog.set_entities(result.entities.values())`; a data store loads from
+  `result.data` directly.
 - **BREAKING — `Result.df` alias is removed.** Use `Result.frame` (raises
   `TypeError` if the payload is not tabular).
 - **BREAKING — `Catalog.search` replaces `field=` with `fields=`.** One

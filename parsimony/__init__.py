@@ -53,6 +53,7 @@ from parsimony.connector import (
     enumerator,
     loader,
 )
+from parsimony.entity import EntityRef
 from parsimony.errors import (
     ConnectorError,
     EmptyDataError,
@@ -64,7 +65,7 @@ from parsimony.errors import (
     UnauthorizedError,
 )
 from parsimony.namespace import Namespace
-from parsimony.result import Column, ColumnRole, EntityResult, OutputSpec, Provenance, Result
+from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 try:
     __version__ = version("parsimony-core")
@@ -93,7 +94,7 @@ __all__ = [
     "OutputSpec",
     "Column",
     "ColumnRole",
-    "EntityResult",
+    "EntityRef",
     "Provenance",
     "ConnectorError",
     "EmptyDataError",

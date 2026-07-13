@@ -2,7 +2,7 @@
 
 Demonstrates:
 1. Defining a plain synchronous Python function.
-2. Using the @connector decorator with an OutputConfig schema.
+2. Using the @connector decorator with an OutputSpec schema.
 3. Composing the custom connector into a Connectors bundle alongside FRED.
 
 Setup:
@@ -24,13 +24,13 @@ import os
 import pandas as pd
 from parsimony_fred import fred_fetch
 
-from parsimony import Column, ColumnRole, Connectors, OutputConfig, connector
+from parsimony import Column, ColumnRole, Connectors, OutputSpec, connector
 
-CUSTOM_OUTPUT = OutputConfig(
+CUSTOM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="my_source"),
         Column(name="label", role=ColumnRole.TITLE),
-        Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="score", role=ColumnRole.DATA),
     ]
 )
 
@@ -60,7 +60,7 @@ def main() -> None:
     # Call the custom connector through the bundle.
     result = bundle["my_data_source"](category="widgets")
     print("--- Custom connector result ---")
-    print(result.df.to_string(index=False))
+    print(result.raw.to_string(index=False))
     print(f"Provenance source: {result.provenance.source}")
 
 

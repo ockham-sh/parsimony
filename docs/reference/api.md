@@ -38,12 +38,12 @@ and [Loaders and enumerators](../connectors/loaders-and-enumerators.md).
 
 | Name | Kind | Import |
 |---|---|---|
-| `Result` | class — the one result envelope (`data` + `provenance` + optional `output_spec`); tabular when `data` is a DataFrame | `from parsimony import Result` |
+| `Result` | class — the one result envelope (`raw` + `provenance` + optional `output_spec`); tabular when `raw` is a DataFrame | `from parsimony import Result` |
 | `OutputSpec` | class — passive, declarative output schema (never applied to the data) | `from parsimony import OutputSpec` |
 | `Column` | class — one schema column | `from parsimony import Column` |
 | `ColumnRole` | enum — `DATA` / `KEY` / `TITLE` / `METADATA` | `from parsimony import ColumnRole` |
 | `Provenance` | class — framework-built fetch metadata | `from parsimony import Provenance` |
-| `EntityResult` | class — one entity's data + metadata + provenance, from `Result.entities`/`to_entities()` | `from parsimony import EntityResult` |
+| `EntityRef` | class — `(namespace, code)` `NamedTuple` key shared by `Result.entities` and `Result.data` | `from parsimony import EntityRef` |
 
 See [Results and output schemas](../connectors/results.md).
 

@@ -24,7 +24,7 @@ from parsimony.connector import Connectors, connector, enumerator
 from parsimony.entity import Entity
 from parsimony.errors import EmptyDataError
 from parsimony.namespace import Namespace
-from parsimony.result import Column, ColumnRole, OutputConfig
+from parsimony.result import Column, ColumnRole, OutputSpec
 from parsimony.transport.helpers import require_key
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -52,38 +52,39 @@ def gdp_trend(country: str, years: int = 5) -> pd.DataFrame:
 result = gdp_trend(country="US")
 
 assert result.is_tabular
-assert list(result.data.columns) == ["year", "gdp"]
+assert list(result.raw.columns) == ["year", "gdp"]
 assert result.provenance.source == "gdp_trend"
 assert result.provenance.params == {"country": "US", "years": 5}
 
 print(f"connector:  {gdp_trend!r}")
-print(f"data:\n{result.data.to_string(index=False)}")
+print(f"raw:\n{result.raw.to_string(index=False)}")
 print(f"provenance: source={result.provenance.source!r}, params={result.provenance.params}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Stage 2 — OutputConfig: declare column roles and coerce dtypes
+# Stage 2 — OutputSpec: declare column roles
 #
-# OutputConfig maps raw DataFrame columns to semantic roles:
+# OutputSpec maps raw DataFrame columns to semantic roles:
 #   KEY      — unique identifier (can be used as a catalog code)
 #   TITLE    — human-readable label
 #   DATA     — numeric/string payload
 #   METADATA — filtering context, not a primary analysis target
 #
-# mapped_name renames a column on output.
-# dtype coerces the series on the way out (e.g. "numeric", "date").
-# Columns not listed in the schema are absorbed as DATA by default.
+# OutputSpec is purely declarative — it never renames, coerces, reorders, or
+# drops a column. Whatever the connector body returns is exactly what lands
+# on result.raw. If a provider hands you strings, coerce them yourself
+# (pd.to_datetime, pd.to_numeric) before returning.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
-print("Stage 2 — OutputConfig: schema, roles, dtype coercion")
+print("Stage 2 — OutputSpec: schema and roles")
 print("=" * 70)
 
-SERIES_OUTPUT = OutputConfig(
+SERIES_OUTPUT = OutputSpec(
     columns=[
         Column(name="series_id", role=ColumnRole.KEY, namespace="acme"),
         Column(name="name", role=ColumnRole.TITLE),
         Column(name="freq", role=ColumnRole.METADATA),
-        Column(name="obs_date", role=ColumnRole.DATA, dtype="date", mapped_name="date"),
-        Column(name="obs_value", role=ColumnRole.DATA, dtype="numeric", mapped_name="value"),
+        Column(name="obs_date", role=ColumnRole.DATA),
+        Column(name="obs_value", role=ColumnRole.DATA),
     ]
 )
 
@@ -91,26 +92,28 @@ SERIES_OUTPUT = OutputConfig(
 @connector(output=SERIES_OUTPUT, tags=["acme", "data"])
 def acme_fetch(series_id: str, start: str = "2024-01-01") -> pd.DataFrame:
     """Fetch Acme time series observations."""
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {
             "series_id": ["A001", "A001"],
             "name": ["Acme Index", "Acme Index"],
             "freq": ["monthly", "monthly"],
             "obs_date": ["2024-01-01", "2024-02-01"],
-            "obs_value": ["100.5", "102.3"],  # strings — coerced to numeric
+            "obs_value": ["100.5", "102.3"],  # strings — the connector coerces, not the framework
         }
     )
+    df["obs_date"] = pd.to_datetime(df["obs_date"])
+    df["obs_value"] = pd.to_numeric(df["obs_value"])
+    return df
 
 
 result2 = acme_fetch(series_id="A001")
 
-assert "date" in result2.data.columns  # mapped_name applied
-assert "value" in result2.data.columns  # mapped_name applied
-assert pd.api.types.is_numeric_dtype(result2.data["value"])
+assert pd.api.types.is_numeric_dtype(result2.raw["obs_value"])
+assert pd.api.types.is_datetime64_any_dtype(result2.raw["obs_date"])
 
-cols_info = [(c.name, c.role.value) for c in result2.output_schema.columns]
+cols_info = [(c.name, c.role.value) for c in result2.columns]
 print(f"columns: {cols_info}")
-print(f"data:\n{result2.data.to_string(index=False)}")
+print(f"raw:\n{result2.raw.to_string(index=False)}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 3 — Secrets, require_key, and bind
@@ -168,10 +171,10 @@ print("\n" + "=" * 70)
 print("Stage 4 — Namespace annotation")
 print("=" * 70)
 
-FETCH_OUTPUT = OutputConfig(
+FETCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="acme_dates"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -215,15 +218,15 @@ print("\n" + "=" * 70)
 print("Stage 5 — Connectors collection")
 print("=" * 70)
 
-SEARCH_OUTPUT = OutputConfig(
+SEARCH_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="score", role=ColumnRole.DATA),
     ]
 )
 
-LIST_OUTPUT = OutputConfig(
+LIST_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme"),
         Column(name="label", role=ColumnRole.TITLE),
@@ -382,21 +385,22 @@ with tempfile.TemporaryDirectory() as tmp:
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 8 — Enumerator → Catalog: building from connector output
 #
-# An enumerator connector returns entity-discovery data.  Its OutputConfig
+# An enumerator connector returns entity-discovery data.  Its OutputSpec
 # declares a KEY column (with namespace=), TITLE column(s), and optional
-# METADATA columns.  OutputConfig.build_entities() converts the result
-# DataFrame into Entity instances ready for catalog ingestion.
+# METADATA columns.  Result.entities projects the result against that
+# OutputSpec into Entity instances ready for catalog ingestion — a lazy,
+# ref-keyed Mapping[EntityRef, Entity].
 #
 # Real connector packages use this pattern to build their snapshots:
-#   1. Call the enumerator to get a raw DataFrame.
-#   2. Call output_config.build_entities() to get the Entity list.
+#   1. Call the enumerator to get a Result.
+#   2. Read result.entities.values() to get the Entity list.
 #   3. Populate and build the Catalog.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
 print("Stage 8 — Enumerator → Catalog build")
 print("=" * 70)
 
-ENUM_OUTPUT = OutputConfig(
+ENUM_OUTPUT = OutputSpec(
     columns=[
         Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
         Column(name="name", role=ColumnRole.TITLE),
@@ -423,8 +427,8 @@ def acme_enumerate() -> pd.DataFrame:
 enum_result = acme_enumerate()
 assert enum_result.is_tabular
 
-# build_entities() uses the declared OUTPUT schema to extract Entity objects
-entities = enum_result.output_schema.build_entities(enum_result.data)
+# .entities projects the declared OutputSpec against .raw into Entity objects
+entities = list(enum_result.entities.values())
 assert len(entities) == 5
 assert entities[0].namespace == "acme2"
 assert entities[0].code == "CORE_CPI"
@@ -468,10 +472,10 @@ print("\n" + "=" * 70)
 print("Stage 9 — Full search-then-fetch with make_local_search_connector")
 print("=" * 70)
 
-FETCH_V2_OUTPUT = OutputConfig(
+FETCH_V2_OUTPUT = OutputSpec(
     columns=[
         Column(name="date", role=ColumnRole.KEY, namespace="acme2_obs"),
-        Column(name="value", role=ColumnRole.DATA, dtype="numeric"),
+        Column(name="value", role=ColumnRole.DATA),
     ]
 )
 
@@ -509,7 +513,7 @@ with tempfile.TemporaryDirectory() as tmp2:
             Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="category", role=ColumnRole.DATA),
-            Column(name="score", role=ColumnRole.DATA, dtype="numeric"),
+            Column(name="score", role=ColumnRole.DATA),
         ],
     )
     print(f"search connector: {acme_search_v2!r}")
@@ -518,7 +522,7 @@ with tempfile.TemporaryDirectory() as tmp2:
     # First call loads catalog from snap path, runs BM25 search
     r_search = acme_search_v2(query="core inflation prices")
     assert r_search.is_tabular
-    print(f"\nsearch 'core inflation prices':\n{r_search.data.to_string(index=False)}")
+    print(f"\nsearch 'core inflation prices':\n{r_search.raw.to_string(index=False)}")
 
     # EmptyDataError when no results match
     try:

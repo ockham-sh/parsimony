@@ -34,7 +34,7 @@ def main() -> None:
     # --- FRED: US GDP ---
     gdp = bundle["fred_fetch"](series_id="GDP")
     print("--- FRED: US GDP (last 3 quarters) ---")
-    print(gdp.df[["date", "value"]].tail(3).to_string(index=False))
+    print(gdp.raw[["date", "value"]].tail(3).to_string(index=False))
     print()
 
     # --- SDMX: ECB EUR/USD ---
@@ -45,7 +45,7 @@ def main() -> None:
         end_period="2024-06-30",
     )
     print("--- SDMX: ECB EUR/USD (June 2024) ---")
-    print(fx.df[["TIME_PERIOD", "value"]].tail(5).to_string(index=False))
+    print(fx.raw[["TIME_PERIOD", "value"]].tail(5).to_string(index=False))
 
 
 if __name__ == "__main__":

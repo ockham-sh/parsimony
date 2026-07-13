@@ -32,13 +32,13 @@ def main() -> None:
     # 1. Search for GDP series
     search_result = search(search_text="US gross domestic product")
     print("--- FRED Search: US GDP ---")
-    print(search_result.df[["id", "title"]].head(5).to_string(index=False))
+    print(search_result.raw[["id", "title"]].head(5).to_string(index=False))
     print()
 
     # 2. Fetch the headline GDP series
     result = fetch(series_id="GDP")
     print("--- GDP Observations (last 5 quarters) ---")
-    print(result.df[["date", "value"]].tail(5).to_string(index=False))
+    print(result.raw[["date", "value"]].tail(5).to_string(index=False))
 
 
 if __name__ == "__main__":

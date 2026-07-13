@@ -72,7 +72,7 @@ class TestConnectorBind:
         assert isinstance(bound, Connector)
         assert list(bound.exposed_signature.parameters) == ["query"]
         result = bound(query="GDP")
-        assert len(result.data) == 2
+        assert len(result.frame) == 2
         assert result.provenance.params == {"query": "GDP"}
 
     def test_bind_can_be_composed(self) -> None:
@@ -87,7 +87,7 @@ class TestConnectorBind:
         fully_bound = partially_bound.bind(base_url="https://example.test")
         assert list(fully_bound.exposed_signature.parameters) == ["query"]
         result = fully_bound(query="GDP")
-        assert len(result.data) == 2
+        assert len(result.frame) == 2
         assert result.provenance.params == {"query": "GDP"}
 
     def test_bind_rejects_unknown_argument(self) -> None:
@@ -194,13 +194,13 @@ class TestEnumerator:
 
         result = good_enumerator()
         assert result.is_tabular
-        assert list(result.data.columns) == ["code", "title"]
+        assert list(result.frame.columns) == ["code", "title"]
 
     def test_enumerator_manual_result_raises_typeerror(self) -> None:
         @enumerator(output=ENUMERATE_OUTPUT, name="bad_enumerator")
         def bad_enumerator() -> pd.DataFrame:
             """Returns Result instead of raw data."""
-            return Result(data=pd.DataFrame({"code": ["A"], "title": ["X"]}))  # type: ignore[return-value]
+            return Result(raw=pd.DataFrame({"code": ["A"], "title": ["X"]}))  # type: ignore[return-value]
 
         with pytest.raises(TypeError, match="must return raw data"):
             bad_enumerator()
@@ -276,13 +276,13 @@ class TestConnectorExecution:
     def test_execute_via_collection(self) -> None:
         result = _fake_connectors()["demo_search"]("GDP")
         assert isinstance(result, Result)
-        assert len(result.data) == 2
+        assert len(result.frame) == 2
         assert result.provenance.params == {"query": "GDP"}
 
     def test_execute_fetch_with_output_spec(self) -> None:
         result = demo_fetch(series_id="GDPC1")
         assert result.output_spec is not None
-        assert list(result.data.columns) == ["date", "value"]
+        assert list(result.frame.columns) == ["date", "value"]
         assert result.provenance.params == {"series_id": "GDPC1"}
 
     def test_missing_required_argument_raises_type_error(self) -> None:
@@ -355,7 +355,7 @@ class TestResultWrap:
         @connector
         def manual_result(series_id: str) -> Result:
             """Real connector docstring."""
-            return Result(data=_make_fetch_df())
+            return Result(raw=_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
             manual_result(series_id="GDPC1")
@@ -377,7 +377,7 @@ class TestResultWrap:
         @connector(output=FETCH_OUTPUT)
         def bad_fetch(series_id: str) -> Result:
             """Tabular fetch that incorrectly wraps a DataFrame in Result."""
-            return Result(data=_make_fetch_df())
+            return Result(raw=_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
             bad_fetch(series_id="GDPC1")
@@ -386,7 +386,7 @@ class TestResultWrap:
         @connector
         def with_props(series_id: str) -> Result:
             """Incorrectly returns Result."""
-            return Result(data=_make_fetch_df())
+            return Result(raw=_make_fetch_df())
 
         with pytest.raises(TypeError, match="must return raw data"):
             with_props(series_id="GDPC1")

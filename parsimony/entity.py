@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -44,10 +44,23 @@ def normalize_entity_code(value: str) -> str:
     return normalized
 
 
-def entity_key(namespace: str, code: str) -> tuple[str, str]:
+class EntityRef(NamedTuple):
+    """Canonical in-memory identity key: ``(namespace, code)``.
+
+    A plain tuple subclass — compares and hashes equal to a bare
+    ``(namespace, code)`` tuple, so it drops into any dict/mapping key
+    position without a migration. Named so ``Result.entities`` and
+    ``Result.data`` can share one key type for their parallel views.
+    """
+
+    namespace: str
+    code: str
+
+
+def entity_key(namespace: str, code: str) -> EntityRef:
     """Canonical in-memory key for ``(namespace, code)``."""
 
-    return (normalize_namespace(namespace), normalize_entity_code(code))
+    return EntityRef(normalize_namespace(namespace), normalize_entity_code(code))
 
 
 class Entity(BaseModel):
@@ -126,6 +139,7 @@ def _metadata_value(value: Any) -> Any:
 
 __all__ = [
     "Entity",
+    "EntityRef",
     "code_token",
     "entity_key",
     "field_text",

@@ -73,7 +73,7 @@ def test_to_entities_populates_metadata_columns() -> None:
         ]
     )
     provenance = Provenance(source="t", source_description="t")
-    entries = Result(data=df, provenance=provenance, output_spec=schema).to_entities()
+    entries = list(Result(raw=df, provenance=provenance, output_spec=schema).entities.values())
     assert len(entries) == 1
     assert entries[0].metadata == {
         "frequency": "M",
@@ -81,7 +81,7 @@ def test_to_entities_populates_metadata_columns() -> None:
     }
 
 
-def test_to_entities_requires_key_namespace() -> None:
+def test_entities_requires_key_namespace() -> None:
     schema = OutputSpec(
         columns=[
             Column(name="code", role=ColumnRole.KEY),
@@ -89,12 +89,12 @@ def test_to_entities_requires_key_namespace() -> None:
         ]
     )
     df = pd.DataFrame({"code": ["A"], "title": ["Alpha"]})
-    result = Result(data=df, provenance=Provenance(source="t", source_description="t"), output_spec=schema)
+    result = Result(raw=df, provenance=Provenance(source="t", source_description="t"), output_spec=schema)
     with pytest.raises(ValueError, match="must declare namespace"):
-        result.to_entities()
+        _ = result.entities
 
 
-def test_to_entities_allows_metadata_constant_per_entity_key() -> None:
+def test_entities_allows_metadata_constant_per_entity_key() -> None:
     df = pd.DataFrame(
         {
             "code": ["A", "A", "B"],
@@ -109,11 +109,11 @@ def test_to_entities_allows_metadata_constant_per_entity_key() -> None:
             Column(name="sector", role=ColumnRole.METADATA),
         ]
     )
-    entries = Result(data=df, output_spec=schema).to_entities()
+    entries = Result(raw=df, output_spec=schema).entities.values()
     assert {e.code: e.metadata["sector"] for e in entries} == {"A": "Tech", "B": "Energy"}
 
 
-def test_to_entities_rejects_varying_metadata_within_entity_key() -> None:
+def test_entities_rejects_varying_metadata_within_entity_key() -> None:
     df = pd.DataFrame(
         {
             "code": ["bench", "bench"],
@@ -129,7 +129,7 @@ def test_to_entities_rejects_varying_metadata_within_entity_key() -> None:
         ]
     )
     with pytest.raises(ValueError, match="conflicting values"):
-        Result(data=df, output_spec=schema).to_entities()
+        _ = Result(raw=df, output_spec=schema).entities
 
 
 def test_metadata_column_namespace_is_no_longer_allowed() -> None:

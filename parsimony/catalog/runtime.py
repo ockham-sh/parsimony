@@ -3,7 +3,7 @@
 This is the *convenience* path, not the way catalogs are built. A real catalog —
 curated, persistable, optionally vector-backed — is assembled through the
 lifecycle on :class:`~parsimony.catalog.Catalog` itself: construct, load entities
-(see :meth:`~parsimony.result.Result.to_entities` for the connector-result path,
+(see :attr:`~parsimony.result.Result.entities` for the connector-result path,
 or hand-build :class:`~parsimony.entity.Entity` rows directly),
 :meth:`~parsimony.catalog.Catalog.build`, and optionally
 :meth:`~parsimony.catalog.Catalog.save`.

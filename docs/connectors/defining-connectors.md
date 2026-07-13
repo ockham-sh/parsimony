@@ -183,7 +183,7 @@ def demo_search(query: str) -> pd.DataFrame:
     return pd.DataFrame({"id": ["A", "B"], "title": [query, "Other"]})
 
 result = demo_search(query="GDP")
-print(result.data)                    # the DataFrame you returned (also result.frame)
+print(result.raw)                     # the DataFrame you returned (also result.frame)
 print(result.provenance.source)       # 'demo_search'
 print(result.provenance.params)       # {'query': 'GDP'}
 ```
@@ -195,13 +195,13 @@ connector-named error rather than a raw binding failure.
 ## How return values are wrapped
 
 You return **raw data**; the framework builds the result envelope. There is one
-result type, `Result`; a DataFrame return is simply a `Result` whose `data` is the
+result type, `Result`; a DataFrame return is simply a `Result` whose `raw` is the
 frame (`result.is_tabular` is then `True`). The rules:
 
 | Return value | Result |
 |---|---|
 | `DataFrame` / `Series` | `Result` carrying the frame unchanged, plus `output_spec` if `output=` was set (`is_tabular`) |
-| scalar / `dict` / any other | `Result` (the value lands on `result.data`) |
+| scalar / `dict` / any other | `Result` (the value lands on `result.raw`) |
 | `tuple` | **`TypeError`** |
 | `Result` | **`TypeError`** |
 
@@ -230,7 +230,7 @@ provenance params — only call-time arguments are.
 When `output=` is an [`OutputSpec`](results.md), it is attached to the result as
 `result.output_spec` **verbatim** — the framework never inspects your returned DataFrame's
 columns against it, never coerces a dtype, never renames or reorders a column, and never drops or
-adds one. Whatever columns you return are exactly the columns on `result.data`.
+adds one. Whatever columns you return are exactly the columns on `result.raw`.
 
 ```python
 import pandas as pd
@@ -248,11 +248,11 @@ def fetch(series_id: str) -> pd.DataFrame:
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0], "extra": ["z"]})
 
 result = fetch(series_id="X")
-assert list(result.data.columns) == ["date", "value", "extra"]  # returned unchanged, incl. "extra"
+assert list(result.raw.columns) == ["date", "value", "extra"]  # returned unchanged, incl. "extra"
 assert [c.name for c in result.output_spec.columns] == ["date", "value"]  # schema is unrelated
 ```
 
-`result.columns` (the schema's declared `Column`s, if you attached one) and `result.data.columns`
+`result.columns` (the schema's declared `Column`s, if you attached one) and `result.raw.columns`
 (the DataFrame's actual columns) are two independent things now — nothing keeps them in sync for
 you. Anything that needs both aligned — an [entity projection](results.md#entity-projection), a
 [data store load](../catalog/data-store.md) — validates that alignment itself, at the point it is

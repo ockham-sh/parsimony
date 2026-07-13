@@ -54,7 +54,7 @@ def test_bind_applies_matching_arguments_across_collection() -> None:
     assert list(bound["keyed_fetch"].exposed_signature.parameters) == ["x"]
     assert list(bound["public_fetch"].exposed_signature.parameters) == ["x"]
     result = bound["keyed_fetch"](x="hello")
-    assert result.data == {"ok": True, "x": "hello", "key": "secret"}
+    assert result.raw == {"ok": True, "x": "hello", "key": "secret"}
     assert result.provenance.params == {"x": "hello"}
 
 

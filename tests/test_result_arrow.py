@@ -36,7 +36,7 @@ def _schema() -> OutputSpec:
 
 def test_to_arrow_embeds_provenance_metadata() -> None:
     result = Result(
-        data=_df(),
+        raw=_df(),
         provenance=Provenance(source="fred", source_description="FRED"),
     )
     table = result.to_arrow()
@@ -50,7 +50,7 @@ def test_arrow_roundtrip_schemaless_result() -> None:
         params={"k": "v"},
         properties={"series_url": "https://example.com/UNRATE"},
     )
-    result = Result(data=_df(), provenance=prov)
+    result = Result(raw=_df(), provenance=prov)
     table = result.to_arrow()
     roundtrip = Result.from_arrow(table)
     assert roundtrip.output_spec is None
@@ -63,7 +63,7 @@ def test_arrow_roundtrip_schemaless_result() -> None:
 def test_arrow_roundtrip_with_schema() -> None:
     """When output_spec is set, from_arrow restores it."""
     result = Result(
-        data=_df(),
+        raw=_df(),
         provenance=Provenance(source="fred", source_description="FRED"),
         output_spec=_schema(),
     )
@@ -114,7 +114,7 @@ def test_from_arrow_ignores_legacy_dtype_and_kind_fields() -> None:
 
 def test_parquet_roundtrip(tmp_path: Path) -> None:
     result = Result(
-        data=_df(),
+        raw=_df(),
         provenance=Provenance(
             source="fred",
             source_description="FRED",

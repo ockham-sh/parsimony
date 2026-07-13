@@ -41,24 +41,24 @@ datasets = CONNECTORS["sdmx_datasets_search"](
     agency="ESTAT",
     limit=5,
 )
-print(datasets.data[["flow_id", "title"]])
+print(datasets.raw[["flow_id", "title"]])
 
-dataset_id = datasets.data.iloc[0]["dataset_id"]
+dataset_id = datasets.raw.iloc[0]["dataset_id"]
 series = CONNECTORS["sdmx_series_search"](
     agency="ESTAT",
     dataset_id=dataset_id,
     query="euro area all items annual rate",
     limit=5,
 )
-print(series.data[["key", "title"]])
+print(series.raw[["key", "title"]])
 
-series_ref = series.data.iloc[0]["key"]
+series_ref = series.raw.iloc[0]["key"]
 result = CONNECTORS["sdmx_fetch"](
     dataset_ref=f"ESTAT-{dataset_id}",
     series_ref=series_ref,
     start_period="2020",
 )
-print(result.data.tail())
+print(result.raw.tail())
 ```
 
 ## Defining a connector
@@ -80,7 +80,7 @@ def latest_price(symbol: str) -> pd.DataFrame:
     return pd.DataFrame({"symbol": [symbol], "currency": ["USD"], "price": [101.50]})
 
 result = latest_price(symbol="ACME")
-print(result.data)
+print(result.raw)
 
 connectors = Connectors([latest_price])  # bundle several connectors; `+` combines bundles
 ```
@@ -120,7 +120,7 @@ def list_series() -> pd.DataFrame:
 
 listed = list_series()             # -> Result, carrying SERIES_OUTPUT as its output_spec
 catalog = Catalog("macro")
-catalog.set_entities(listed.to_entities())
+catalog.set_entities(listed.entities.values())
 catalog.build()
 
 @connector(tags=["search"])
@@ -132,7 +132,7 @@ def macro_search(query: str) -> pd.DataFrame:
     )
 
 hits = macro_search(query="unemployment")
-print(hits.data)
+print(hits.raw)
 ```
 
 Some plugins use published catalogs from [Hugging Face](https://huggingface.co/parsimony-dev) to make sources such as Eurostat, ECB, and IMF searchable. See [Catalog](docs/catalog/index.md) for indexes and saved catalogs.

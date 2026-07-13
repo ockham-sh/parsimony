@@ -8,7 +8,7 @@ def test_readme_import_surface() -> None:
         Column,
         ColumnRole,
         Connectors,
-        EntityResult,
+        EntityRef,
         OutputSpec,
         Provenance,
         Result,
@@ -23,7 +23,7 @@ def test_readme_import_surface() -> None:
     assert Column(name="x", role=ColumnRole.KEY, namespace="ns").role == ColumnRole.KEY
     assert OutputSpec is not None
     assert Provenance is not None
-    assert EntityResult is not None
+    assert EntityRef("ns", "code") == ("ns", "code")
 
 
 def test_contract_error_imports() -> None:

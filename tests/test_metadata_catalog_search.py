@@ -42,7 +42,7 @@ def _enumeration_schema() -> OutputSpec:
     )
 
 
-def test_to_entities_keeps_description_as_metadata() -> None:
+def test_entities_keeps_description_as_metadata() -> None:
     df = pd.DataFrame(
         {
             "code": ["A.1", "B.2"],
@@ -51,7 +51,7 @@ def test_to_entities_keeps_description_as_metadata() -> None:
             "unit": ["USD", "USD"],
         }
     )
-    entries = Result(data=df, output_spec=_enumeration_schema()).to_entities()
+    entries = Result(raw=df, output_spec=_enumeration_schema()).entities.values()
 
     by_code = {entry.code: entry for entry in entries}
     assert by_code["A.1"].metadata["description"] == "All outstanding debt held by the public."
@@ -69,7 +69,7 @@ def test_metadata_is_searchable_only_when_index_targets_it() -> None:
             "unit": ["USD"] * 10 + ["MWh"],
         }
     )
-    entries = Result(data=df, output_spec=_enumeration_schema()).to_entities()
+    entries = Result(raw=df, output_spec=_enumeration_schema()).entities.values()
 
     title_only = Catalog(name="test_ns")
     title_only.set_entities(entries)

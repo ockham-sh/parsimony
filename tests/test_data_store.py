@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from parsimony.connector import Connectors, loader
+from parsimony.entity import EntityRef
 from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 from parsimony.stores import InMemoryDataStore, LoadResult
 
@@ -23,22 +24,22 @@ def demo_loader(q: str = "x") -> pd.DataFrame:
     return pd.DataFrame({"code_col": ["A"], "obs": [1.0]})
 
 
-def test_result_entities_extracts_data_columns_only() -> None:
+def test_result_data_extracts_data_columns_only() -> None:
     table = Result(
-        data=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
+        raw=pd.DataFrame({"code_col": ["X"], "obs": [42.0], "extra": ["z"]}),
         provenance=Provenance(source="t", source_description="t"),
         output_spec=LOAD_SCHEMA,
     )
-    entities = table.entities
-    assert len(entities) == 1
-    entity_result = entities["test_ns", "X"]
-    assert list(entity_result.data.columns) == ["obs"]
-    assert entity_result.data["obs"].iloc[0] == 42.0
+    data = table.data
+    assert len(data) == 1
+    frame = data[EntityRef("test_ns", "X")]
+    assert list(frame.columns) == ["obs"]
+    assert frame["obs"].iloc[0] == 42.0
 
 
-def test_result_entities_groups_by_key() -> None:
+def test_result_data_groups_by_key() -> None:
     table = Result(
-        data=pd.DataFrame(
+        raw=pd.DataFrame(
             {
                 "code_col": ["A", "B", "A"],
                 "obs": [1.0, 2.0, 3.0],
@@ -47,11 +48,12 @@ def test_result_entities_groups_by_key() -> None:
         provenance=Provenance(source="t", source_description="t"),
         output_spec=LOAD_SCHEMA,
     )
-    entities = table.entities
-    assert len(entities) == 2
-    assert len(entities["test_ns", "A"].data) == 2
-    assert len(entities["test_ns", "B"].data) == 1
-    assert list(entities["test_ns", "A"].data.columns) == ["obs"]
+    data = table.data
+    assert len(data) == 2
+    assert len(data[EntityRef("test_ns", "A")]) == 2
+    assert len(data[EntityRef("test_ns", "B")]) == 1
+    assert list(data[EntityRef("test_ns", "A")].columns) == ["obs"]
+    assert data.keys() == table.entities.keys()
 
 
 def test_loader_requires_key_namespace() -> None:
@@ -70,7 +72,7 @@ def test_load_result_skips_existing_keys() -> None:
     store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = Result(
-        data=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
+        raw=pd.DataFrame({"code_col": ["A", "B"], "obs": [1.0, 2.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_spec=LOAD_SCHEMA,
     )
@@ -89,7 +91,7 @@ def test_load_result_force_upserts_existing() -> None:
     store.upsert("test_ns", "A", pd.DataFrame({"obs": [0.0]}))
 
     table = Result(
-        data=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
+        raw=pd.DataFrame({"code_col": ["A"], "obs": [9.0]}),
         provenance=Provenance(source="t", source_description="t"),
         output_spec=LOAD_SCHEMA,
     )

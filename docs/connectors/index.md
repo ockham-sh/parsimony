@@ -35,12 +35,12 @@ def demo_search(query: str) -> pd.DataFrame:
 result = demo_search(query="GDP")
 print(result.provenance.source)   # demo_search
 print(result.provenance.params)   # {'query': 'GDP'}
-print(len(result.data))           # 2
+print(len(result.raw))            # 2
 ```
 
 Calling a connector returns its result directly. The return value is always a
 `Result`. When the connector returns a DataFrame or Series the result is
-*tabular* (`result.is_tabular` is `True`); otherwise `data` carries the scalar
+*tabular* (`result.is_tabular` is `True`); otherwise `raw` carries the scalar
 or dict unchanged.
 
 !!! note "Import path"
@@ -194,7 +194,7 @@ result = bundle["demo_fetch"](series_id="X1")
 
 print(result.provenance.source)             # demo_fetch
 print(result.provenance.params)             # {'series_id': 'X1'} — api_key stripped
-print(result.data["value"].tolist())        # [1.0, 2.0]
+print(result.raw["value"].tolist())         # [1.0, 2.0]
 ```
 
 A few things to notice:
@@ -204,7 +204,7 @@ A few things to notice:
   **name**, not an integer index.
 - `bind` returns a *new* connector — `Connector` is frozen — with `api_key`
   fixed and removed from the public signature.
-- `result.data["value"]` is exactly the `float` values the function returned —
+- `result.raw["value"]` is exactly the `float` values the function returned —
   `OutputSpec` declares `value` as `DATA` but never touches the values
   themselves.
 

@@ -140,8 +140,12 @@ class Catalog:
     # Mutation
     # ------------------------------------------------------------------
 
-    def set_entities(self, entries: list[Entity]) -> None:
-        """Replace entries without rebuilding indexes."""
+    def set_entities(self, entries: Iterable[Entity]) -> None:
+        """Replace entries without rebuilding indexes.
+
+        Accepts any iterable of :class:`Entity` — a plain ``list``, or the
+        ``dict_values`` view returned by ``result.entities.values()``.
+        """
         self._entities = []
         self._key_to_idx = {}
         self._upsert_entities(entries)
@@ -692,7 +696,7 @@ class Catalog:
         if self._dirty:
             raise ValueError(f"Catalog entries or indexes changed — call catalog.build() before it can be {action}")
 
-    def _upsert_entities(self, entries: list[Entity]) -> None:
+    def _upsert_entities(self, entries: Iterable[Entity]) -> None:
         for entry in entries:
             key = (entry.namespace, entry.code)
             if key in self._key_to_idx:

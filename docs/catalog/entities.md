@@ -223,20 +223,21 @@ assert field_text(e, "tags") == "labor rates"
 ## Turning a DataFrame into entities
 
 Connectors return raw DataFrames, not entities. The path from a tabular `Result` to
-`list[Entity]` is `Result.to_entities()` (see
+entities is `Result.entities` (see
 [results and output schemas](../connectors/results.md#entity-projection)), which projects
-the result's `output_spec` against `result.data` and returns just the identity side of
-each entity — namespace, code, title, metadata — dropping the `DATA` rows.
+the result's `output_spec` against `result.raw` and returns just the identity side of
+each entity — namespace, code, title, metadata — dropping the `DATA` rows. It is a lazy
+`Mapping[EntityRef, Entity]`; call `.values()` for a plain iterable.
 
 !!! tip "Just want to search a frame you already hold?"
-    `to_entities()` builds a *curated* catalog — explicit column roles, key grouping,
+    `Result.entities` builds a *curated* catalog — explicit column roles, key grouping,
     metadata-consistency checks, ready to persist. If instead you have a DataFrame in
     hand and only want to find rows in it, reach for
     [`auto_catalog(df)`](search.md#ad-hoc-runtime-catalogs): every row becomes an
     entity, every column becomes searchable, and you get back an already-built catalog.
     It is a convenience over the runtime path, not the way catalogs are built.
 
-### `Result.to_entities()`
+### `Result.entities`
 
 ```python
 import pandas as pd
@@ -258,19 +259,19 @@ schema = OutputSpec(
         Column(name="description", role=ColumnRole.METADATA),
     ]
 )
-result = Result(data=df, output_spec=schema)
-entities = result.to_entities()
+result = Result(raw=df, output_spec=schema)
+entities = list(result.entities.values())
 assert entities[0].namespace == "fred"
 assert entities[0].metadata == {"frequency": "M", "description": "Civilian unemployment rate"}
 ```
 
 Rows are grouped by the normalized `(namespace, code)` pair, so repeated keys collapse
-into one entity. Requirements, mirrored from `Result.entities`:
+into one entity. Requirements:
 
 - Exactly one `KEY` column, and that column must declare a `namespace=` — otherwise
   `ValueError: KEY column ... must declare namespace=... for entity projection`. Note
   that `namespace` may be omitted when the `OutputSpec` is *declared* — it is only
-  required at projection time, i.e. when `to_entities()` / `entities` is actually called.
+  required at projection time, i.e. when `entities` is actually accessed.
 - At most one `TITLE` column (optional). When absent, the code is used as the title.
 - `METADATA` columns are optional. A metadata column named `"*"` is a wildcard that
   claims every DataFrame column not already taken by the `KEY`, `TITLE`, `DATA`, or
@@ -292,8 +293,8 @@ schema = OutputSpec(
         Column(name="*", role=ColumnRole.METADATA),
     ]
 )
-result = Result(data=df, output_spec=schema)
-entities = result.to_entities()
+result = Result(raw=df, output_spec=schema)
+entities = list(result.entities.values())
 assert entities[0].metadata == {"sector": "Tech", "region": "US"}
 ```
 
@@ -304,12 +305,12 @@ assert entities[0].metadata == {"sector": "Tech", "region": "US"}
     of the same `code`) raises a `ValueError` — that column is observation `DATA`, not
     identity metadata, or your key is too coarse.
 
-Once you have a `list[Entity]`, hand it to a catalog with `set_entities`, then build
-and search. See [building and searching](search.md).
+Once you have entities, hand them to a catalog with `set_entities(result.entities.values())`,
+then build and search. See [building and searching](search.md).
 
 ## See also
 
 - [The Catalog](index.md) — the lifecycle that consumes entities and returns matches.
 - [Building and searching](search.md) — `set_entities`, `build`, and the query DSL that returns `CatalogMatch` results.
-- [Results and output schemas](../connectors/results.md) — `OutputSpec`, `Column`, `ColumnRole`, and `Result.entities`/`to_entities()`, the projection that produces entities from a tabular `Result`.
+- [Results and output schemas](../connectors/results.md) — `OutputSpec`, `Column`, `ColumnRole`, and `Result.entities`/`Result.data`, the projection that produces entities and observations from a tabular `Result`.
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — enumerators emit the DataFrames that become catalog entities.

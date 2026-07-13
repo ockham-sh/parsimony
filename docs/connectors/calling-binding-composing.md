@@ -12,7 +12,7 @@ Call a connector with keyword (or positional) arguments; the framework wraps
 the connector's raw return value in a [`Result`](results.md) with
 framework-built [`Provenance`](results.md). There is one result type: when the
 return is a DataFrame the result is tabular (`result.is_tabular`), otherwise the
-value lands on `result.data` as-is.
+value lands on `result.raw` as-is.
 
 ```python
 import pandas as pd
@@ -26,7 +26,7 @@ def demo_search(query: str) -> pd.DataFrame:
 
 
 result = demo_search(query="GDP")
-print(result.data)                    # the returned DataFrame (no output= schema here; also .frame)
+print(result.raw)                     # the returned DataFrame (no output= schema here; also .frame)
 print(result.provenance.source)       # "demo_search"
 print(result.provenance.params)       # {"query": "GDP"}
 ```
@@ -165,7 +165,7 @@ bundle = Connectors([demo_search, ping])
 
 
 result = bundle["demo_search"](query="GDP")
-print(len(result.data))
+print(len(result.raw))
 ```
 
 !!! warning "Indexing is by name, not by integer"

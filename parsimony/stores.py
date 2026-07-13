@@ -9,6 +9,7 @@ that cheap and lets the Protocol reclaim the generic name.
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 
 import pandas as pd
 from pydantic import BaseModel
@@ -52,7 +53,7 @@ class InMemoryDataStore:
         k = entity_key(namespace, code)
         self._rows.pop(k, None)
 
-    def exists(self, keys: list[tuple[str, str]]) -> set[tuple[str, str]]:
+    def exists(self, keys: Sequence[tuple[str, str]]) -> set[tuple[str, str]]:
         """Return the subset of (namespace, code) pairs that have stored data."""
         out: set[tuple[str, str]] = set()
         for ns, c in keys:
@@ -71,23 +72,23 @@ class InMemoryDataStore:
 
         With ``force=False``, skip entities already present in the store. With
         ``force=True``, upsert all entities. Delegates identity and grouping
-        entirely to :attr:`Result.entities` — no second grouping pass here.
+        entirely to :attr:`Result.data` — no second grouping pass here.
         """
         result = LoadResult()
-        entities = table.entities
-        result.total = len(entities)
-        if not entities:
+        data = table.data
+        result.total = len(data)
+        if not data:
             return result
 
-        keys = list(entities)
+        keys = list(data)
         existing: set[tuple[str, str]] = set() if force else self.exists(keys)
 
-        for (ns, code), entity_result in entities.items():
+        for (ns, code), frame in data.items():
             if not force and (ns, code) in existing:
                 result.skipped += 1
                 continue
             try:
-                self.upsert(ns, code, entity_result.data)
+                self.upsert(ns, code, frame)
                 result.loaded += 1
             except (OSError, RuntimeError, ValueError, TypeError) as exc:
                 logger.warning("InMemoryDataStore upsert failed for (%s, %s): %s", ns, code, exc)

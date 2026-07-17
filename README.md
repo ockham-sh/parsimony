@@ -19,7 +19,9 @@
 
 ---
 
-Parsimony is a framework for building connectors that give coding agents a single interface for finding and fetching data across many sources. 
+[Parsimony](https://parsimony.dev) is a Python framework for keeping your financial data sources organized, searchable, and accessible through a single interface for people and agents. 
+
+We try to keep it lightweight, simple, and [parsimonious](https://en.wikipedia.org/wiki/Occam's_razor).
 
 ## Quickstart
 

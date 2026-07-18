@@ -39,16 +39,16 @@ from parsimony_sdmx import CONNECTORS
 print(CONNECTORS.describe())
 
 datasets = CONNECTORS["sdmx_datasets_search"](
-    query="euro area inflation",
+    query="harmonised index of consumer prices",
     agency="ESTAT",
     limit=5,
 )
-print(datasets.raw[["flow_id", "title"]])
+print(datasets.raw[["dataset_ref", "title", "dimensions"]])
 
-dataset_id = datasets.raw.iloc[0]["dataset_id"]
+top = datasets.raw.iloc[0]
 series = CONNECTORS["sdmx_series_search"](
     agency="ESTAT",
-    dataset_id=dataset_id,
+    dataset_id=top["dataset_id"],
     query="euro area all items annual rate",
     limit=5,
 )
@@ -56,7 +56,7 @@ print(series.raw[["key", "title"]])
 
 series_ref = series.raw.iloc[0]["key"]
 result = CONNECTORS["sdmx_fetch"](
-    dataset_ref=f"ESTAT-{dataset_id}",
+    dataset_ref=top["dataset_ref"],
     series_ref=series_ref,
     start_period="2020",
 )

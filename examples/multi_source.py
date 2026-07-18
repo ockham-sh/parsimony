@@ -39,8 +39,8 @@ def main() -> None:
 
     # --- SDMX: ECB EUR/USD ---
     fx = bundle["sdmx_fetch"](
-        dataset_key="ECB-EXR",
-        series_key="D.USD.EUR.SP00.A",
+        dataset_ref="ECB-EXR",
+        series_ref="D.USD.EUR.SP00.A",
         start_period="2024-06-01",
         end_period="2024-06-30",
     )

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import pyarrow.parquet as pq
 from pydantic import BaseModel, ConfigDict, Field
@@ -66,10 +66,6 @@ class CatalogMeta(BaseModel):
     default_field: str | None = None
     backend: BackendMeta = Field(default_factory=BackendMeta)
     build: BuildInfo = Field(default_factory=BuildInfo)
-    sdmx: dict[str, Any] | None = Field(
-        default=None,
-        description="Optional provider extension block; must not alter backend semantics.",
-    )
 
 
 def read_meta(path: str | Path) -> CatalogMeta:

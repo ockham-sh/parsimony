@@ -6,10 +6,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pyarrow.parquet as pq
-from pydantic import BaseModel, ConfigDict, Field
 
 from parsimony.catalog.storage import (
     ENTRIES_FILENAME,
@@ -44,8 +43,6 @@ def manifest_contract_payload(meta: CatalogMeta) -> dict[str, Any]:
         "default_field": meta.default_field,
         "backend": backend,
     }
-    if meta.sdmx is not None:
-        payload["sdmx"] = meta.sdmx
     return payload
 
 
@@ -155,37 +152,3 @@ def validate_catalog_snapshot(catalog_dir: Path, *, meta: CatalogMeta | None = N
 
     _validate_indexes(src, parsed.index_fields)
     return parsed
-
-
-class ReleaseManifestEntry(BaseModel):
-    """One catalog in a published catalog release."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    namespace: str
-    catalog_kind: Literal["datasets", "codelist", "series"]
-    agency: str | None = None
-    flow_id: str | None = None
-    entry_count: int = Field(ge=0)
-    content_sha256: str
-    manifest_contract_sha256: str
-    path: str
-
-
-class ReleaseManifest(BaseModel):
-    """Top-level release manifest for publication readiness."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    schema_version: Literal[1] = 1
-    release_id: str
-    built_at: str
-    package_commit_sha: str | None = None
-    validator_version: str
-    agencies: list[str]
-    dataset_catalogs: list[str]
-    codelist_count: int = Field(ge=0)
-    structure_marker_count: int = Field(ge=0)
-    series_catalog_count: int = Field(ge=0)
-    skipped_flows: list[dict[str, str]] = Field(default_factory=list)
-    catalogs: list[ReleaseManifestEntry] = Field(default_factory=list)

@@ -124,6 +124,57 @@ def test_catalog_load_runs_validation(tmp_path: Path) -> None:
         Catalog.load(f"file://{bundle}")
 
 
+# meta.json of a series catalog published to hf://parsimony-dev/sdmx (provider
+# extension block stripped). The pinned digest below is what every published
+# catalog stores after the strip sweep — a change to the contract payload rule
+# stops them all from loading.
+_SERIES_META = {
+    "schema_version": 1,
+    "name": "sdmx_series_estat_med_rd6",
+    "namespaces": ["sdmx_series_estat_med_rd6"],
+    "entry_count": 3,
+    "index_fields": {
+        "title": "bm25",
+        "freq_code": "bm25",
+        "freq_label": "hybrid",
+        "unit_code": "bm25",
+        "unit_label": "hybrid",
+        "geo_code": "bm25",
+        "geo_label": "hybrid",
+    },
+    "default_field": "title",
+    "backend": {
+        "kind": "parquet",
+        "rows_filename": "series.parquet",
+        "namespace": "sdmx_series_estat_med_rd6",
+        "code_column": "key",
+        "title_column": "title",
+        "field_links": {
+            "freq_label": "freq_code",
+            "unit_label": "unit_code",
+            "geo_label": "geo_code",
+        },
+    },
+    "build": {
+        "built_at": "2026-06-19T00:58:59.076900Z",
+        "parsimony_version": None,
+        "builder": None,
+        "content_sha256": "8893ed3b6195e5727d194566d760de73081e65d23e9338e1ed48a8b1eb850774",
+        "manifest_contract_sha256": "b71fdcacd37735a8403ae7a7069e9f770ffe53c01d1c1f0213ff60f5fae12579",
+    },
+}
+
+
+def test_published_series_manifest_digest_pinned() -> None:
+    meta = CatalogMeta.model_validate(_SERIES_META)
+    assert compute_manifest_contract_sha256(meta) == meta.build.manifest_contract_sha256
+
+
+def test_unknown_manifest_key_rejected() -> None:
+    with pytest.raises(ValidationError):
+        CatalogMeta.model_validate({**_SERIES_META, "sdmx": {"dsd_order": ["freq"]}})
+
+
 def test_bm25_index_accepts_values_that_tokenize_empty(tmp_path: Path) -> None:
     catalog = Catalog(name="demo", indexes={"label": BM25Index()})
     catalog.set_entities([Entity(namespace="demo", code="A", title="alpha", metadata={"label": "-"})])

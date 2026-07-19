@@ -20,7 +20,7 @@ import json
 import shutil
 import tempfile
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -108,11 +108,10 @@ class Catalog:
         *,
         indexes: dict[str, CatalogIndex] | None = None,
         field_links: dict[str, str] | None = None,
-        backend: CatalogBackendConfig | None = None,
     ) -> None:
         self.name = normalize_namespace(name)
         self._field_links = dict(field_links or {})
-        self._backend_config = backend or CatalogBackendConfig()
+        self._backend_config = CatalogBackendConfig()
         self._default_index_policy = indexes is None
         self._indexes: dict[str, CatalogIndex] = dict(indexes) if indexes is not None else {}
         self._entities: list[Entity] = []
@@ -132,10 +131,6 @@ class Catalog:
     @property
     def indexes(self) -> dict[str, CatalogIndex]:
         return dict(self._indexes)
-
-    @property
-    def is_parquet_backend(self) -> bool:
-        return self._backend is not None
 
     def __len__(self) -> int:
         return self._backend.count() if self._backend is not None else len(self._entities)
@@ -297,16 +292,17 @@ class Catalog:
 
         filter_spec = self._normalize_filter_spec(filter_spec)
 
-        # Dispatch
+        # Dispatch: every scored path funnels into _scored_search; a DSL
+        # clause arrives as multiple values on its single field.
         if surface is not None and len(surface) > 1:
             assert query is not None  # guaranteed by the fields= validation above
-            matches = self._search_fields(
-                surface, query, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            matches = self._scored_search(
+                surface, (query,), filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
             )
         elif field is not None:
             values: Sequence[str] = multi_values if multi_values is not None else (query,)  # type: ignore[assignment]
-            matches = self._search_field(
-                field, values, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            matches = self._scored_search(
+                [field], values, filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
             )
         elif query is not None:
             broad_field = self._resolve_default_field()
@@ -315,8 +311,8 @@ class Catalog:
                     f"This catalog requires fields= or filter=. "
                     f"Indexed fields: [{', '.join(repr(f) for f in sorted(self._indexes))}]"
                 )
-            matches = self._search_field(
-                broad_field, (query,), filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
+            matches = self._scored_search(
+                [broad_field], (query,), filter_spec=filter_spec or None, limit=limit, top_k_values=top_k_values
             )
         else:
             matches = self._search_filter_only(filter_spec, limit=limit)
@@ -366,16 +362,12 @@ class Catalog:
     # ------------------------------------------------------------------
 
     def _normalize_filter_spec(self, filter_spec: dict[str, Sequence[str]]) -> dict[str, Sequence[str]]:
-        if not filter_spec or not isinstance(self._backend, ParquetRowBackend):
+        if not filter_spec or self._backend is None:
             return filter_spec
         columns = set(self._backend.column_names())
-        aliases = {
-            "code": self._backend_config.code_column,
-            "title": self._backend_config.title_column,
-        }
         normalized: dict[str, Sequence[str]] = {}
         for field, values in filter_spec.items():
-            column = aliases.get(field, field)
+            column = self._coverage_column(field)
             if column not in columns:
                 raise InvalidParameterError(
                     "catalog",
@@ -383,30 +375,6 @@ class Catalog:
                 )
             normalized[column] = values
         return normalized
-
-    def _search_fields(
-        self,
-        fields: list[str],
-        query: str,
-        *,
-        filter_spec: FilterSpec | None,
-        limit: int,
-        top_k_values: int,
-    ) -> list[CatalogMatch]:
-        """Multi-field surface search — one pass over candidate rows."""
-        return self._scored_search(fields, (query,), filter_spec=filter_spec, limit=limit, top_k_values=top_k_values)
-
-    def _search_field(
-        self,
-        field: str,
-        values: Sequence[str],
-        *,
-        filter_spec: FilterSpec | None,
-        limit: int,
-        top_k_values: int,
-    ) -> list[CatalogMatch]:
-        """Single-surface search (a DSL clause arrives as multiple *values*)."""
-        return self._scored_search([field], values, filter_spec=filter_spec, limit=limit, top_k_values=top_k_values)
 
     def _scored_search(
         self,
@@ -448,27 +416,11 @@ class Catalog:
             return []
 
         scored_rows: list[tuple[float, float, MatchedKind | None, Entity]] = []
-        if isinstance(self._backend, ParquetRowBackend):
-            for row in self._backend.iter_rows(filter_spec=filter_spec or None, any_of=candidates):
-                row_values = {
-                    column: [str(row[column])] if row.get(column) is not None else [] for column in candidates
-                }
-                coverage, score, matched = _grade_row(row_values, plans)
-                if coverage <= 0.0 and score <= 0.0:
-                    continue
-                scored_rows.append((coverage, score, matched, entity_from_row(row, config=self._backend_config)))
-        else:
-            columns_by_field = {self._coverage_column(name): name for name in fields}
-            for entity in self._entities:
-                if filter_spec and not entity_matches_filter(entity, filter_spec):
-                    continue
-                row_values = {
-                    column: [str(v) for v in field_values(entity, name)] for column, name in columns_by_field.items()
-                }
-                coverage, score, matched = _grade_row(row_values, plans)
-                if coverage <= 0.0 and score <= 0.0:
-                    continue
-                scored_rows.append((coverage, score, matched, entity))
+        for row_values, entity in self._candidate_rows(fields, candidates, filter_spec=filter_spec or None):
+            coverage, score, matched = _grade_row(row_values, plans)
+            if coverage <= 0.0 and score <= 0.0:
+                continue
+            scored_rows.append((coverage, score, matched, entity))
 
         if len(fields) == 1:
             # A single-field surface has no cross-field union to accumulate, so
@@ -487,6 +439,35 @@ class Catalog:
             catalog_match_from_entity(entity, score=score, coverage=coverage, matched=matched)
             for coverage, score, matched, entity in scored_rows[:limit]
         ]
+
+    def _candidate_rows(
+        self,
+        fields: list[str],
+        candidates: dict[str, list[str]],
+        *,
+        filter_spec: FilterSpec | None,
+    ) -> Iterator[tuple[dict[str, list[str]], Entity]]:
+        """Yield ``(field values by column, result entity)`` per candidate row.
+
+        The layout decides only where rows come from: the attached parquet
+        file streamed through the candidate-value pushdown, or the in-memory
+        entity list. Grading is the caller's single path either way.
+        """
+        if self._backend is not None:
+            for row in self._backend.iter_rows(filter_spec=filter_spec, any_of=candidates):
+                row_values = {
+                    column: [str(row[column])] if row.get(column) is not None else [] for column in candidates
+                }
+                yield row_values, entity_from_row(row, config=self._backend_config)
+        else:
+            columns_by_field = {self._coverage_column(name): name for name in fields}
+            for entity in self._entities:
+                if filter_spec and not entity_matches_filter(entity, filter_spec):
+                    continue
+                row_values = {
+                    column: [str(v) for v in field_values(entity, name)] for column, name in columns_by_field.items()
+                }
+                yield row_values, entity
 
     def _value_plans(self, fields: list[str], values: Sequence[str], *, top_k_values: int) -> list[_ValuePlan]:
         """Per query value: (query tokens, score tables, evidence kinds, consumed values) by column."""
@@ -525,10 +506,9 @@ class Catalog:
         return aliases.get(field, field)
 
     def _search_filter_only(self, filter_spec: FilterSpec, *, limit: int) -> list[CatalogMatch]:
-        if isinstance(self._backend, ParquetRowBackend):
-            backend = self._backend
+        if self._backend is not None:
             matches: list[CatalogMatch] = []
-            for row in backend.iter_rows(filter_spec=filter_spec):
+            for row in self._backend.iter_rows(filter_spec=filter_spec):
                 matches.append(catalog_match_from_entity(entity_from_row(row, config=self._backend_config), score=1.0))
                 if len(matches) >= limit:
                     break
@@ -539,7 +519,7 @@ class Catalog:
 
     def _linked_value(self, field: str, value: str, link_field: str) -> str | None:
         """Resolve the linked field value for a given indexed value."""
-        if isinstance(self._backend, ParquetRowBackend):
+        if self._backend is not None:
             # Scan parquet: find first row where field==value and return link_field
             for row in self._backend.iter_rows(filter_spec={field: [value]}, columns=[link_field]):
                 lv = row.get(link_field)
@@ -655,9 +635,9 @@ class Catalog:
             meta.name,
             indexes=indexes,
             field_links=dict(meta.backend.field_links),
-            backend=backend_config,
         )
         catalog._default_index_policy = False
+        catalog._backend_config = backend_config
 
         if backend_config.kind == "parquet":
             rows_name = backend_config.rows_path or ENTRIES_FILENAME
@@ -677,9 +657,6 @@ class Catalog:
     def _resolve_default_field(self) -> str | None:
         """Broad (no-``fields=``) search targets the ``title`` index, by convention."""
         return "title" if "title" in self._indexes else None
-
-    def _indexed_fields(self) -> list[str]:
-        return sorted(self._indexes)
 
     def _invalidate(self) -> None:
         self._dirty = True
@@ -745,10 +722,11 @@ class Catalog:
 
     def _write_meta(self, target: Path, builder: str | None) -> None:
         content_sha = _compute_content_sha256(target)
-        row_count = self._backend.count() if self._backend is not None else len(self._entities)
-        if self.is_parquet_backend:
+        if self._backend is not None:
+            row_count = self._backend.count()
             namespaces = [self._backend_config.namespace or self.name]
         else:
+            row_count = len(self._entities)
             namespaces = sorted({entry.namespace for entry in self._entities})
         meta = CatalogMeta(
             name=self.name,

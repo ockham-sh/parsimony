@@ -52,9 +52,9 @@ whose message tells you what to do:
 Catalog entries or indexes changed — call catalog.build() before it can be searched
 ```
 
-The mutating methods that mark a catalog dirty are `set_entities`, `set_index`, `set_indexes`,
-`update_indexes`, and `delete_many`. `get()` does not require a build and never raises this
-error. Re-run `catalog.build()` after any mutation.
+The mutating methods that mark a catalog dirty are `set_entities` and `set_indexes`. `get()`
+does not require a build and never raises this error. Re-run `catalog.build()` after any
+mutation.
 
 !!! warning "Build before you search or save"
     Forgetting to `catalog.build()` is the most common foot-gun. The error is an ordinary
@@ -133,7 +133,7 @@ print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 ```
 
 **Explicit indexes**. Pass a dict to take full control. No indexes are ever added silently, and
-any of `set_index` / `set_indexes` / `update_indexes` permanently switches the catalog off the
+`set_indexes` permanently switches the catalog off the
 default policy. Use this when you want a vector or hybrid backend on a specific field, or want to
 restrict search to a known set of surfaces. The available index types — `BM25Index`,
 `VectorIndex`, `HybridIndex` — are covered in [Indexes](indexes.md).

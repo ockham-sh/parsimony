@@ -153,7 +153,7 @@ for match in matches:
 `search` returns a `list[CatalogMatch]`. Each `CatalogMatch` carries the entity's `namespace`, `code`, `title`, `metadata`, and a final `score`.
 
 !!! warning "Build before you search"
-    Every mutation (`set_entities`, `set_index`, `delete_many`, …) marks the
+    Every mutation (`set_entities`, `set_indexes`, …) marks the
     catalog dirty. Calling `search()` or `save()` while dirty raises a plain
     `ValueError` whose message tells you to `catalog.build()` first.
     Re-run `build()` after any change.

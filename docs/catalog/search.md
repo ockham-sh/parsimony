@@ -63,7 +63,7 @@ catalog.build()
 print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 ```
 
-Calling any of `set_index`, `set_indexes`, or `update_indexes` permanently disables the
+Calling `set_indexes` permanently disables the
 default policy — once you take manual control, `build()` will not re-derive metadata-key
 indexes.
 
@@ -81,9 +81,6 @@ that always happens in `build()`.
 | Method | Effect |
 |---|---|
 | `set_entities(entries: list[Entity])` | Replace all entries. Entries are upserted by `(namespace, code)`, so duplicate keys overwrite earlier ones rather than appending. |
-| `delete_many(keys)` | Remove entries by `(namespace, code)` pairs. Returns the count removed (`0` if none matched). |
-| `set_index(field, index)` | Replace one field index. Disables the default policy. |
-| `update_indexes(indexes)` | Merge field indexes into the current set. Disables the default policy. |
 | `set_indexes(indexes)` | Replace the entire index set. Disables the default policy. |
 | `get(namespace, code)` | Look up a single `Entity` by key, or `None`. This does *not* require a build. |
 
@@ -112,8 +109,8 @@ over the current entries. The rebuild is guarded by a `threading.Lock`, and a si
 vector cache is threaded through all indexes in one build, so identical texts across fields
 are embedded once.
 
-Construction and every mutator (`set_entities`, `set_index`, `set_indexes`, `update_indexes`,
-`delete_many`) mark the catalog dirty. While dirty, `search()` and `save()` raise a plain
+Construction and every mutator (`set_entities`, `set_indexes`) mark the catalog dirty. While
+dirty, `search()` and `save()` raise a plain
 `ValueError`:
 
 ```text

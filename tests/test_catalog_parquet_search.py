@@ -125,10 +125,7 @@ def test_parquet_iter_rows_streams_scanner_batches() -> None:
         ]
         parquet = Path(tmp) / "rows.parquet"
         pq.write_table(pa.Table.from_pylist(rows), parquet)
-        backend = ParquetRowBackend(
-            parquet,
-            config=CatalogBackendConfig(kind="parquet", code_column="key", title_column="title"),
-        )
+        backend = ParquetRowBackend(parquet)
         spy = _DatasetSpy(backend._dataset)  # noqa: SLF001
         backend._dataset = spy  # type: ignore[assignment]  # noqa: SLF001
 
@@ -176,3 +173,54 @@ def test_parquet_save_load_roundtrip() -> None:
         matches = loaded.search(filter={"REF_AREA_code": ["FR"]}, limit=5)
         assert len(matches) == 1
         assert matches[0].code == "B"
+
+
+def test_parquet_load_then_save_roundtrip() -> None:
+    """Regression: a loaded parquet catalog must be saveable again (rows path
+    comes from the attached backend, not from state only attach() sets)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        catalog = _build_parquet_catalog(root / "src")
+        catalog._save_to_path(root / "snap1")  # noqa: SLF001
+        loaded = Catalog.load(f"file://{root / 'snap1'}")
+        loaded._save_to_path(root / "snap2")  # noqa: SLF001
+        reloaded = Catalog.load(f"file://{root / 'snap2'}")
+        matches = reloaded.search(filter={"REF_AREA_code": ["FR"]}, limit=5)
+        assert [match.code for match in matches] == ["B"]
+
+
+def test_attach_requires_built_indexes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        parquet = Path(tmp) / "rows.parquet"
+        pq.write_table(pa.Table.from_pylist([{"key": "A", "title": "Alpha"}]), parquet)
+        catalog = Catalog("demo", indexes={"title": BM25Index()})
+        catalog.set_entities([Entity(namespace="demo", code="T:A", title="Alpha")])
+        with pytest.raises(ValueError, match=r"call build\(\) first"):
+            catalog.attach_parquet_rows(
+                parquet,
+                config=CatalogBackendConfig(kind="parquet", code_column="key", title_column="title"),
+            )
+
+
+def test_attach_twice_raises() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        catalog = _build_parquet_catalog(Path(tmp))
+        with pytest.raises(ValueError, match="already"):
+            catalog.attach_parquet_rows(
+                Path(tmp) / "rows.parquet",
+                config=CatalogBackendConfig(kind="parquet", code_column="key", title_column="title"),
+            )
+
+
+def test_build_after_attach_raises() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        catalog = _build_parquet_catalog(Path(tmp))
+        with pytest.raises(ValueError, match="attach_parquet_rows"):
+            catalog.build()
+
+
+def test_set_entities_after_attach_raises() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        catalog = _build_parquet_catalog(Path(tmp))
+        with pytest.raises(ValueError, match="attach_parquet_rows"):
+            catalog.set_entities([Entity(namespace="demo", code="X", title="X")])

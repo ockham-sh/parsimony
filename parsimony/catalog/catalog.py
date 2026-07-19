@@ -6,7 +6,7 @@ import json
 import shutil
 import tempfile
 import threading
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 import numpy as np
@@ -14,7 +14,6 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from parsimony.catalog.backends import (
-    InMemoryRowBackend,
     ParquetRowBackend,
     entity_from_row,
     entity_matches_filter,
@@ -67,11 +66,6 @@ def _default_indexes_from_entities(entries: list[Entity]) -> dict[str, CatalogIn
     return {field: BM25Index() for field in fields}
 
 
-def _starter_default_indexes() -> dict[str, CatalogIndex]:
-    """Placeholder until :meth:`Catalog.build` materializes defaults from entries."""
-    return {"title": BM25Index()}
-
-
 class Catalog:
     """Portable catalog over entries and configured indexes.
 
@@ -85,9 +79,13 @@ class Catalog:
     Entity field name each index reads. Multi-field scoring is a query-time
     concern — pass ``fields=[...]`` to :meth:`search`.
 
-    For large datasets, call :meth:`attach_parquet_rows` after :meth:`build`
-    to switch the row store to a lazy parquet backend; the index entities act
-    purely as the scoring surface, and actual rows are streamed on demand.
+    A catalog searches in one of two layouts. In the default *row-indexed*
+    layout the entities are the rows: :meth:`build` indexes them and
+    :meth:`search` returns them directly. In the *value-indexed* layout the
+    entities are codelist members (distinct dimension values such as
+    ``geo:DE``) and each row of a parquet file attached via
+    :meth:`attach_parquet_rows` is a composition of members; search matches
+    members in the indexes, then streams the rows composed with them.
     """
 
     def __init__(
@@ -104,11 +102,10 @@ class Catalog:
         self._field_links = dict(field_links or {})
         self._backend_config = backend or CatalogBackendConfig()
         self._default_index_policy = indexes is None
-        self._indexes: dict[str, CatalogIndex] = dict(indexes) if indexes is not None else _starter_default_indexes()
+        self._indexes: dict[str, CatalogIndex] = dict(indexes) if indexes is not None else {}
         self._entities: list[Entity] = []
         self._key_to_idx: dict[tuple[str, str], int] = {}
-        self._backend: InMemoryRowBackend | ParquetRowBackend | None = None
-        self._parquet_source: Path | None = None
+        self._backend: ParquetRowBackend | None = None
         self._dirty = True
         self._lock = threading.Lock()
         self._validate_indexes()
@@ -126,15 +123,11 @@ class Catalog:
         return dict(self._indexes)
 
     @property
-    def field_links(self) -> dict[str, str]:
-        return dict(self._field_links)
-
-    @property
     def is_parquet_backend(self) -> bool:
-        return self._backend_config.kind == "parquet"
+        return self._backend is not None
 
     def __len__(self) -> int:
-        return len(self._entities) if not self.is_parquet_backend else (self._backend.count() if self._backend else 0)
+        return self._backend.count() if self._backend is not None else len(self._entities)
 
     # ------------------------------------------------------------------
     # Mutation
@@ -146,23 +139,13 @@ class Catalog:
         Accepts any iterable of :class:`Entity` — a plain ``list``, or the
         ``dict_values`` view returned by ``result.entities.values()``.
         """
+        if self._backend is not None:
+            raise ValueError(
+                "set_entities() is not supported after attach_parquet_rows() — the parquet file is the row population"
+            )
         self._entities = []
         self._key_to_idx = {}
         self._upsert_entities(entries)
-        self._invalidate()
-
-    def set_index(self, field: str, index: CatalogIndex) -> None:
-        """Replace one field index without rebuilding."""
-        self._indexes[field] = index
-        self._default_index_policy = False
-        self._validate_indexes()
-        self._invalidate()
-
-    def update_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
-        """Merge or replace field indexes without rebuilding."""
-        self._indexes.update(indexes)
-        self._default_index_policy = False
-        self._validate_indexes()
         self._invalidate()
 
     def set_indexes(self, indexes: dict[str, CatalogIndex]) -> None:
@@ -172,24 +155,33 @@ class Catalog:
         self._validate_indexes()
         self._invalidate()
 
-    def set_field_links(self, field_links: dict[str, str]) -> None:
-        self._field_links = dict(field_links)
-
     def attach_parquet_rows(self, parquet_path: Path, *, config: CatalogBackendConfig) -> None:
-        """Bind a flat parquet file as the row backend.
+        """Switch the catalog to the value-indexed layout: rows come from *parquet_path*.
 
-        Indexes must be built first (call :meth:`build`). After attaching, all
-        searches stream rows from *parquet_path* instead of from in-memory entities.
+        Call exactly once, after :meth:`build`. The entities indexed by
+        :meth:`build` are discarded into the indexes as the scoring surface —
+        they are members (distinct dimension values), while the parquet rows
+        are the compositions searched over: a different, usually far larger
+        population. After attaching, :attr:`entities` is empty and :meth:`get`
+        returns ``None`` (honest emptiness, not an error), and calling
+        :meth:`build` or :meth:`set_entities` raises.
         """
+        if self._dirty:
+            raise ValueError("attach_parquet_rows() requires built indexes — call build() first")
+        if self._backend is not None:
+            raise ValueError("attach_parquet_rows() was already called — a catalog takes its rows exactly once")
         self._backend_config = config
-        self._parquet_source = Path(parquet_path)
-        self._backend = ParquetRowBackend(self._parquet_source, config=config)
+        self._backend = ParquetRowBackend(Path(parquet_path))
         self._entities = []
         self._key_to_idx = {}
-        self._dirty = False
 
     def build(self) -> None:
         """Build configured indexes over the catalog's current entries."""
+        if self._backend is not None:
+            raise ValueError(
+                "build() is not supported after attach_parquet_rows() — "
+                "it would rebuild the indexes over the emptied entity list"
+            )
         if self._default_index_policy:
             self._indexes = _default_indexes_from_entities(self._entities)
 
@@ -204,27 +196,11 @@ class Catalog:
 
         with self._lock:
             self._rebuild_indices()
-            if self._backend_config.kind == "memory":
-                self._backend = InMemoryRowBackend(self._entities, config=self._backend_config)
             self._dirty = False
 
     def get(self, namespace: str, code: str) -> Entity | None:
         idx = self._key_to_idx.get(entity_key(namespace, code))
         return self._entities[idx] if idx is not None else None
-
-    def delete_many(self, keys: Iterable[tuple[str, str]]) -> int:
-        with self._lock:
-            targets: set[int] = set()
-            for ns, code in keys:
-                idx = self._key_to_idx.get(entity_key(ns, code))
-                if idx is not None:
-                    targets.add(idx)
-            if not targets:
-                return 0
-            self._entities = [entry for i, entry in enumerate(self._entities) if i not in targets]
-            self._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(self._entities)}
-            self._invalidate()
-            return len(targets)
 
     # ------------------------------------------------------------------
     # Search
@@ -510,7 +486,7 @@ class Catalog:
 
     def _search_filter_only(self, filter_spec: FilterSpec, *, limit: int) -> list[CatalogMatch]:
         if isinstance(self._backend, ParquetRowBackend):
-            backend = self._require_parquet_backend()
+            backend = self._backend
             matches: list[CatalogMatch] = []
             for row in backend.iter_rows(filter_spec=filter_spec):
                 matches.append(catalog_match_from_entity(entity_from_row(row, config=self._backend_config), score=1.0))
@@ -580,12 +556,8 @@ class Catalog:
             shutil.rmtree(tmp)
         try:
             tmp.mkdir(parents=True)
-            rows_name = self._backend_config.rows_path or ENTRIES_FILENAME
-            if self.is_parquet_backend:
-                source = self._parquet_source
-                if source is None or not source.is_file():
-                    raise ValueError("Parquet catalog save requires attach_parquet_rows() with a readable file")
-                shutil.copy2(source, tmp / rows_name)
+            if self._backend is not None:
+                shutil.copy2(self._backend.path, tmp / self._rows_filename())
             else:
                 self._write_parquet(tmp / ENTRIES_FILENAME)
             self._write_indexes(tmp / INDEXES_DIRNAME)
@@ -636,7 +608,6 @@ class Catalog:
             namespace=meta.backend.namespace,
             code_column=meta.backend.code_column,
             title_column=meta.backend.title_column,
-            field_links=dict(meta.backend.field_links),
         )
         indexes = _load_indexes(src / INDEXES_DIRNAME, index_fields=meta.index_fields)
 
@@ -644,21 +615,18 @@ class Catalog:
             meta.name,
             indexes=indexes,
             default_field=meta.default_field,
-            field_links=backend_config.field_links,
+            field_links=dict(meta.backend.field_links),
             backend=backend_config,
         )
         catalog._default_index_policy = False
 
         if backend_config.kind == "parquet":
             rows_name = backend_config.rows_path or ENTRIES_FILENAME
-            catalog._backend = ParquetRowBackend(src / rows_name, config=backend_config)
-            catalog._entities = []
-            catalog._key_to_idx = {}
+            catalog._backend = ParquetRowBackend(src / rows_name)
         else:
             entries = _read_parquet(src / ENTRIES_FILENAME)
             catalog._entities = entries
             catalog._key_to_idx = {(entry.namespace, entry.code): i for i, entry in enumerate(entries)}
-            catalog._backend = InMemoryRowBackend(entries, config=backend_config)
 
         catalog._dirty = False
         return catalog
@@ -711,11 +679,6 @@ class Catalog:
             ctx = IndexBuildContext(field=field, vector_cache=vector_cache)
             index.build(self._entities, ctx=ctx)
 
-    def _require_parquet_backend(self) -> ParquetRowBackend:
-        if not isinstance(self._backend, ParquetRowBackend):
-            raise ValueError("Catalog parquet backend is not configured")
-        return self._backend
-
     def _write_parquet(self, target: Path) -> None:
         if not self._entities:
             schema = pa.schema(
@@ -750,6 +713,12 @@ class Catalog:
             else:
                 raise TypeError(f"Catalog index for field {field!r} is runtime-only and cannot be serialized")
 
+    def _rows_filename(self) -> str:
+        """Snapshot filename for the row data; memory snapshots always use ``entries.parquet``."""
+        if self._backend is None:
+            return ENTRIES_FILENAME
+        return self._backend_config.rows_path or ENTRIES_FILENAME
+
     def _write_meta(self, target: Path, builder: str | None) -> None:
         content_sha = _compute_content_sha256(target)
         row_count = self._backend.count() if self._backend is not None else len(self._entities)
@@ -764,8 +733,10 @@ class Catalog:
             index_fields={field: index.kind for field, index in self._indexes.items()},
             default_field=self.default_field,
             backend=BackendMeta(
-                kind=self._backend_config.kind,
-                rows_filename=self._backend_config.rows_path or ENTRIES_FILENAME,
+                # Derived from backend presence, not from the config, so the
+                # persisted kind can never disagree with the actual payload.
+                kind="parquet" if self._backend is not None else "memory",
+                rows_filename=self._rows_filename(),
                 namespace=self._backend_config.namespace,
                 code_column=self._backend_config.code_column,
                 title_column=self._backend_config.title_column,
@@ -813,21 +784,17 @@ def _grade_row(row_values: dict[str, list[str]], plans: list[_ValuePlan]) -> tup
 # ---------------------------------------------------------------------------
 
 
+_INDEX_LOADERS: dict[str, Callable[[Path], CatalogIndex]] = {
+    "vector": VectorIndex.load,
+    "bm25": BM25Index.load,
+    "hybrid": HybridIndex.load,
+}
+
+
 def _load_indexes(path: Path, *, index_fields: dict[str, str]) -> dict[str, CatalogIndex]:
     if not path.exists():
         raise FileNotFoundError(f"Catalog snapshot missing indexes directory: {path}")
-    indexes: dict[str, CatalogIndex] = {}
-    for field, kind in index_fields.items():
-        field_path = path / field
-        if kind == "vector":
-            indexes[field] = VectorIndex.load(field_path)
-        elif kind == "bm25":
-            indexes[field] = BM25Index.load(field_path)
-        elif kind == "hybrid":
-            indexes[field] = HybridIndex.load(field_path)
-        else:
-            raise ValueError(f"Unsupported catalog index kind {kind!r} for field {field!r}")
-    return indexes
+    return {field: _INDEX_LOADERS[kind](path / field) for field, kind in index_fields.items()}
 
 
 # ---------------------------------------------------------------------------

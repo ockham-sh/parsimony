@@ -19,10 +19,10 @@ from parsimony.catalog import (
 def test_catalog_default_field_none_resolves_title() -> None:
     cat = Catalog("test_cat")
     assert cat.default_field is None
-    assert cat._resolve_default_field() == "title"
 
     cat.set_entities([Entity(namespace="ns", code="A", title="Title", metadata={})])
     cat.build()
+    assert cat._resolve_default_field() == "title"
     matches = cat.search("Title", limit=5)
     assert len(matches) >= 1
 

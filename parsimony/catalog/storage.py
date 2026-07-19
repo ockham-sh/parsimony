@@ -25,7 +25,6 @@ class BuildInfo(BaseModel):
     """Provenance for a published snapshot."""
 
     built_at: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
-    parsimony_version: str | None = None
     builder: str | None = Field(
         default=None,
         description="Free-form identifier of the script or job that built this catalog.",
@@ -41,7 +40,14 @@ class BuildInfo(BaseModel):
 
 
 class BackendMeta(BaseModel):
-    """Row storage configuration for a catalog snapshot."""
+    """Row storage configuration persisted in a snapshot's ``meta.json``.
+
+    Schema v1 contract: the ``kind`` literals and every field name here are
+    frozen. They are pinned twice over — ``extra="forbid"`` rejects renames at
+    parse, and the ``manifest_contract_sha256`` digest is recomputed over
+    ``model_dump()`` at every load. Renaming any of them breaks every
+    published snapshot.
+    """
 
     model_config = ConfigDict(extra="forbid")
 

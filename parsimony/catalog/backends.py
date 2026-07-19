@@ -1,4 +1,25 @@
-"""Catalog row backends: in-memory entities and lazy parquet tables."""
+"""Row storage for value-indexed (parquet-backed) catalogs.
+
+A catalog searches in one of two layouts:
+
+- **Row-indexed** (the default): the indexed entities are the rows.
+  :class:`~parsimony.catalog.Catalog` grades its own entity list directly; no
+  backend object exists.
+- **Value-indexed** (parquet): the indexed entities are codelist *members* —
+  distinct dimension values such as ``geo:DE`` "Germany" — and each parquet
+  row is a *composition* of members (a series key is a tuple of them). Search
+  matches members in the indexes first, then streams the rows composed with
+  them from :class:`ParquetRowBackend`.
+
+The row population of a value-indexed catalog is usually far larger than its
+member population (tens of thousands of series over a handful of codelist
+values per dimension); that asymmetry is why rows live in a lazy parquet scan
+instead of in memory. Two caveats to the member model: a builder may also
+index per-row text (e.g. a title column) as if its distinct values were
+members — such an index scales with the rows, not the codelists — and the
+row→member link is latent, carried by column-naming conventions and
+``field_links`` rather than by the type system.
+"""
 
 from __future__ import annotations
 
@@ -15,87 +36,18 @@ from parsimony.errors import InvalidParameterError
 DEFAULT_BATCH_SIZE = 10_000
 
 
-def _row_matches_filter(row: dict[str, Any], filter_spec: FilterSpec) -> bool:
-    for col, allowed in filter_spec.items():
-        if not allowed:
-            continue
-        raw = row.get(col)
-        if raw is None:
-            return False
-        if str(raw) not in {str(v) for v in allowed}:
-            return False
-    return True
-
-
-class InMemoryRowBackend:
-    """Eager backend over :class:`~parsimony.entity.Entity` rows."""
-
-    def __init__(
-        self,
-        entities: list[Entity],
-        *,
-        config: CatalogBackendConfig | None = None,
-    ) -> None:
-        self._entities = entities
-        self._config = config or CatalogBackendConfig()
-
-    def column_names(self) -> list[str]:
-        cols = {"namespace", "code", "title"}
-        for entity in self._entities:
-            cols.update(entity.metadata.keys())
-        return sorted(cols)
-
-    def count(self) -> int:
-        return len(self._entities)
-
-    def match_namespace(self, namespace: str) -> bool:
-        if self._config.namespace is not None:
-            return namespace == self._config.namespace
-        return any(entity.namespace == namespace for entity in self._entities)
-
-    def entity_at(self, index: int) -> Entity:
-        return self._entities[index]
-
-    def iter_rows(
-        self,
-        *,
-        filter_spec: FilterSpec | None = None,
-        columns: Sequence[str] | None = None,
-        any_of: Mapping[str, Sequence[str]] | None = None,
-    ) -> Iterator[dict[str, Any]]:
-        del columns
-        allowed = {col: {str(v) for v in vals} for col, vals in (any_of or {}).items()}
-        for entity in self._entities:
-            row = self._entity_to_row(entity)
-            if filter_spec is not None and not _row_matches_filter(row, filter_spec):
-                continue
-            if allowed and not any(str(row.get(col)) in vals for col, vals in allowed.items()):
-                continue
-            yield row
-
-    def _entity_to_row(self, entity: Entity) -> dict[str, Any]:
-        row: dict[str, Any] = {
-            "namespace": entity.namespace,
-            "code": entity.code,
-            "title": entity.title,
-        }
-        row.update(entity.metadata)
-        return row
-
-
 class ParquetRowBackend:
-    """Lazy backend over a flat parquet table."""
+    """Row store over a flat parquet file that is never itself indexed.
 
-    def __init__(
-        self,
-        parquet_path: Path,
-        *,
-        config: CatalogBackendConfig,
-    ) -> None:
+    Answers the second step of a value-indexed search: given the member values
+    matched in the indexes, ``iter_rows(any_of=...)`` streams the rows composed
+    with any of them, pushing the disjunction down into the parquet scan.
+    """
+
+    def __init__(self, parquet_path: Path) -> None:
         if not parquet_path.is_file():
             raise FileNotFoundError(f"Parquet rows file not found: {parquet_path}")
-        self._path = parquet_path
-        self._config = config
+        self.path = parquet_path
         self._dataset = ds.dataset(str(parquet_path), format="parquet")
         self._schema_names = set(self._dataset.schema.names)
 
@@ -104,11 +56,6 @@ class ParquetRowBackend:
 
     def count(self) -> int:
         return int(self._dataset.count_rows())
-
-    def match_namespace(self, namespace: str) -> bool:
-        if self._config.namespace is not None:
-            return namespace == self._config.namespace
-        return True
 
     def iter_rows(
         self,
@@ -208,8 +155,6 @@ def entity_matches_filter(entity: Entity, filter_spec: FilterSpec) -> bool:
 
 
 __all__ = [
-    "DEFAULT_BATCH_SIZE",
-    "InMemoryRowBackend",
     "ParquetRowBackend",
     "entity_from_row",
     "entity_matches_filter",

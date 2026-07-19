@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol, runtime_checkable
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
+from typing import Literal
 
 FilterSpec = Mapping[str, Sequence[str]]
 """Exact filter: column or entity field name -> allowed values (AND-composed)."""
@@ -12,33 +12,27 @@ FilterSpec = Mapping[str, Sequence[str]]
 
 @dataclass(frozen=True, slots=True)
 class CatalogBackendConfig:
-    """Persistence hints for a catalog row backend."""
+    """Runtime row-store configuration for a catalog.
+
+    ``kind`` selects the execution model, not a storage hint: ``"memory"``
+    means the indexed entities are themselves the rows; ``"parquet"`` means
+    rows live in a flat parquet file attached after build. The value is
+    persisted into every snapshot's ``meta.json`` (see
+    :class:`~parsimony.catalog.storage.BackendMeta`), so the two literals are
+    frozen for schema v1.
+
+    ``code_column`` / ``title_column`` map the logical ``code`` and ``title``
+    search fields onto the parquet columns that carry them.
+    """
 
     kind: Literal["memory", "parquet"] = "memory"
     rows_path: str | None = None
     namespace: str | None = None
     code_column: str = "code"
     title_column: str = "title"
-    field_links: dict[str, str] = field(default_factory=dict)
-
-
-@runtime_checkable
-class RowBackend(Protocol):
-    """Row storage and exact-filter execution for a catalog."""
-
-    def column_names(self) -> list[str]: ...
-    def count(self) -> int: ...
-    def iter_rows(
-        self,
-        *,
-        filter_spec: FilterSpec | None = None,
-        columns: Sequence[str] | None = None,
-    ) -> Iterator[dict[str, Any]]: ...
-    def match_namespace(self, namespace: str) -> bool: ...
 
 
 __all__ = [
     "CatalogBackendConfig",
     "FilterSpec",
-    "RowBackend",
 ]

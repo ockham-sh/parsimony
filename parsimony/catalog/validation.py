@@ -18,7 +18,6 @@ from parsimony.catalog.storage import (
     read_meta,
 )
 
-SUPPORTED_BACKEND_KINDS: frozenset[str] = frozenset({"memory", "parquet"})
 SUPPORTED_INDEX_KINDS: frozenset[str] = frozenset({"vector", "bm25", "hybrid"})
 
 
@@ -119,13 +118,6 @@ def _validate_indexes(catalog_dir: Path, index_fields: dict[str, str]) -> None:
             raise CatalogValidationError(f"Unexpected index directory {child.name!r} (not listed in meta.index_fields)")
 
 
-def validate_catalog_meta(meta: CatalogMeta) -> None:
-    if meta.backend.kind not in SUPPORTED_BACKEND_KINDS:
-        raise CatalogValidationError(
-            f"Unsupported backend.kind {meta.backend.kind!r}; expected one of {sorted(SUPPORTED_BACKEND_KINDS)}"
-        )
-
-
 def validate_catalog_snapshot(catalog_dir: Path, *, meta: CatalogMeta | None = None) -> CatalogMeta:
     """Validate catalog directory structure and return parsed meta."""
 
@@ -134,7 +126,6 @@ def validate_catalog_snapshot(catalog_dir: Path, *, meta: CatalogMeta | None = N
         raise CatalogValidationError(f"Catalog directory does not exist: {src}")
 
     parsed = meta or read_meta(src)
-    validate_catalog_meta(parsed)
 
     if parsed.build.manifest_contract_sha256:
         expected = compute_manifest_contract_sha256(parsed)

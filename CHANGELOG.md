@@ -93,6 +93,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **BREAKING — `fetch_json` / `fetch_text` / `fetch_csv` dropped their
   `provider=` argument.** The provider slug is read from `http.provider`
   instead.
+- The value-indexed (parquet) catalog lifecycle now fails loud instead of
+  silently corrupting state: `attach_parquet_rows()` raises if indexes are
+  unbuilt or rows were already attached, and `build()` / `set_entities()`
+  raise after attaching (previously `build()` silently rebuilt the indexes
+  over the emptied entity list). A snapshot's persisted backend kind is now
+  derived from the actual row store, so `meta.json` can never disagree with
+  the payload. Docstrings and the catalog docs now describe the two layouts
+  honestly: row-indexed (the entities are the rows) vs value-indexed (the
+  entities are codelist members; each parquet row is a composition of
+  members). The persisted schema-v1 surface is untouched — all published
+  snapshots load unchanged (closes #84).
+
+### Removed
+
+- **BREAKING — `InMemoryRowBackend` and the `RowBackend` protocol are gone.**
+  The class was scaffolding: memory-mode search always iterated the catalog's
+  own entity list directly, and nothing but an internal row count ever
+  consulted it. `Catalog` now holds `ParquetRowBackend | None` — a backend
+  object exists only when value-indexed parquet rows are attached.
+  `ParquetRowBackend` no longer takes a `config=` argument (it never read it)
+  and exposes its `path`.
+- **BREAKING — dead `Catalog` surface deleted (zero callers):**
+  `delete_many`, `set_index`, `update_indexes`, `set_field_links`, and the
+  `field_links` property. `set_indexes` remains the one way to replace the
+  index set, and `field_links` is still accepted at construction and
+  persisted.
+- **BREAKING — `CatalogBackendConfig.field_links` is removed.** No backend
+  code ever read it; snapshots persist links from the catalog's own
+  `field_links` as before, and loading passes them straight back to the
+  constructor. The persisted `BackendMeta.field_links` field is unchanged.
+- `BuildInfo.parsimony_version` (never assigned; outside the digest payload)
+  and `validate_catalog_meta` (unreachable behind the pydantic `Literal`
+  parse) are removed.
+
+### Fixed
+
+- `Catalog.load(<parquet snapshot>).save(...)` no longer raises. The rows
+  path was tracked in shadow state that only `attach_parquet_rows()` set;
+  save now reads it from the attached backend, so load → save → load
+  round-trips.
 
 ## [0.7.5] - 2026-06-19
 

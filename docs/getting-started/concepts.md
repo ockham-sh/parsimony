@@ -235,8 +235,8 @@ print(hits[0].code, round(hits[0].score, 3))  # -> alpha …
     above run with only `parsimony-core` installed; building or searching a catalog requires
     `catalog`. See [Installation](installation.md).
 
-The key invariant is the **build gate**: any mutation (`set_entities`, index changes,
-`delete_many`) marks the catalog dirty, and `search()` / `save()` raise a `ValueError` —
+The key invariant is the **build gate**: any mutation (`set_entities`, `set_indexes`)
+marks the catalog dirty, and `search()` / `save()` raise a `ValueError` —
 whose message tells you to call `catalog.build()` — until you rebuild. Passing
 `indexes=None` instead opts into the default index policy: at `build()`, BM25 indexes are
 created automatically for `code`, `title`, and every metadata key on the entries.

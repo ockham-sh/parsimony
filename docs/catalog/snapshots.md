@@ -31,7 +31,7 @@ the snapshot. It is recorded in the manifest's `build.builder` field and is othe
 
 !!! warning "Build before you save"
     `save()` calls the same dirty-state check as `search()`. After any mutation
-    (`set_entities`, `set_index`, `set_indexes`, `update_indexes`, `delete_many`) the catalog
+    (`set_entities`, `set_indexes`) the catalog
     is marked dirty and `save()` raises `ValueError("Catalog entries or indexes changed — call
     catalog.build() before it can be saved")` until you re-run `catalog.build()`.
 
@@ -113,7 +113,6 @@ print(meta.name, meta.entry_count, meta.index_fields)
 | Field | Type | Meaning |
 | --- | --- | --- |
 | `built_at` | `datetime` | UTC timestamp, defaulted at construction. |
-| `parsimony_version` | `str \| None` | Optional library version stamp; not auto-populated. |
 | `builder` | `str \| None` | The free-form identifier passed to `save(..., builder=...)`. |
 | `content_sha256` | `str` | Integrity digest of every snapshot file except `meta.json`. Empty string when not computed. |
 

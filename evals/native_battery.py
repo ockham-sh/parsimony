@@ -1,7 +1,6 @@
 """Acceptance: the 37-case taxonomy battery through NATIVE catalog.search().
 
-Native ranks must match the eval's winning cov_nsum column (modulo limit=300
-horizon). Public catalog rows only.
+Native ranks must match the eval's winning. Public catalog rows only.
 """
 
 from __future__ import annotations

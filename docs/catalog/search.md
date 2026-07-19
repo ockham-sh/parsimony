@@ -29,7 +29,6 @@ Catalog(
     name: str,
     *,
     indexes: dict[str, CatalogIndex] | None = None,
-    default_field: str | None = None,
 )
 ```
 
@@ -37,7 +36,11 @@ Catalog(
 |---|---|---|
 | `name` | required | Normalized to lowercase snake_case via the namespace rule (`^[a-z][a-z0-9_]*$`). A name like `"My Catalog"` raises `ValueError`. |
 | `indexes` | `None` | `None` enables the **default index policy** (see below). A dict gives you full control — only those indexes exist, none are added silently. |
-| `default_field` | `None` | The search-surface name used for broad (plain-text) search. If `None`, broad search falls back to `"title"` when a `"title"` index exists, otherwise broad search is disabled. |
+
+Broad (plain-text) search targets the `"title"` index by convention: if the catalog has one,
+that's what a plain-text query searches; if not, a plain-text query raises
+`BroadSearchUnavailableError` at query time. Any other search surface is declared per call
+with `fields=`.
 
 The keys of the `indexes` dict are *logical search-surface names*. They are what you type in
 the DSL (`FIELD: value`) and what appears in error messages. A key matches the
@@ -66,12 +69,6 @@ print(sorted(catalog.indexes))  # -> ['code', 'region', 'title']
 Calling `set_indexes` permanently disables the
 default policy — once you take manual control, `build()` will not re-derive metadata-key
 indexes.
-
-!!! warning "`default_field` and an explicit `indexes` dict"
-    If you set `default_field` together with an explicit `indexes` dict that does not contain
-    it, the catalog raises `BroadSearchConfigError` **at construction time**. With the default
-    index policy active (`indexes=None`), that check is deferred to `build()`, where the same
-    error is raised if the field is still not covered.
 
 ## Loading entries and managing indexes
 
@@ -130,27 +127,42 @@ def search(
     query: str | None = None,
     limit: int = 50,
     *,
-    field: str | None = None,
+    fields: str | Sequence[str] | None = None,
     filter: Mapping[str, Sequence[str]] | None = None,
     top_k_values: int = 50,
-    namespaces: list[str] | None = None,
 ) -> list[CatalogMatch]
 ```
 
 The method returns ranked matches as a list.
 
-- `limit` caps the number of results. (Whole tie-groups can slightly exceed it — see
-  [Ranking and fusion](ranking-and-fusion.md).)
-- `namespaces`, when given, post-filters the ranking to entries whose normalized namespace is
-  in the allowed set.
+| Parameter | Default | Meaning |
+|---|---|---|
+| `query` | `None` | Free-text or structured `FIELD: value` query. Omit for filter-only search. |
+| `limit` | `50` | Maximum results returned. |
+| `fields` | `None` | Declare the scoring surface explicitly: one field name for single-field scoring, or several to fuse — see [multi-field search](#multi-field-search-fields) below. Omit to search the catalog's `title` index with DSL resolution. |
+| `filter` | `None` | Exact AND filter: `{column: [allowed_values, ...]}`. Can combine with `query`. |
+| `top_k_values` | `50` | Per-field cap on the scored-value table. A deliberate noise floor, not only a cost cap — see [Ranking and fusion](ranking-and-fusion.md#top_k_values-a-noise-floor-not-just-a-cost-cap). |
 
 `search()` first calls the build gate, then parses the query to choose between structured and
-broad mode.
+broad mode (unless `fields=` is given, which bypasses DSL parsing entirely — see below).
+
+Every match's `coverage`, `score`, and `matched` come from one scoring path: how they're
+computed, and how rows are ordered from them, is covered in
+[Ranking and fusion](ranking-and-fusion.md). The short version: `coverage` is a **fact**
+(the fraction of the query's tokens covered by the union of the row's fully *consumed*
+field values — cells whose every token is in the query, so a cell that claims anything
+extra doesn't count), `score` is a **guess** (relative BM25 + semantic similarity), and
+facts outrank guesses. Since that changes how results are ordered: a search across a
+single field (broad search, a DSL clause, or `fields=["one_field"]`) ranks an
+exact/subset containment hit (`coverage == 1.0`) above every fuzzy-scored row, then
+orders the rest by `score` alone; a search across several fields (`fields=[...]`) ranks
+by `(coverage desc, score desc)` throughout, since coverage there counts how many of the
+named fields the row fully satisfies.
 
 ### Broad search
 
 If the query does **not** start with a `field:` prefix, it is a broad query against the
-catalog's resolved default field. The query is scored against that one index.
+catalog's `"title"` index. The query is scored against that one index.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
@@ -167,8 +179,7 @@ hits = catalog.search("alpha", limit=1)
 print(hits[0].code)  # -> A
 ```
 
-If no default field can be resolved — `default_field` is unset and there is no `"title"`
-index — a plain-text query raises `BroadSearchUnavailableError`:
+If the catalog has no `"title"` index, a plain-text query raises `BroadSearchUnavailableError`:
 
 ```text
 This catalog only supports structured queries. Use 'field: value' syntax. Indexed fields: ['code']
@@ -212,7 +223,7 @@ print({m.code for m in res})   # -> {'A'}
 
 !!! note "A bare field token is still broad"
     The structured trigger requires a colon. A query like `ref_area` (no colon) does not match
-    the regex and is treated as a broad query against the default field, not a structured one.
+    the regex and is treated as a broad query against the `title` index, not a structured one.
 
 The DSL parser is also available directly when you want to inspect or validate a query without
 running it:
@@ -233,18 +244,91 @@ print(parse_query("inflation", known_fields={"ref_area"}))  # -> None
 raises `ValueError` for a malformed clause (empty field, no values), and
 `UnknownIndexedFieldError` when a clause names a field not in `known_fields`.
 
+### Multi-field search (`fields=`)
+
+Pass `fields=[...]` to score a query against several named indexes in one call and fuse
+the results — for example searching `title` and a `region` metadata field together for
+one plain-text query. This bypasses the DSL entirely: `query` is **always literal text**
+when `fields=` is given, never parsed as `FIELD: value`.
+
+```python
+matches = catalog.search("german growth", fields=["title", "ref_area"], limit=10)
+```
+
+Two things differ from single-field search:
+
+- **`score` sums each field's normalized contribution.** Each named field contributes
+  `0.0`–`1.0` (its own best match, relative to that field's own top score for this
+  query), so a row that agrees across two fields outscores one that only agrees on one,
+  and no single field's raw magnitude dominates.
+- **`coverage` unions consumed tokens across the named fields**, and row ranking
+  switches from the single-field "exact pin, then score" tier to `(coverage desc, score
+  desc)` throughout — see [Ranking and fusion](ranking-and-fusion.md#row-ranking-coverage-tiers-by-surface-arity).
+
+A hybrid field named in `fields=` also picks up a different fusion regime for its BM25 +
+vector components (lexical-first, semantic void-fill, rather than the RRF used when the
+field is searched alone) — see
+[the two fusion regimes](ranking-and-fusion.md#two-regimes-picked-by-surface-arity).
+
+A single-name `fields=["title"]` still takes the single-field path (RRF fusion, exact-pin
+row ranking) — multiple fields is what changes the regime, not the presence of `fields=`
+itself.
+
+### The discovery-connector surface
+
+Provider packages ship their search connectors through `make_local_search_connector`
+(`parsimony.catalog.search`), which takes a `search_fields=` parameter — the connector's
+declared search surface. The default is the **entity recipe**, `ENTITY_SEARCH_FIELDS =
+("title", "description")`: the surface for catalogs whose rows carry curated descriptive
+text. Connectors over ontology-shaped catalogs — rows composed of codelist members with no
+curated text, e.g. SDMX series — declare their label columns instead. The declaration is
+intersected with the loaded catalog's indexes at query time, so a published catalog that
+lacks one of the declared indexes still searches. Either way the query is always literal
+text — factory connectors expose no `FIELD: value` DSL, and exact reads go through `filter=`
+instead. With both `title` and `description` present this is a two-field surface, so it
+takes the facet regime above: lexical evidence first, semantic void-fill only where nothing
+literal matches.
+
+A field earns its place on a declared text surface only if it is *curated* — it carries
+meaning or binding beyond the member labels it already contains. A fabricated concatenation
+of labels does not qualify.
+
+Two deliberate consequences:
+
+- **Descriptions are searched, not shipped.** Result rows stay lean — code, title, score,
+  provider metadata — while the description index contributes lexical evidence invisibly.
+  Shipping paragraph-length descriptions on every page would multiply the context cost of
+  discovery many times over, only to hand the agent text the engine has already read with
+  exact-token attention.
+- **The ranking trio is the receipt for that delegation.** Because evidence can come from
+  a field the row doesn't display, none of it is derivable from the visible columns. The
+  factory appends `RANKING_COLUMNS` — `coverage`, `score`, `matched` — to every search
+  connector's output spec, and the hand-rolled catalog searches reuse the same constants,
+  so every ranked page on every provider ends with the same three columns with the same
+  meanings. `coverage` is the provable fraction of the query (mostly 0.0 on prose
+  catalogs; a 1.0 explains a row pinned above higher scores), `score` the fuzzy
+  similarity, `matched` the evidence origin (null on filter-only reads); an
+  all-`semantic` page means nothing literal matched anywhere — rephrase rather than
+  trust the order. What varies per surface is the distribution of values, never the
+  schema or the semantics.
+
 ### Reading results
 
-Each match is a `CatalogMatch` — a Pydantic model carrying the resolved entity fields plus the
-final relevance score:
+Each match is a `CatalogMatch` — a Pydantic model carrying the resolved entity fields plus
+the ranking evidence:
 
 | Field | Type | Notes |
 |---|---|---|
 | `namespace` | `str` | Re-normalized to lowercase snake_case. |
 | `code` | `str` | Trimmed, non-empty. |
 | `title` | `str` | Trimmed, non-empty. |
-| `score` | `float` | The fused/ranked score; higher is better. |
+| `score` | `float` | Relative to this query's best hit; higher is better within this result set only — never comparable across queries or catalogs. |
+| `coverage` | `float` | Defaults to `0.0`. Fraction of the query's tokens consumed by the row's fully-consumed field value(s); `1.0` is an exact/subset containment hit. |
+| `matched` | `"lexical" \| "semantic" \| "both" \| None` | Defaults to `None`. Which component surfaced this row — `None` for a filter-only match. An all-`"semantic"` result page means nothing lexically real matched. |
 | `metadata` | `dict[str, Any]` | Shallow copy of the entity's metadata. |
+
+See [Ranking and fusion](ranking-and-fusion.md) for what these three fields mean in
+practice and how they interact.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
@@ -255,35 +339,28 @@ catalog.build()
 matches = catalog.search("alpha", limit=5)
 top = matches[0]
 print(top.namespace, top.code, top.title)  # -> demo A alpha title
+print(top.coverage, top.matched)           # -> 0.0 lexical  ("alpha title" isn't fully contained in "alpha")
 ```
 
 ## Query errors
 
-All three query errors subclass `ValueError`, so a broad `except ValueError` catches them, or
-you can match by type. Import them from `parsimony.catalog`.
+Both query errors subclass `ValueError`, so a broad `except ValueError` catches them, or you
+can match by type. Import them from `parsimony.catalog`.
 
 | Error | When raised |
 |---|---|
 | `UnknownIndexedFieldError` | A structured clause references a field with no configured index. Raised during query parsing. |
-| `BroadSearchUnavailableError` | A plain-text query is issued but no broad-search (default) field resolves. Raised at search time. |
-| `BroadSearchConfigError` | `default_field` is set but no index covers it. Raised at construction (with an explicit `indexes` dict) or at `build()` (under the default policy). |
+| `BroadSearchUnavailableError` | A plain-text query is issued but the catalog has no `"title"` index. Raised at search time. |
 
 ```python
 from parsimony.catalog import (
-    BroadSearchConfigError,
     BroadSearchUnavailableError,
     UnknownIndexedFieldError,
 )
 
-for exc in (UnknownIndexedFieldError, BroadSearchUnavailableError, BroadSearchConfigError):
+for exc in (UnknownIndexedFieldError, BroadSearchUnavailableError):
     assert issubclass(exc, ValueError)
 ```
-
-!!! tip "Config-time vs query-time"
-    `BroadSearchConfigError` is a *configuration* error (your `default_field` points at a
-    field with no index). `BroadSearchUnavailableError` is a *query-time* error (a plain-text
-    query against a catalog that only supports structured search). They are easy to confuse in
-    a broad `except ValueError`.
 
 ## Sparse fields and empty results
 
@@ -323,6 +400,7 @@ BM25 works on a bare `pip install parsimony-core` — no extra needed.
 ## See also
 
 - [The Catalog](index.md) — the catalog lifecycle at a glance
-- [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, and the selection policies
+- [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, and the discovery index policy
+- [Ranking and fusion](ranking-and-fusion.md) — how `coverage`, `score`, and `matched` are computed
 - [Entities](entities.md) — the `Entity` model and how fields become searchable text
 - [Snapshots and persistence](snapshots.md) — `save`/`load` and the build gate on save

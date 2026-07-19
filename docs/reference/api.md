@@ -1,7 +1,7 @@
 # Public API & import map
 
 This page is the canonical map of what to import from where. Parsimony exposes a small,
-curated **top-level** surface (`from parsimony import ...`) of 37 names, plus a larger set of
+curated **top-level** surface (`from parsimony import ...`) of 32 names, plus a larger set of
 symbols that live only in submodules. When a name is not in the top-level list below, import it
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
@@ -84,18 +84,12 @@ See [The Catalog](../catalog/index.md), [Indexes](../catalog/indexes.md), and
     convention. That submodule additionally exposes the symbols listed in the
     [submodule map](#submodule-only-names) below.
 
-### Ranking and fusion
-
-| Name | Kind | Import |
-|---|---|---|
-| `Ranker` | protocol — collapse per-index rankings into one | `from parsimony import Ranker` |
-| `Ranking` | class — one ranked list of identities | `from parsimony import Ranking` |
-| `RRF` | class — Reciprocal Rank Fusion ranker (`k=60`) | `from parsimony import RRF` |
-| `ZScoreFusion` | class — Z-score score-fusion ranker (default Hybrid fusion) | `from parsimony import ZScoreFusion` |
-| `MinMaxScoreFusion` | class — min-max score-fusion ranker | `from parsimony import MinMaxScoreFusion` |
-
-See [Ranking and fusion](../catalog/ranking-and-fusion.md). The serializable ranker specs and the
-helpers `concat` / `ranking_from_scores` live in `parsimony.ranking` only — see below.
+!!! note "There is no top-level ranking/fusion API"
+    Fusion is not a pluggable policy any more — `parsimony.ranking` (`Ranker`, `Ranking`,
+    `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`) has been removed. See
+    [Ranking and fusion](../catalog/ranking-and-fusion.md) for how `HybridIndex` and
+    `Catalog.search` fuse and rank results now — two fixed algorithms, nothing to import
+    or configure.
 
 ### Stores
 
@@ -145,8 +139,7 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 | `StructuredQuery` | class — parsed structured query (`FIELD: v1, v2 && ...`) |
 | `parse_query` | function — parse a query string into broad/structured form |
 | `UnknownIndexedFieldError` | exception — structured clause names an unindexed field |
-| `BroadSearchUnavailableError` | exception — broad search with no default-field index |
-| `BroadSearchConfigError` | exception — broad-search configuration error |
+| `BroadSearchUnavailableError` | exception — broad search with no `title` index |
 | `code_token` | function — normalize a string into a provider code token |
 | `entity_key` | function — canonical `(namespace, code)` key |
 | `normalize_namespace` | function — validate/normalize a namespace to snake_case |
@@ -159,7 +152,6 @@ from parsimony.catalog import (
     parse_query,
     UnknownIndexedFieldError,
     BroadSearchUnavailableError,
-    BroadSearchConfigError,
     code_token,
     entity_key,
     normalize_namespace,
@@ -179,35 +171,13 @@ See [Building and searching](../catalog/search.md) and [Indexes](../catalog/inde
 
 | Name | Kind |
 |---|---|
-| `adaptive_field_index` | function — pick Hybrid below 1000 distinct values, else BM25 |
-| `discovery_indexes` | function — a code/title/description index map for discovery |
+| `discovery_indexes` | function — a code/title/description index map for a typical discovery catalog, chosen by field role (`code` → BM25, `title`/`description` → hybrid), not by counting distinct values |
 
 ```python
-from parsimony.catalog.policy import adaptive_field_index, discovery_indexes
+from parsimony.catalog.policy import discovery_indexes
 ```
 
 See [Indexes](../catalog/indexes.md).
-
-### `parsimony.ranking`
-
-The top-level `Ranker`, `Ranking`, `RRF`, `ZScoreFusion`, and `MinMaxScoreFusion` are also
-importable here. These additional symbols live in `parsimony.ranking` only:
-
-| Name | Kind |
-|---|---|
-| `RankedItem` / `RankedSetItem` | dataclass — one ranked identity / per-index ranked identity |
-| `RankingSet` | dataclass — named collection of per-index rankings |
-| `concat` | function — build a `RankingSet` from named `Ranking` objects |
-| `ranking_from_scores` | function — build a `Ranking` from `(namespace, code, score)` rows |
-| `RRFSpec` / `MinMaxScoreFusionSpec` / `ZScoreFusionSpec` | model — serializable ranker specs |
-| `RankerSpec` | type alias — discriminated union of the three specs |
-| `ranker_to_spec` / `ranker_from_spec` | function — serialize / rebuild a built-in ranker |
-
-```python
-from parsimony.ranking import concat, ranking_from_scores, RRFSpec, ranker_to_spec
-```
-
-See [Ranking and fusion](../catalog/ranking-and-fusion.md).
 
 ### `parsimony.embedder`
 
@@ -297,12 +267,11 @@ See [Indexes](../catalog/indexes.md) and [Environment variables](environment.md)
 
 ## Lazy imports
 
-`import parsimony` is intentionally cheap. The catalog, ranking, and store names
+`import parsimony` is intentionally cheap. The catalog and store names
 (`Catalog`, `Entity`, `CatalogMatch`, `BM25Index`, `VectorIndex`, `HybridIndex`, `CatalogIndex`,
-`InMemoryDataStore`, `LoadResult`, `RRF`, `Ranker`, `Ranking`, `ZScoreFusion`,
-`MinMaxScoreFusion`) are resolved lazily through the module's `__getattr__` on first access. Only
-then is the underlying submodule — and any heavy dependency it pulls (FAISS, sentence-transformers,
-huggingface-hub) — imported.
+`auto_catalog`, `InMemoryDataStore`, `LoadResult`) are resolved lazily through the module's
+`__getattr__` on first access. Only then is the underlying submodule — and any heavy dependency
+it pulls (FAISS, sentence-transformers, huggingface-hub) — imported.
 
 ```python
 import parsimony

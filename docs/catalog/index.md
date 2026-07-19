@@ -93,24 +93,21 @@ print(top.title, round(top.score, 3))
 The constructor signature is:
 
 ```python
-Catalog(name: str, *, indexes: dict[str, CatalogIndex] | None = None, default_field: str | None = None)
+Catalog(name: str, *, indexes: dict[str, CatalogIndex] | None = None)
 ```
 
 | Parameter | Meaning |
 | --- | --- |
 | `name` | Catalog identity. Normalized to lowercase snake_case via `normalize_namespace` — uppercase or hyphenated names raise `ValueError` (e.g. `"My Catalog"` is rejected; pass `"my_catalog"`). |
 | `indexes` | A map of *search-surface name* → [`CatalogIndex`](indexes.md). `None` enables the default index policy (see below). |
-| `default_field` | The field used for broad (plain-text) search. Defaults to `"title"` when a `title` index exists, otherwise broad search is disabled. |
+
+Broad (plain-text) search targets the `"title"` index by convention: it is searched when
+the catalog has one, otherwise broad search is unavailable. Any other search surface is
+declared per call with `fields=`.
 
 The keys of `indexes` are logical search-surface names — they are the field names you use in the
 query DSL (`FIELD: value`) and the names reported by errors. A key matches an `Entity` field;
 each index is scoped to exactly one field.
-
-!!! warning "default_field must have a backing index"
-    If you pass an explicit `indexes` dict together with a `default_field` that the dict does not
-    cover, the constructor raises `BroadSearchConfigError` (a `ValueError` subclass) immediately —
-    not later at `build()`. Under the default index policy the check is deferred to `build()`,
-    since the indexes do not exist yet at construction time.
 
 ## Index policy: default versus explicit
 
@@ -140,7 +137,7 @@ restrict search to a known set of surfaces. The available index types — `BM25I
 
 ## Structured versus broad search at a glance
 
-`search(query, limit, *, namespaces=None)` inspects the query string and picks one of two modes.
+`search(query, limit)` inspects the query string and picks one of two modes.
 
 A query is **structured** when it begins with a `FIELD:` token (it matches `^\s*\w+\s*:`).
 Core `Catalog.search` accepts one soft-scored structured clause; comma-separated values within
@@ -152,13 +149,12 @@ matches = catalog.search("title: alpha", filter={"region": ["eu", "us"]}, limit=
 ```
 
 Any query that does not start with a `FIELD:` token is a **broad** query, scored against the
-`default_field`. If no broad field is configured, `search()` raises `BroadSearchUnavailableError`.
+`"title"` index. If the catalog has no `"title"` index, `search()` raises `BroadSearchUnavailableError`.
 
 ```python
 matches = catalog.search("alpha growth", limit=5)
 ```
 
-The optional `namespaces` argument post-filters results to entities whose namespace is in the given list.
 The full DSL, result shape, and the search-time exceptions are documented in
 [Building and searching](search.md).
 
@@ -208,10 +204,10 @@ This section breaks the catalog down into focused pages:
   DataFrames become entities.
 - **[Building and searching](search.md)** — the full `Catalog` API, the query DSL,
   `CatalogMatch`, and the search-time exceptions.
-- **[Indexes](indexes.md)** — the `CatalogIndex` protocol and the BM25, vector, and hybrid
-  backends, plus the adaptive selection policies.
-- **[Ranking and fusion](ranking-and-fusion.md)** — `Ranking`, the `Ranker` protocol, and the
-  `RRF` / `ZScoreFusion` / `MinMaxScoreFusion` fusion strategies.
+- **[Indexes](indexes.md)** — the `CatalogIndex` protocol, the BM25, vector, and hybrid
+  backends, and the role-based discovery index policy.
+- **[Ranking and fusion](ranking-and-fusion.md)** — the two fixed fusion regimes a hybrid
+  field combines its components with, and how rows are ranked from the result.
 - **[Embedders](embedders.md)** — the `EmbeddingProvider` implementations used by vector and
   hybrid indexes.
 - **[Snapshots and persistence](snapshots.md)** — saving, loading, snapshot layout, integrity,

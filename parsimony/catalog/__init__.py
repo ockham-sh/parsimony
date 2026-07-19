@@ -3,7 +3,6 @@
 from parsimony.catalog.catalog import Catalog
 from parsimony.catalog.indexes import BM25Index, CatalogIndex, HybridIndex, VectorIndex
 from parsimony.catalog.models import (
-    BroadSearchConfigError,
     BroadSearchUnavailableError,
     CatalogMatch,
     CatalogValueMatch,
@@ -19,7 +18,6 @@ from parsimony.entity import Entity, code_token, entity_key, normalize_namespace
 
 __all__ = [
     "BM25Index",
-    "BroadSearchConfigError",
     "BroadSearchUnavailableError",
     "Catalog",
     "Entity",

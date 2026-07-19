@@ -302,7 +302,11 @@ CASES = [
     ),
 ]
 
-CONFIGS = ["title_only", "auto_filter", "cov_pool", "cov_nsum"]
+CONFIGS = ["title_only", "auto_filter", "cov_pool", "cov_nsum", "cov1_nsum", "nsum_only"]
+#: Blend probes: rank by nsum + lambda*cov instead of the lexicographic tier.
+#: Answers "why not just boost exact/consumed matches?" with measurements.
+BLEND_LAMBDAS = [0.5, 1.0, 2.0, 5.0, 10.0]
+CONFIGS += [f"blend_l{lam:g}" for lam in BLEND_LAMBDAS]
 
 
 @dataclass
@@ -341,7 +345,7 @@ def value_tables(catalog, fields, query):  # noqa: ANN001
     tables: dict[str, dict[str, float]] = {}
     for f in fields:
         index = catalog.index_for(f)
-        scores = _fused_value_scores(index, query, query_vectors=qv)
+        scores, _kinds = _fused_value_scores(index, query, query_vectors=qv)
         texts = _value_texts_from_index(index)
         tables[f] = {texts[vid]: float(s) for vid, s in scores.items() if 0 <= vid < len(texts) and s > 0}
     return tables
@@ -389,6 +393,7 @@ def rank_case(catalog, data: FlowData, query: str) -> dict[str, list[str]]:  # n
             "rawmax": max(raw.values(), default=0.0),
             "pool_rawmax": max((top5[f].get(lab[f], 0.0) for f in fields), default=0.0),
             "cov": cov,
+            "cov1": 1.0 if cov >= 1.0 else 0.0,
             "cov_idf": cov_idf,
             "nsum": nsum,
         }
@@ -405,12 +410,23 @@ def rank_case(catalog, data: FlowData, query: str) -> dict[str, list[str]]:  # n
             ),
         )
 
-    return {
+    def ranked_blend(lam: float) -> list[str]:
+        return sorted(per_code, key=lambda c: (-(per_code[c]["nsum"] + lam * per_code[c]["cov"]), c))
+
+    out = {
         "title_only": ranked(None, "title_only"),
         "auto_filter": ranked("auto_filter_tier", "title_only"),
         "cov_pool": ranked("cov", "pool_rawmax"),
         "cov_nsum": ranked("cov", "nsum"),
+        # Decision probes for the graded-coverage question: does partial
+        # coverage earn its tier, or does a binary full-consumption pin
+        # (cov1_nsum) or no tier at all (nsum_only) hold the gate?
+        "cov1_nsum": ranked("cov1", "nsum"),
+        "nsum_only": ranked(None, "nsum"),
     }
+    for lam in BLEND_LAMBDAS:
+        out[f"blend_l{lam:g}"] = ranked_blend(lam)
+    return out
 
 
 def target_rank(ranked: list[str], data: FlowData, want) -> int | None:  # noqa: ANN001

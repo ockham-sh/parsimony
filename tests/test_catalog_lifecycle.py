@@ -116,7 +116,7 @@ def test_catalog_mutation_methods_require_rebuild(tmp_path: Path) -> None:
     catalog.build()
 
     catalog.set_indexes({"code": BM25Index()})
-    catalog = Catalog("artifact", indexes={"code": BM25Index()}, default_field="code")
+    catalog = Catalog("artifact", indexes={"code": BM25Index()})
     catalog.set_entities(_entries())
     with pytest.raises(ValueError, match="catalog.build\\(\\)"):
         catalog.save(f"file://{tmp_path}/artifact")
@@ -144,7 +144,6 @@ def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
                 ],
             )
         },
-        default_field="description",
     )
     catalog.set_entities(
         [
@@ -155,16 +154,16 @@ def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
     )
 
     catalog.build()
-    hits = catalog.search("alpha", limit=5)
+    hits = catalog.search("alpha", fields=["description"], limit=5)
 
     assert [hit.code for hit in hits] == ["A"]
 
 
 def test_empty_sparse_index_builds_and_returns_no_ranking() -> None:
-    catalog = Catalog("artifact", indexes={"description": BM25Index()}, default_field="description")
+    catalog = Catalog("artifact", indexes={"description": BM25Index()})
     catalog.set_entities([Entity(namespace="series", code="A", title="alpha")])
 
     catalog.build()
-    hits = catalog.search("alpha", limit=5)
+    hits = catalog.search("alpha", fields=["description"], limit=5)
 
     assert list(hits) == []

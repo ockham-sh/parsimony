@@ -132,9 +132,9 @@ A `Catalog` is a portable, in-memory index over normalized [`Entity`](../catalog
 ```python
 from parsimony.catalog import BM25Index, Catalog, CatalogMatch, Entity
 
-# An explicit BM25 index over the "title" field; default_field makes plain-text
-# (broad) queries search that field.
-catalog = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
+# An explicit BM25 index over the "title" field; broad (plain-text) queries
+# target the "title" index by convention.
+catalog = Catalog("demo", indexes={"title": BM25Index()})
 catalog.set_entities(
     [
         Entity(namespace="series", code="UNRATE", title="Unemployment Rate"),

@@ -2,17 +2,18 @@
 
 A [catalog](index.md) holds [`Entity`](entities.md) records, but the actual matching is
 done by per-field **indexes**. An index is scoped to one searchable field, knows how to
-build itself from the entities, and knows how to score a query against them. Parsimony
-ships three index types — lexical (`BM25Index`), dense-vector (`VectorIndex`), and their
-fusion (`HybridIndex`) — plus selection policies that pick a sensible index for a field
-automatically. Spanning several fields under one query is a call-time concern, not an
-index type: `Catalog.search`'s `fields=` fuses across whichever indexes you name — see
+build itself from the entities, and (through module-level scoring functions) knows how
+to score a query against them. Parsimony ships three index types — lexical
+(`BM25Index`), dense-vector (`VectorIndex`), and their fusion (`HybridIndex`) — plus a
+role-based selection policy (`discovery_indexes`) for a typical discovery catalog.
+Spanning several fields under one query is a call-time concern, not an index type:
+`Catalog.search`'s `fields=` fuses across whichever indexes you name — see
 [Search](search.md).
 
 This page covers the `CatalogIndex` protocol every index satisfies, the three concrete
 index types, how values are deduplicated before scoring, the build-time embedding cache,
-the adaptive policies in `parsimony.catalog.policy`, and the low-level FAISS/tokenizer
-helpers in `parsimony.indexes`.
+the discovery index policy in `parsimony.catalog.policy`, and the low-level
+FAISS/tokenizer helpers in `parsimony.indexes`.
 
 !!! note "Optional `catalog` extra"
     `BM25Index` lazily imports `rank_bm25`, and `VectorIndex` lazily imports `faiss` and a
@@ -38,13 +39,6 @@ class CatalogIndex(Protocol):
 
     def build(self, entries: list[Entity], *, ctx: IndexBuildContext) -> None: ...
 
-    def score_candidates(
-        self,
-        query: str,
-        *,
-        query_vectors: dict[tuple[str, int, bool], list[float]] | None = None,
-    ) -> dict[int, float]: ...
-
     def save(self, path: Path) -> None: ...
 
     @classmethod
@@ -55,10 +49,13 @@ class CatalogIndex(Protocol):
   Snapshots dispatch on it when reloading an index from disk.
 - **`build(entries, *, ctx)`** populates the index from the catalog's entities for the field
   named by `ctx.field`.
-- **`score_candidates(query, *, query_vectors=None)`** returns a `dict[int, float]` mapping an
-  entry **row id** (its 0-based position in the `entries` list passed to `build`) to a score.
-  It does **not** return codes — the catalog maps row ids back to `(namespace, code)`.
 - **`save`/`load`** persist and restore a snapshot directory.
+
+Scoring is not part of the protocol. It happens through module-level functions in
+`parsimony.catalog.indexes` — chiefly `search_index_values(index, query, *, limit,
+query_vectors=None, lexical_only=False)`, which every index type (including
+`HybridIndex`) supports — rather than a method every index implements itself. See
+[Ranking and fusion](ranking-and-fusion.md) for how that scoring works.
 
 `CatalogIndex` is `@runtime_checkable`, so `isinstance(some_index, CatalogIndex)` works:
 
@@ -67,10 +64,6 @@ from parsimony.catalog import BM25Index, CatalogIndex
 
 assert isinstance(BM25Index(), CatalogIndex)
 ```
-
-All four concrete indexes also expose a convenience method
-`ranking(query, *, limit, entries, ...) -> Ranking` that wraps `score_candidates` and maps
-the row scores back to a [`Ranking`](ranking-and-fusion.md) of `(namespace, code)` items.
 
 ## Value deduplication and row postings
 
@@ -83,17 +76,13 @@ appears once in the index even if a thousand series use it).
 The mapping is built by [`field_values`](entities.md), which resolves `namespace` / `code` /
 `title` specially and reads everything else from `metadata`, flattening lists and dicts into
 strings. Each distinct value gets a value-id; a compact postings array records which rows
-carry which value. At score time the value-score is expanded to all its rows, keeping the
-**maximum** score per row.
+carry which value. At score time a value's fuzzy score is expanded to all its rows.
 
-Both `BM25Index` and `VectorIndex` short-circuit on an **exact value match**: after
-`query.strip()`, then a case-folded scan, an exact hit returns the sentinel
-`EXACT_MATCH_SCORE` (`1_000_000.0`) and skips BM25/FAISS entirely.
-
-!!! warning "Exact matches dominate"
-    `EXACT_MATCH_SCORE` is `1e6`, which outranks any real BM25 or cosine score. An exact value
-    match therefore always sorts first, regardless of other signals — surprising if you expect
-    graded relevance for a term that happens to equal a stored value verbatim.
+A value that is fully contained in the query — every one of its own tokens appears in
+the query, or it equals the query verbatim after case-folding — is graded separately as
+*consumed*, with `coverage = 1.0`. Consumed values always rank ahead of the fuzzy-score
+band in [row ranking](ranking-and-fusion.md#row-ranking-coverage-tiers-by-surface-arity);
+there is no inflated sentinel score for an exact hit, coverage does that job instead.
 
 ## `BM25Index`
 
@@ -108,9 +97,6 @@ idx = BM25Index()      # kind == "bm25"
 `build` deduplicates the field's values, tokenizes each one (see
 [`tokenize`](#low-level-helpers-parsimonyindexes) below), and constructs a `BM25Okapi` over
 the value tokens. An empty corpus leaves the model unbuilt and scores nothing.
-
-`score_candidates` first tries the exact-match short-circuit, otherwise scores with BM25.
-The `query_vectors` argument is accepted (for protocol uniformity) but ignored.
 
 !!! note "Zero-score fallback in tiny corpora"
     In a very small corpus, BM25's IDF can collapse to zero for terms that appear in most of
@@ -146,7 +132,7 @@ function `embed_query_vectors`:
 
 ```python
 from parsimony.catalog import VectorIndex, Entity
-from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
+from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors, search_index_values
 from parsimony.embedder import SentenceTransformerEmbedder
 
 entries = [
@@ -157,14 +143,15 @@ idx = VectorIndex(embedder=SentenceTransformerEmbedder())
 idx.build(entries, ctx=IndexBuildContext(field="title", vector_cache={}))
 
 query_vectors = embed_query_vectors("German output", [idx])
-scores = idx.score_candidates("German output", query_vectors=query_vectors)
-print(scores)  # {row_id: score}
+scored = search_index_values(idx, "German output", limit=10, query_vectors=query_vectors)
+print(scored)  # [(text, score, coverage, matched), ...] — matched is "semantic" here
 ```
 
 !!! warning "Vector search needs a precomputed query vector"
-    Calling `score_candidates` (or `ranking`) on a `VectorIndex` without the matching query
-    vector raises `ValueError: VectorIndex search requires a precomputed query vector for its
-    embedder`. Always run `embed_query_vectors(query, indexes)` first and pass the result. The
+    Calling `search_index_values` (or any other scoring entry point) against a
+    `VectorIndex` without the matching query vector raises `ValueError: VectorIndex
+    search requires a precomputed query vector for its embedder`. Always run
+    `embed_query_vectors(query, indexes)` first and pass the result. The
     `query_vectors` dict is keyed by `(model, dim, normalize)`, **not** by field name, so two
     indexes sharing one embedder share one query embedding.
 
@@ -179,8 +166,11 @@ matching the stored identity.
 
 ## `HybridIndex`
 
-Fuses a BM25 and a vector component over **one** field, blending lexical and semantic
-signals with a [fusion ranker](ranking-and-fusion.md). The default fusion is `ZScoreFusion`.
+Fuses a BM25 and a vector component over **one** field. There is no fusion policy to
+configure — `HybridIndex` takes only `components=`; how the two components combine is
+decided at query time by [the two fusion regimes](ranking-and-fusion.md#two-regimes-picked-by-surface-arity),
+which are picked by the *caller* (how many fields `Catalog.search` scores in one call),
+not by anything the index itself knows or stores.
 
 ```python
 from parsimony.catalog import BM25Index, HybridIndex, VectorIndex
@@ -200,25 +190,15 @@ HybridIndex(components=[])                          # ValueError: requires at le
 HybridIndex(components=[BM25Index(), BM25Index()])  # ValueError: duplicate component kind 'bm25'
 ```
 
-`build` builds the components concurrently. `score_candidates` scores each component at the
-**value** level, builds a per-component value-id ranking, fuses them with the ranker, takes
-the max component score per fused value, then expands to rows through one component's
-postings. Because fusion operates on value-level rankings (not row-level), the fusion sees
-per-value scores. `save` records the fusion spec and each component under
-`components/<kind>/`; `load` rebuilds the fusion and the components by their stored kind.
+`build` builds each component in turn. Scoring happens through the same
+`search_index_values` entry point as the other index types, with a `lexical_only` flag
+that selects which fusion regime applies — `Catalog.search` sets it for you based on
+`fields=`; see [Ranking and fusion](ranking-and-fusion.md) for the algorithm.
 
-To pass a non-default fusion, supply any [`Ranker`](ranking-and-fusion.md):
-
-```python
-from parsimony.catalog import BM25Index, HybridIndex, VectorIndex
-from parsimony.embedder import SentenceTransformerEmbedder
-from parsimony.ranking import RRF
-
-idx = HybridIndex(
-    components=[BM25Index(), VectorIndex(embedder=SentenceTransformerEmbedder())],
-    fusion=RRF(),
-)
-```
+`save` records each component under `components/<kind>/`, plus a frozen legacy `fusion`
+key in `meta.json` for pre-0.0.2 readers (`load()` ignores it — see
+[Ranking and fusion](ranking-and-fusion.md#snapshots-fusion-is-native-not-stored)).
+`load` rebuilds the components by their stored `kind`.
 
 ## Index build context and the vector cache
 
@@ -245,64 +225,34 @@ You only construct `IndexBuildContext` directly when driving an index outside a 
 (as in the examples above). Within [`Catalog.build`](search.md) it is created and shared for
 you.
 
-## Adaptive policies (`parsimony.catalog.policy`)
+## Discovery index policy (`parsimony.catalog.policy`)
 
-When you do not want to choose an index by hand, the policy module picks one based on the
-data. Import these from `parsimony.catalog.policy` (they are not top-level names).
-
-### `adaptive_field_index`
-
-```python
-def adaptive_field_index(
-    field: str,
-    entries: Sequence[Entity],
-    *,
-    bm25_weight: float = 0.5,
-    vector_weight: float = 1.0,
-    embedder: EmbeddingProvider | None = None,
-) -> CatalogIndex: ...
-```
-
-It counts the distinct values of `field` across `entries`. If that count is **strictly below**
-`HYBRID_UNIQUE_VALUE_LIMIT` (`1000`) it returns a `HybridIndex` (BM25 + vector, fused by a
-`ZScoreFusion` weighted `{"bm25": bm25_weight, "vector": vector_weight}`); at or above the
-limit it returns a plain `BM25Index`. The reasoning: small distinct-value sets benefit from
-semantic recall, while large categorical fields are cheaper and just as effective with
-lexical-only scoring.
-
-```python
-from parsimony.catalog import Entity
-from parsimony.catalog.policy import HYBRID_UNIQUE_VALUE_LIMIT, adaptive_field_index
-
-small = [Entity(namespace="demo", code=f"c{i}", title=f"title {i}")
-         for i in range(HYBRID_UNIQUE_VALUE_LIMIT - 1)]
-large = [Entity(namespace="demo", code=f"c{i}", title=f"title {i}")
-         for i in range(HYBRID_UNIQUE_VALUE_LIMIT + 1)]
-
-print(type(adaptive_field_index("title", small)).__name__)  # HybridIndex
-print(type(adaptive_field_index("title", large)).__name__)  # BM25Index
-```
-
-!!! note "Shared default embedder"
-    A `None` `embedder` uses a process-global shared `SentenceTransformerEmbedder`,
-    instantiated once on first use. It is a module-level singleton, not thread- or
-    process-isolated. The *selection* above (counting distinct values) runs without the
-    `catalog` extra; only `HybridIndex`'s vector component touches the embedder, and only at
-    build time.
-
-### `discovery_indexes`
+When you do not want to choose an index by hand, `discovery_indexes` builds a
+ready-to-use index map for a typical discovery catalog. Import it from
+`parsimony.catalog.policy` (it is not a top-level name).
 
 ```python
 def discovery_indexes(
     entries: Sequence[Entity],
     *,
     include_description: bool = True,
+    embedder: EmbeddingProvider | None = None,
 ) -> dict[str, CatalogIndex]: ...
 ```
 
-Builds a ready-to-use index map for a typical discovery catalog: `code` as a `BM25Index`,
-`title` via `adaptive_field_index`, and (when `include_description=True`) `description` via
-`adaptive_field_index`. Pass it straight to a catalog:
+Index kind follows the field's **role**, never its cardinality — there is no
+distinct-value count, no threshold, no per-field weighting to configure:
+
+- `code` → `BM25Index`. An identifier's token "semantics" are noise; lexical exact/prefix
+  matching is what you want, regardless of how many codes exist.
+- `title`, and `description` when `include_description=True`, → `HybridIndex` (BM25 +
+  `VectorIndex`), always. Both are bounded discovery vocabularies — roughly one value
+  per catalog entry — so search semantics never depend on how many entries a provider
+  happens to publish; a 50-row catalog and a 5-million-row catalog get the same index
+  shape for the same field role.
+
+`entries` is accepted only for call-site compatibility (so callers that used to pass
+data for cardinality counting keep working) — the role policy never inspects it.
 
 ```python
 from parsimony.catalog import Catalog, Entity
@@ -316,13 +266,15 @@ catalog = Catalog("demo", indexes=discovery_indexes(entries))
 
 print(sorted(discovery_indexes(entries)))                          # ['code', 'description', 'title']
 print(sorted(discovery_indexes(entries, include_description=False)))  # ['code', 'title']
+print(type(discovery_indexes(entries)["code"]).__name__)   # BM25Index
+print(type(discovery_indexes(entries)["title"]).__name__)  # HybridIndex
 ```
 
-!!! tip "Policy constants"
-    The policy thresholds are public: `HYBRID_UNIQUE_VALUE_LIMIT` (`1000`),
-    `HYBRID_BM25_WEIGHT` (`0.5`), and `HYBRID_VECTOR_WEIGHT` (`1.0`).
-    `adaptive_field_index` and `discovery_indexes` are the canonical names for
-    per-field hybrid/BM25 selection and default discovery index bundles.
+!!! note "Shared default embedder"
+    A `None` `embedder` uses a process-global shared `SentenceTransformerEmbedder`,
+    instantiated once on first use. It is a module-level singleton, not thread- or
+    process-isolated. Only the `title`/`description` `HybridIndex`es touch it, and only
+    at build time (their `VectorIndex` component).
 
 ## Low-level helpers (`parsimony.indexes`)
 
@@ -392,6 +344,6 @@ export PARSIMONY_FAISS_IVF_THRESHOLD=1000000
 ## See also
 
 - [Building and searching](search.md) — the `Catalog` API and the structured-vs-broad query DSL that drive these indexes.
-- [Ranking and fusion](ranking-and-fusion.md) — `RRF`, `ZScoreFusion`, and `MinMaxScoreFusion` used by `HybridIndex`.
+- [Ranking and fusion](ranking-and-fusion.md) — the two fusion regimes `HybridIndex` combines its components with, and how rows are ranked from the result.
 - [Embedders](embedders.md) — the `EmbeddingProvider` contract that `VectorIndex` consumes.
 - [Snapshots and persistence](snapshots.md) — how indexes are saved to and loaded from a catalog snapshot.

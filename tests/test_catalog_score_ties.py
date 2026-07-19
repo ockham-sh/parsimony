@@ -1,7 +1,10 @@
+"""Tie behaviour of index value scoring: equal relevance yields equal scores."""
+
+from __future__ import annotations
+
 from parsimony.catalog import BM25Index, Entity, VectorIndex
-from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors
+from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors, search_index_values
 from parsimony.embedder import EmbedderInfo
-from parsimony.ranking import RankedItem, Ranking, RankingSet, ranking_from_scores
 
 
 class _LiteralEmbedder:
@@ -35,28 +38,20 @@ def _entries() -> list[Entity]:
     ]
 
 
-class _FixedRanker:
-    def __init__(self, code: str) -> None:
-        self.code = code
-
-    def __call__(self, rankings: RankingSet, *, limit: int) -> Ranking:
-        del rankings, limit
-        return Ranking((RankedItem(namespace="test", code=self.code, rank=0, score=1.0),))
-
-
-def test_vector_index_assigns_same_rank_to_equal_scores() -> None:
+def test_vector_index_assigns_equal_score_to_equal_neighbours() -> None:
     entries = _entries()
     index = VectorIndex(embedder=_LiteralEmbedder())
     ctx = IndexBuildContext(field="label", vector_cache={})
     index.build(entries, ctx=ctx)
 
     query_vectors = embed_query_vectors("query", [index])
-    ranking = index.ranking("query", limit=1, entries=entries, query_vectors=query_vectors)
-    items = sorted(ranking.items, key=lambda item: item.code)
+    scored = search_index_values(index, "query", limit=10, query_vectors=query_vectors)
+    by_text = {text: score for text, score, _, _ in scored}
 
-    assert [item.code for item in items] == ["A", "B"]
-    assert [item.rank for item in items] == [0, 0]
-    assert items[0].score == items[1].score
+    # "alpha" and "beta" both embed onto the query's axis, so they tie exactly.
+    assert by_text["alpha"] == by_text["beta"]
+    # A less-similar neighbour scores strictly below the tied pair.
+    assert by_text["other gamma"] < by_text["alpha"]
 
 
 def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
@@ -73,7 +68,7 @@ def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
     assert embedder.embedded_text_batches == [["alpha", "rare gamma"]]
 
 
-def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
+def test_bm25_index_assigns_equal_score_to_equal_matches() -> None:
     entries = [
         Entity(
             namespace="test",
@@ -95,28 +90,12 @@ def test_bm25_index_assigns_same_rank_to_equal_scores() -> None:
     ctx = IndexBuildContext(field="label", vector_cache={})
     index.build(entries, ctx=ctx)
 
-    ranking = index.ranking("instantaneous forward rate one year", limit=1, entries=entries)
-    items = sorted(ranking.items, key=lambda item: item.code)
+    scored = search_index_values(index, "instantaneous forward rate one year", limit=10)
+    by_text = {text: score for text, score, _, _ in scored}
 
-    assert [item.code for item in items] == ["A", "B"]
-    assert [item.rank for item in items] == [0, 0]
-    assert items[0].score == items[1].score
-
-
-def test_ranking_from_scores_uses_competition_rank_and_keeps_boundary_group() -> None:
-    ranking = ranking_from_scores(
-        [
-            ("n", "A", 10.0),
-            ("n", "B", 10.0),
-            ("n", "C", 9.0),
-            ("n", "D", 8.0),
-            ("n", "E", 8.0),
-            ("n", "F", 8.0),
-            ("n", "G", 7.0),
-        ],
-        limit=4,
-    )
-
-    assert [item.code for item in ranking.items] == ["A", "B", "C", "D", "E", "F"]
-    assert [item.rank for item in ranking.items] == [0, 0, 2, 3, 3, 3]
-    assert [item.score for item in ranking.items] == [10.0, 10.0, 9.0, 8.0, 8.0, 8.0]
+    # The two labels differ only in the token the query doesn't carry ("1"/"2"
+    # vs "one"), so they share the same four matched tokens and tie exactly.
+    a = "instantaneous forward rate 1 year"
+    b = "instantaneous forward rate 2 year"
+    assert a in by_text
+    assert by_text[a] == by_text[b]

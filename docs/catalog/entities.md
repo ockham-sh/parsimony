@@ -75,28 +75,36 @@ build an `Entity` directly or normalize a value by hand.
 
 `CatalogMatch` is the resolved search result returned by `Catalog.search`. It mirrors
 the three string fields of `Entity` — with the same three validators — keeps the open
-`metadata` dict, and adds a required `score: float`.
+`metadata` dict, and adds the ranking evidence: a required `score`, plus `coverage`
+and `matched`.
 
 | Field | Type | Notes |
 |---|---|---|
 | `namespace` | `str` | Re-normalized via `normalize_namespace`. |
 | `code` | `str` | Re-normalized via `normalize_entity_code`. |
 | `title` | `str` | Trimmed, non-empty. |
-| `score` | `float` | Final relevance score. Required. |
+| `score` | `float` | Final relevance score. Required. Relative to this query's best hit — never absolute, never comparable across queries or catalogs. |
+| `coverage` | `float` | Defaults to `0.0`. Fraction of the query's tokens consumed by the union of the row's fully-consumed field values (`1.0` = the query is literally this row's values). |
+| `matched` | `"lexical" \| "semantic" \| "both" \| None` | Defaults to `None`. Which component surfaced the row's evidence; `None` for a filter-only match. |
 | `metadata` | `dict[str, Any]` | Defaults to `{}`. Like `Entity`, `extra="forbid"`. |
+
+See [Ranking and fusion](ranking-and-fusion.md) for what `coverage`, `score`, and
+`matched` mean in practice and how they're computed.
 
 You rarely build a `CatalogMatch` yourself — the catalog does it during ranking — but
 the adapter is public. `catalog_match_from_entity` lives in `parsimony.catalog.models`
-(not re-exported at the catalog top level), and its `score` argument is keyword-only.
+(not re-exported at the catalog top level), and `score`/`coverage`/`matched` are all
+keyword-only.
 
 ```python
 from parsimony.catalog import Entity, CatalogMatch
 from parsimony.catalog.models import catalog_match_from_entity
 
 e = Entity(namespace="fred", code="UNRATE", title="Unemployment", metadata={"freq": "M"})
-m = catalog_match_from_entity(e, score=0.87)  # score is keyword-only
+m = catalog_match_from_entity(e, score=0.87, coverage=1.0, matched="lexical")
 assert isinstance(m, CatalogMatch)
 assert (m.namespace, m.code, m.title, m.score) == ("fred", "UNRATE", "Unemployment", 0.87)
+assert (m.coverage, m.matched) == (1.0, "lexical")
 assert m.metadata is not e.metadata  # shallow copy via dict(entity.metadata)
 ```
 

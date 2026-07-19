@@ -54,7 +54,6 @@ def build() -> Catalog:
             "age_label": HybridIndex(components=[BM25Index(), VectorIndex()]),
             "geo_label": BM25Index(),
         },
-        default_field="title",
     )
     catalog.set_entities(rows)
     catalog.build()

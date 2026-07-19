@@ -19,14 +19,18 @@ from parsimony.errors import EmptyDataError, InvalidParameterError
 def _build_catalog() -> Catalog:
     catalog = Catalog(
         name="demo",
-        indexes={"title": BM25Index()},
-        default_field="title",
+        indexes={"title": BM25Index(), "description": BM25Index()},
     )
     catalog.set_entities(
         [
             Entity(namespace="ns", code="CP0000_DE", title="HICP Germany", metadata={"area": "DE"}),
             Entity(namespace="ns", code="CP0000_FR", title="HICP France", metadata={"area": "FR"}),
-            Entity(namespace="ns", code="UNEMP_DE", title="Unemployment Germany", metadata={"area": "DE"}),
+            Entity(
+                namespace="ns",
+                code="UNEMP_DE",
+                title="Unemployment Germany",
+                metadata={"area": "DE", "description": "Harmonised jobless rate benchmark."},
+            ),
         ]
     )
     catalog.build()
@@ -87,3 +91,44 @@ def test_empty_query_is_treated_as_filter_only(demo_search) -> None:
 def test_no_match_raises_empty(demo_search) -> None:
     with pytest.raises(EmptyDataError):
         demo_search(filter={"area": "ZZ"}, limit=10)
+
+
+def test_description_evidence_is_searched(demo_search) -> None:
+    """The factory surface is title + description: query words that appear only in a
+    row's description surface it on lexical evidence."""
+    df = demo_search(query="jobless benchmark", limit=5).frame
+    assert df.iloc[0]["code"] == "UNEMP_DE"
+    assert df.iloc[0]["matched"] == "lexical"
+
+
+def test_search_fields_declaration(monkeypatch, tmp_path) -> None:
+    """A connector can declare a non-default surface; the declaration is honored and stated."""
+    monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(tmp_path))
+    desc_only = make_local_search_connector(
+        provider="demo2",
+        default_url="file:///unused",
+        catalog_url_env_var="DEMO2_CATALOG_URL",
+        tags=["demo"],
+        description="Search the demo catalog.",
+        build_catalog=_build_catalog,
+        search_fields=["description"],
+    )
+    df = desc_only(query="jobless benchmark", limit=5).frame
+    assert df.iloc[0]["code"] == "UNEMP_DE"
+    # Titles are OFF this connector's declared surface: a title-only term finds nothing.
+    with pytest.raises(EmptyDataError):
+        desc_only(query="HICP", limit=5)
+    assert "description field." in desc_only.description
+
+
+def test_ranking_trio_columns(demo_search) -> None:
+    """Every factory page ends with the same trio; a fully-consumed title is a visible 1.0 pin."""
+    ranked = demo_search(query="hicp germany", limit=5).frame
+    assert list(ranked.columns)[-3:] == ["coverage", "score", "matched"]
+    # "HICP Germany" is fully consumed by the query: a verified fact, pinned first —
+    # and the coverage column shows why it outranks any higher-score row.
+    assert ranked.iloc[0]["code"] == "CP0000_DE"
+    assert ranked.iloc[0]["coverage"] == 1.0
+    assert set(ranked["matched"]) == {"lexical"}  # BM25-only demo catalog
+    enumerated = demo_search(filter={"area": "DE"}, limit=ENUMERATION_LIMIT).frame
+    assert enumerated["matched"].isna().all()

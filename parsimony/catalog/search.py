@@ -27,7 +27,6 @@ def _default_search_columns(provider: str) -> tuple[Column, ...]:
     return (
         Column(name="code", role=ColumnRole.KEY, namespace=provider),
         Column(name="title", role=ColumnRole.TITLE),
-        Column(name="score", role=ColumnRole.DATA),
     )
 
 
@@ -186,11 +185,19 @@ class CatalogSearchParams(BaseModel):
         Field(
             default=None,
             max_length=512,
-            description="Structured field query (preferred) or plain text for broad search. "
+            description="Plain-text query matched against catalog titles and descriptions. "
             "Omit for a filter-only enumeration read.",
         ),
     ] = None
-    limit: int = Field(default=10, ge=1, le=ENUMERATION_LIMIT, description="Top-N results.")
+    limit: int = Field(
+        default=10,
+        ge=1,
+        le=ENUMERATION_LIMIT,
+        description=(
+            f"Max rows returned. With query= this is a ranked shortlist (limit <= {RANKED_LIMIT}); "
+            f"a filter-only enumeration may go up to {ENUMERATION_LIMIT}."
+        ),
+    )
     filter: dict[str, str] | None = Field(
         default=None,
         description="Exact AND constraint on result columns (e.g. {'code': 'CP0000'}) that "
@@ -201,9 +208,10 @@ class CatalogSearchParams(BaseModel):
     refresh: bool = Field(
         default=False,
         description=(
-            "Re-fetch the catalog from its source instead of the in-process cached copy. "
-            "Set true once after the catalog has been republished to pick up the new "
-            "version in a running session; leave false otherwise."
+            "Drop the in-process cached copy and reload the catalog. Set true once after "
+            "the catalog has been republished; leave false otherwise. Note: the Hub "
+            "snapshot itself is revalidated at most every ~5 minutes, so a republish can "
+            "take up to that long to appear even with refresh=true."
         ),
     )
 
@@ -216,26 +224,62 @@ def _matches_to_dataframe(
 ) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for m in matches:
-        row: dict[str, object] = {
-            code_column: m.code,
-            "title": m.title,
-            "score": round(m.score, 6),
-        }
+        row: dict[str, object] = {code_column: m.code, "title": m.title}
         for col in metadata_columns:
             row[col] = m.metadata.get(col)
+        row["coverage"] = round(m.coverage, 6)
+        row["score"] = round(m.score, 6)
+        row["matched"] = m.matched
         rows.append(row)
     return pd.DataFrame(rows)
 
 
-#: Appended to every factory-built search description. These connectors are all a
-#: relevance-ranked ``catalog.search`` top-N, so the "not exhaustive" contract is a
-#: property of the factory, not of any one provider — stated here once, un-rottably.
+#: The ranking trio every catalog-backed search emits — same three trailing columns,
+#: same order, same meanings, on every provider. Like :data:`RANKED_SEARCH_CAVEAT`
+#: below, this is a property of ``catalog.search``, not of any one provider — defined
+#: once here, appended to every factory-built output spec, and reused by the
+#: hand-rolled catalog search connectors. What varies per surface is the *distribution*
+#: of values (graded coverage on facet surfaces, mostly-0.0 on prose catalogs), never
+#: the schema or the semantics.
+COVERAGE_COLUMN = Column(
+    name="coverage",
+    role=ColumnRole.DATA,
+    description="Fraction of the query's tokens this row's indexed values literally "
+    "satisfy (all-or-nothing per value) — 1.0 is a verified fact, not a guess, and "
+    "explains a row ranked above higher scores. Often 0.0 on prose catalogs.",
+)
+SCORE_COLUMN = Column(
+    name="score",
+    role=ColumnRole.DATA,
+    description="Similarity relative to this query's best hit — not comparable across queries or catalogs.",
+)
+MATCHED_COLUMN = Column(
+    name="matched",
+    role=ColumnRole.DATA,
+    description="Which evidence surfaced this row: 'lexical', 'semantic', or 'both' "
+    "(empty on filter-only reads). An all-'semantic' page means nothing lexically real "
+    "matched anywhere — rephrase the query rather than trust the order.",
+)
+RANKING_COLUMNS = (COVERAGE_COLUMN, SCORE_COLUMN, MATCHED_COLUMN)
+
+
+#: Appended to every factory-built search description, after a composed sentence
+#: naming the connector's declared surface. The mechanics — lexical-first evidence,
+#: the "not exhaustive" contract — are properties of the factory, not of any one
+#: provider — stated here once, un-rottably.
 RANKED_SEARCH_CAVEAT = (
-    " Returns a relevance-ranked top-N, not the full catalog. To read a whole slice "
+    " Lexical evidence first; semantic similarity only fills in where nothing "
+    "literal matches, and the matched column labels each row's evidence. Returns a "
+    "relevance-ranked top-N, not the full catalog. To read a whole slice "
     "exhaustively, drop query= and pass filter= (an exact AND on the result columns, "
     'e.g. {"code": "..."}) with a higher limit; that enumerates from the same cached '
     "catalog, no re-crawl."
 )
+
+#: The entity recipe: the surface a standard discovery catalog declares — curated
+#: title and description text. Ontology-shaped catalogs (rows composed of codelist
+#: members, no curated text) declare their label columns via ``search_fields=``.
+ENTITY_SEARCH_FIELDS = ("title", "description")
 
 
 def make_local_search_connector(
@@ -251,13 +295,22 @@ def make_local_search_connector(
     output_columns: Sequence[Column] | None = None,
     code_column: str = "code",
     metadata_columns: Sequence[str] = (),
+    search_fields: Sequence[str] | None = None,
     empty_message: str | None = None,
 ) -> Connector:
-    """Factory for standard single-catalog search connectors."""
+    """Factory for standard single-catalog search connectors.
+
+    Ranked queries search *search_fields* — the connector's declared surface —
+    as literal text (no ``FIELD: value`` DSL; exact reads use ``filter=``).
+    Default is the entity recipe, :data:`ENTITY_SEARCH_FIELDS`; the declaration
+    is intersected with the loaded catalog's indexes at query time, so a
+    published catalog that lacks one of the declared indexes still searches.
+    """
     resolved_env = catalog_url_env_var if env_var is None else env_var
     lazy_namespace = catalog_subdirectory or provider
+    declared = tuple(search_fields) if search_fields is not None else ENTITY_SEARCH_FIELDS
     columns = output_columns if output_columns is not None else _default_search_columns(provider)
-    output = OutputSpec(columns=list(columns))
+    output = OutputSpec(columns=[*columns, *RANKING_COLUMNS])
     _lru = CatalogLRU()
 
     def _load_catalog(params: CatalogSearchParams) -> Catalog:
@@ -298,13 +351,22 @@ def make_local_search_connector(
                 ),
             )
         catalog = _load_catalog(params)
-        matches = catalog.search(q, limit=params.limit, filter=filter_spec)
+        # The declared surface, kept to fields this catalog actually indexes.
+        # Passing fields= makes the query literal text — the factory exposes
+        # no `FIELD: value` DSL; exact reads go through filter=.
+        surface = [f for f in declared if f in catalog.indexes]
+        if q is None:
+            matches = catalog.search(None, limit=params.limit, filter=filter_spec)
+        else:
+            matches = catalog.search(q, limit=params.limit, filter=filter_spec, fields=surface or None)
         if not matches:
             msg = empty_message or f"No catalog matches for query={q!r} filter={params.filter!r}."
             raise EmptyDataError(provider=provider, message=msg)
         return _matches_to_dataframe(matches, code_column=code_column, metadata_columns=metadata_columns)
 
-    full_description = description.rstrip() + RANKED_SEARCH_CAVEAT
+    plural = "fields" if len(declared) > 1 else "field"
+    surface_note = f" Matches query words against the catalog's {', '.join(declared)} {plural}."
+    full_description = description.rstrip() + surface_note + RANKED_SEARCH_CAVEAT
     _search.__doc__ = full_description
     _search.__name__ = f"{provider}_search"
     return connector(output=output, tags=list(tags), description=full_description)(_search)

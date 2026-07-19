@@ -15,7 +15,7 @@ catalog raises a plain `ValueError`, the same gate that guards [search](search.m
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
 
-catalog = Catalog("solo", indexes={"title": BM25Index()}, default_field="title")
+catalog = Catalog("solo", indexes={"title": BM25Index()})
 catalog.set_entities(
     [
         Entity(namespace="solo", code="A", title="alpha title"),
@@ -55,8 +55,8 @@ hits = catalog.search("alpha", limit=5)
 print([m.code for m in hits])
 ```
 
-A loaded catalog is reconstructed exactly from what was serialized: its `default_field` and
-index set come from the manifest, and the framework's default-index policy is forced off. That
+A loaded catalog is reconstructed exactly from what was serialized: its index set comes from
+the manifest, and the framework's default-index policy is forced off. That
 means calling `build()` on a loaded catalog will **not** re-derive metadata-key indexes — the
 serialized indexes are authoritative. (See [Indexes](indexes.md) for the default policy.)
 
@@ -105,7 +105,6 @@ print(meta.name, meta.entry_count, meta.index_fields)
 | `namespaces` | `list[str]` | Sorted distinct namespaces across the entries. |
 | `entry_count` | `int` | Number of entities (`>= 0`). |
 | `index_fields` | `dict[str, str]` | Maps each index field to its kind string: `"bm25"`, `"vector"`, or `"hybrid"`. |
-| `default_field` | `str \| None` | The broad-search surface, if one was configured. |
 | `build` | `BuildInfo` | Provenance for this snapshot (see below). |
 
 `BuildInfo` fields:
@@ -214,7 +213,7 @@ from parsimony.catalog.search import load_or_build_catalog
 
 
 def build() -> Catalog:
-    c = Catalog("demo", indexes={"title": BM25Index()}, default_field="title")
+    c = Catalog("demo", indexes={"title": BM25Index()})
     c.set_entities([Entity(namespace="demo", code="a", title="alpha widget")])
     c.build()
     return c

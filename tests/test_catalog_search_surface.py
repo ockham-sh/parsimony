@@ -95,7 +95,6 @@ def _build_catalog(tmp_path: Path, *, hybrid_item_index: bool = False) -> Catalo
             "ITEM_label": item_index,
             "REF_AREA_label": BM25Index(),
         },
-        default_field="title",
     )
     catalog.set_entities(_entities())
     catalog.build()
@@ -119,7 +118,6 @@ def _build_memory_catalog() -> Catalog:
             "title": BM25Index(),
             "ITEM_label": BM25Index(),
         },
-        default_field="title",
     )
     catalog.set_entities(_entities())
     catalog.build()

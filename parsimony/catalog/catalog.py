@@ -1,4 +1,18 @@
-"""Catalog runtime: entries, search, and snapshot persistence."""
+"""Catalog runtime: entries, search, and snapshot persistence.
+
+Ranking model, in one paragraph: every match carries a fact and a guess.
+*coverage* is the fact — a field value is *consumed* only when every token it
+contains appears in the query (all-or-nothing per value: a value that claims
+anything extra is a different concept, not a weaker match), and coverage is
+the fraction of the query's tokens covered by the union of the row's consumed
+values. *score* is the guess — per-field similarity (lexical BM25 + semantic
+vector), top-normalized per field and summed across the searched fields;
+meaningful only within one query. Facts outrank guesses: multi-field surfaces
+sort ``(coverage, score)``, single-field surfaces pin only full consumption
+and otherwise sort by score. *matched* labels the guess's origin
+("lexical" / "semantic" / "both"). The full story with worked examples lives
+in ``docs/catalog/ranking-and-fusion.md``.
+"""
 
 from __future__ import annotations
 
@@ -24,13 +38,13 @@ from parsimony.catalog.indexes import (
     CatalogIndex,
     HybridIndex,
     IndexBuildContext,
+    MatchedKind,
     VectorIndex,
     consumed_value_tokens,
     embed_query_vectors,
     search_index_values,
 )
 from parsimony.catalog.models import (
-    BroadSearchConfigError,
     BroadSearchUnavailableError,
     CatalogMatch,
     CatalogValueMatch,
@@ -93,12 +107,10 @@ class Catalog:
         name: str,
         *,
         indexes: dict[str, CatalogIndex] | None = None,
-        default_field: str | None = None,
         field_links: dict[str, str] | None = None,
         backend: CatalogBackendConfig | None = None,
     ) -> None:
         self.name = normalize_namespace(name)
-        self.default_field = default_field
         self._field_links = dict(field_links or {})
         self._backend_config = backend or CatalogBackendConfig()
         self._default_index_policy = indexes is None
@@ -108,7 +120,6 @@ class Catalog:
         self._backend: ParquetRowBackend | None = None
         self._dirty = True
         self._lock = threading.Lock()
-        self._validate_indexes()
 
     # ------------------------------------------------------------------
     # Public properties
@@ -152,7 +163,6 @@ class Catalog:
         """Replace all field indexes without rebuilding."""
         self._indexes = dict(indexes)
         self._default_index_policy = False
-        self._validate_indexes()
         self._invalidate()
 
     def attach_parquet_rows(self, parquet_path: Path, *, config: CatalogBackendConfig) -> None:
@@ -185,15 +195,6 @@ class Catalog:
         if self._default_index_policy:
             self._indexes = _default_indexes_from_entities(self._entities)
 
-        if self.default_field is not None:
-            try:
-                self.index_for(self.default_field)
-            except KeyError as err:
-                indexed = ", ".join(f"'{f}'" for f in self._indexed_fields())
-                raise BroadSearchConfigError(
-                    f"No index configured for default_field {self.default_field!r}. Indexed fields: [{indexed}]"
-                ) from err
-
         with self._lock:
             self._rebuild_indices()
             self._dirty = False
@@ -214,15 +215,23 @@ class Catalog:
         fields: str | Sequence[str] | None = None,
         filter: FilterSpec | None = None,
         top_k_values: int = 50,
-        namespaces: list[str] | None = None,
     ) -> list[CatalogMatch]:
-        """Search catalog rows, ranked by (coverage desc, fuzzy score desc).
+        """Search catalog rows: exact evidence first, then fuzzy score.
 
-        *Coverage* is the fraction of the query's tokens consumed by the union
-        of the row's fully-consumed field values (a field value counts only when
-        all its tokens appear in the query). An exact value hit is coverage 1.0
-        and ranks first; near-misses stay visible below in the fuzzy band. When
-        no field value is contained in the query, the ranking is pure fuzzy.
+        *Coverage* is the verifiable half of the ranking: a field value is
+        *consumed* only when every token it contains appears in the query —
+        all-or-nothing per value — and coverage is the fraction of the query's
+        tokens covered by the union of the row's consumed values (graded per
+        query). On a multi-field surface rows rank ``(coverage desc, score
+        desc)`` — coverage counts provably satisfied facets, so a row meeting
+        3/3 constraints beats one meeting 2/3 regardless of fuzzy score. On a
+        single-field surface only a full-consumption hit (coverage 1.0)
+        outranks the fuzzy order; partial containment there proxies value
+        brevity, not relevance, so it is reported but does not rank. Each
+        match also carries ``matched`` — which evidence surfaced it
+        ("lexical", "semantic", or "both"); an all-"semantic" result set means
+        nothing lexically real matched, so rephrase rather than trust the
+        order.
 
         Parameters
         ----------
@@ -232,17 +241,18 @@ class Catalog:
             Maximum results returned.
         fields:
             Declare the scoring surface: one indexed field name for single-field
-            scoring, or several to fuse (fuzzy score is the row's best per-field
-            score; coverage unions consumed tokens across the named fields).
-            Requires *query*, which is then literal text — never parsed as a
-            structured ``FIELD: value`` DSL.  Omit to search the catalog's
-            default field with DSL resolution.
+            scoring, or several to fuse (the score sums each field's normalized
+            contribution; coverage unions consumed tokens across the named
+            fields).  Requires *query*, which is then literal text — never
+            parsed as a structured ``FIELD: value`` DSL.  Omit to search the
+            catalog's default field with DSL resolution.
         filter:
             Exact AND filter: ``{column: [allowed_values, …]}``.  Can combine with query.
         top_k_values:
-            How many distinct indexed values to score for parquet backends.
-        namespaces:
-            Post-filter to these entity namespaces.
+            Per-field cap on the scored-value table (the fuzzy-evidence pool).
+            A deliberate noise floor: values beyond the top ``top_k_values``
+            contribute no fuzzy score, which keeps weak positives out of the
+            band. Fully-consumed values always count toward coverage.
         """
         self._ensure_built("searched")
         filter_spec = dict(filter or {})
@@ -278,7 +288,9 @@ class Catalog:
                     raise InvalidParameterError(
                         "catalog",
                         "Multi-clause structured queries are not supported. "
-                        "Use filter= for exact constraints and fields= for soft search.",
+                        "Use filter= for exact AND constraints; to fuzzy-search across "
+                        "several fields, pass fields=[...] with a plain-text query= "
+                        "(the query is then literal, never FIELD: value syntax).",
                     )
                 field, multi_values = parsed.clauses[0]
                 query = None  # consumed by DSL
@@ -309,10 +321,6 @@ class Catalog:
         else:
             matches = self._search_filter_only(filter_spec, limit=limit)
 
-        if namespaces is not None:
-            allowed = {normalize_namespace(ns) for ns in namespaces}
-            matches = [m for m in matches if m.namespace in allowed]
-
         return matches
 
     def search_values(
@@ -338,15 +346,19 @@ class Catalog:
         scored = search_index_values(index, query, limit=limit, query_vectors=qvecs)
         link_field = self._field_links.get(field)
         if link_field is None:
-            return [CatalogValueMatch(value=text, score=score, coverage=cov) for text, score, cov in scored]
+            return [
+                CatalogValueMatch(value=text, score=score, coverage=cov, matched=kind)
+                for text, score, cov, kind in scored
+            ]
         return [
             CatalogValueMatch(
                 value=text,
                 score=score,
                 coverage=cov,
+                matched=kind,
                 linked_value=self._linked_value(field, text, link_field),
             )
-            for text, score, cov in scored
+            for text, score, cov, kind in scored
         ]
 
     # ------------------------------------------------------------------
@@ -405,7 +417,7 @@ class Catalog:
         limit: int,
         top_k_values: int,
     ) -> list[CatalogMatch]:
-        """Rank rows by (coverage desc, score desc) in one backend pass.
+        """Rank rows in one backend pass: consumed-value evidence first, then score.
 
         Per query value and field, the index's distinct values are scored once
         (top *top_k_values*, normalized by the field's best score) and the
@@ -415,15 +427,18 @@ class Catalog:
         union of the row's consumed field values; *score* sums the row's
         normalized per-field relevance, so weak agreeing evidence across fields
         accumulates while no single field's raw magnitude can dominate the
-        ranking. Multi-value queries (DSL clauses) keep each row's best pair.
-        Because candidates come straight from the backend, a deserving row can
-        never be lost to a per-field pool truncation.
+        ranking; *matched* unions the evidence kinds of the values that
+        contributed. Multi-value queries (DSL clauses) keep each row's best
+        pair. The per-field ``top_k_values`` truncation is a deliberate noise
+        floor: a row whose only evidence sits below the cap is dropped, which
+        keeps weak fuzzy positives out of the band (fully-consumed values are
+        gated separately and always survive it).
         """
         plans = self._value_plans(fields, values, top_k_values=top_k_values)
         if not plans:
             return []
         any_of: dict[str, set[str]] = {}
-        for _, tables, consumed in plans:
+        for _, tables, _, consumed in plans:
             for column, scored in tables.items():
                 any_of.setdefault(column, set()).update(scored)
             for column, gated in consumed.items():
@@ -432,16 +447,16 @@ class Catalog:
         if not candidates:
             return []
 
-        scored_rows: list[tuple[float, float, Entity]] = []
+        scored_rows: list[tuple[float, float, MatchedKind | None, Entity]] = []
         if isinstance(self._backend, ParquetRowBackend):
             for row in self._backend.iter_rows(filter_spec=filter_spec or None, any_of=candidates):
                 row_values = {
                     column: [str(row[column])] if row.get(column) is not None else [] for column in candidates
                 }
-                coverage, score = _grade_row(row_values, plans)
+                coverage, score, matched = _grade_row(row_values, plans)
                 if coverage <= 0.0 and score <= 0.0:
                     continue
-                scored_rows.append((coverage, score, entity_from_row(row, config=self._backend_config)))
+                scored_rows.append((coverage, score, matched, entity_from_row(row, config=self._backend_config)))
         else:
             columns_by_field = {self._coverage_column(name): name for name in fields}
             for entity in self._entities:
@@ -450,34 +465,59 @@ class Catalog:
                 row_values = {
                     column: [str(v) for v in field_values(entity, name)] for column, name in columns_by_field.items()
                 }
-                coverage, score = _grade_row(row_values, plans)
+                coverage, score, matched = _grade_row(row_values, plans)
                 if coverage <= 0.0 and score <= 0.0:
                     continue
-                scored_rows.append((coverage, score, entity))
+                scored_rows.append((coverage, score, matched, entity))
 
-        scored_rows.sort(key=lambda item: (-item[0], -item[1], item[2].namespace, item[2].code))
+        if len(fields) == 1:
+            # A single-field surface has no cross-field union to accumulate, so
+            # partial containment proxies value brevity, not relevance: only a
+            # full-consumption hit (coverage 1.0) outranks the fuzzy order.
+            # Reported coverage stays the raw measurement.
+            def band(coverage: float) -> float:
+                return 1.0 if coverage >= 1.0 else 0.0
+        else:
+
+            def band(coverage: float) -> float:
+                return coverage
+
+        scored_rows.sort(key=lambda item: (-band(item[0]), -item[1], item[3].namespace, item[3].code))
         return [
-            catalog_match_from_entity(entity, score=score, coverage=coverage)
-            for coverage, score, entity in scored_rows[:limit]
+            catalog_match_from_entity(entity, score=score, coverage=coverage, matched=matched)
+            for coverage, score, matched, entity in scored_rows[:limit]
         ]
 
     def _value_plans(self, fields: list[str], values: Sequence[str], *, top_k_values: int) -> list[_ValuePlan]:
-        """Per query value: (query tokens, normalized score tables, consumed values) by column."""
+        """Per query value: (query tokens, score tables, evidence kinds, consumed values) by column."""
         plans: list[_ValuePlan] = []
         for value in values:
             if not value or not value.strip():
                 continue
             query_vectors = embed_query_vectors(value, [self.index_for(name) for name in fields])
             tables: dict[str, dict[str, float]] = {}
+            kinds: dict[str, dict[str, str]] = {}
             consumed: dict[str, dict[str, frozenset[str]]] = {}
             for name in fields:
                 column = self._coverage_column(name)
                 index = self.index_for(name)
-                scored = search_index_values(index, value, limit=top_k_values, query_vectors=query_vectors)
-                top = max((score for _, score, _ in scored), default=0.0)
-                tables[column] = {text: score / top for text, score, _ in scored if top > 0.0 and score > 0.0}
+                # Surface arity picks the fusion regime (see
+                # _fused_value_scores): a multi-field facet surface scores
+                # hybrid fields lexical-first with semantic void-fill; only a
+                # single-field surface fuses in the vector ranking, where
+                # semantic recall must come from the value scoring itself.
+                scored = search_index_values(
+                    index,
+                    value,
+                    limit=top_k_values,
+                    query_vectors=query_vectors,
+                    lexical_only=len(fields) > 1,
+                )
+                top = max((score for _, score, _, _ in scored), default=0.0)
+                tables[column] = {text: score / top for text, score, _, _ in scored if top > 0.0 and score > 0.0}
+                kinds[column] = {text: kind for text, _, _, kind in scored}
                 consumed[column] = consumed_value_tokens(index, value)
-            plans.append((frozenset(tokenize(value)), tables, consumed))
+            plans.append((frozenset(tokenize(value)), tables, kinds, consumed))
         return plans
 
     def _coverage_column(self, field: str) -> str:
@@ -614,7 +654,6 @@ class Catalog:
         catalog = cls(
             meta.name,
             indexes=indexes,
-            default_field=meta.default_field,
             field_links=dict(meta.backend.field_links),
             backend=backend_config,
         )
@@ -636,26 +675,11 @@ class Catalog:
     # ------------------------------------------------------------------
 
     def _resolve_default_field(self) -> str | None:
-        if self.default_field is not None:
-            return self.default_field
-        if "title" in self._indexes:
-            return "title"
-        return None
+        """Broad (no-``fields=``) search targets the ``title`` index, by convention."""
+        return "title" if "title" in self._indexes else None
 
     def _indexed_fields(self) -> list[str]:
         return sorted(self._indexes)
-
-    def _validate_indexes(self) -> None:
-        missing_default = (
-            self.default_field is not None
-            and self.default_field not in self._indexes
-            and not self._default_index_policy
-        )
-        if missing_default:
-            indexed = ", ".join(f"'{f}'" for f in sorted(self._indexes))
-            raise BroadSearchConfigError(
-                f"No index configured for default_field {self.default_field!r}. Indexed fields: [{indexed}]"
-            )
 
     def _invalidate(self) -> None:
         self._dirty = True
@@ -731,7 +755,9 @@ class Catalog:
             namespaces=namespaces,
             entry_count=row_count,
             index_fields={field: index.kind for field, index in self._indexes.items()},
-            default_field=self.default_field,
+            # Frozen schema-v1 key: parsed and carried through the manifest digest,
+            # no longer consulted at runtime (broad search targets title by convention).
+            default_field=None,
             backend=BackendMeta(
                 # Derived from backend presence, not from the config, so the
                 # persisted kind can never disagree with the actual payload.
@@ -749,33 +775,54 @@ class Catalog:
 
 
 #: One query value's scoring plan: (query tokens, per-column normalized score
-#: tables, per-column consumed values with their token sets).
-_ValuePlan = tuple[frozenset[str], dict[str, dict[str, float]], dict[str, dict[str, frozenset[str]]]]
+#: tables, per-column evidence kinds, per-column consumed values with their
+#: token sets).
+_ValuePlan = tuple[
+    frozenset[str],
+    dict[str, dict[str, float]],
+    dict[str, dict[str, str]],
+    dict[str, dict[str, frozenset[str]]],
+]
 
 
-def _grade_row(row_values: dict[str, list[str]], plans: list[_ValuePlan]) -> tuple[float, float]:
-    """Best (coverage, score) of one row across the query's values."""
-    best = (0.0, 0.0)
-    for qtokens, tables, consumed in plans:
+def _grade_row(row_values: dict[str, list[str]], plans: list[_ValuePlan]) -> tuple[float, float, MatchedKind | None]:
+    """Best (coverage, score, matched) of one row across the query's values."""
+    best: tuple[float, float, MatchedKind | None] = (0.0, 0.0, None)
+    for qtokens, tables, kinds, consumed in plans:
         union: set[str] = set()
-        matched = False
+        consumed_any = False
+        evidence: set[str] = set()
         score = 0.0
         for column, texts in row_values.items():
             table = tables.get(column)
             if table and texts:
-                score += max((table.get(text, 0.0) for text in texts), default=0.0)
+                contrib, contrib_text = max(((table.get(text, 0.0), text) for text in texts), default=(0.0, ""))
+                score += contrib
+                if contrib > 0.0:
+                    evidence.add(kinds.get(column, {}).get(contrib_text, "lexical"))
             gated = consumed.get(column)
             if gated:
                 for text in texts:
                     tokens = gated.get(text)
                     if tokens is not None:
-                        matched = True
+                        consumed_any = True
                         union.update(tokens)
+        # Containment is lexical evidence by construction.
+        if consumed_any:
+            evidence.add("lexical")
         # A tokenless query only gathers string-equal values: full coverage.
-        coverage = len(union & qtokens) / len(qtokens) if qtokens else (1.0 if matched else 0.0)
-        pair = (coverage, score)
-        if pair > best:
-            best = pair
+        coverage = len(union & qtokens) / len(qtokens) if qtokens else (1.0 if consumed_any else 0.0)
+        matched: MatchedKind | None
+        if not evidence:
+            matched = None
+        elif "both" in evidence or {"lexical", "semantic"} <= evidence:
+            matched = "both"
+        elif "semantic" in evidence:
+            matched = "semantic"
+        else:
+            matched = "lexical"
+        if (coverage, score) > (best[0], best[1]):
+            best = (coverage, score, matched)
     return best
 
 

@@ -7,8 +7,8 @@ via :pep:`562` so that ``import parsimony`` stays cheap.
 * :class:`Connectors` is an immutable collection of :class:`Connector` objects;
   callers use ``connectors[name](**kwargs)``. The callable signature is
   the connector's parameter surface.
-* :class:`Catalog` is the canonical implementation (Parquet rows + HybridIndex
-  over FAISS vectors and BM25 keywords with ZScoreFusion) and is loaded lazily.
+* :class:`Catalog` is the canonical implementation (Parquet rows + hybrid
+  BM25/FAISS-vector indexes fused at query time) and is loaded lazily.
 * Connector plugins are discovered through the ``parsimony.providers``
   entry-point group via :mod:`parsimony.discover`.
 """
@@ -37,13 +37,6 @@ if TYPE_CHECKING:
         HybridIndex,
         VectorIndex,
         auto_catalog,
-    )
-    from parsimony.ranking import (
-        RRF,
-        MinMaxScoreFusion,
-        Ranker,
-        Ranking,
-        ZScoreFusion,
     )
     from parsimony.stores import InMemoryDataStore, LoadResult
 from parsimony.connector import (
@@ -116,11 +109,6 @@ __all__ = [
     "auto_catalog",
     "InMemoryDataStore",
     "LoadResult",
-    "RRF",
-    "Ranker",
-    "Ranking",
-    "ZScoreFusion",
-    "MinMaxScoreFusion",
 ]
 
 
@@ -138,11 +126,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "auto_catalog": ("parsimony.catalog", "auto_catalog"),
     "InMemoryDataStore": ("parsimony.stores", "InMemoryDataStore"),
     "LoadResult": ("parsimony.stores", "LoadResult"),
-    "RRF": ("parsimony.ranking", "RRF"),
-    "Ranker": ("parsimony.ranking", "Ranker"),
-    "Ranking": ("parsimony.ranking", "Ranking"),
-    "ZScoreFusion": ("parsimony.ranking", "ZScoreFusion"),
-    "MinMaxScoreFusion": ("parsimony.ranking", "MinMaxScoreFusion"),
 }
 
 

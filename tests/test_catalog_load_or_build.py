@@ -28,7 +28,7 @@ def test_load_or_build_uses_lazy_cache(tmp_path: Path, sample_entries: list[Enti
     def build() -> Catalog:
         nonlocal build_calls
         build_calls += 1
-        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
+        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()})
         catalog.set_entities(sample_entries)
         catalog.build()
         return catalog
@@ -57,7 +57,7 @@ def test_catalog_lru_reuses_memory(tmp_path: Path, sample_entries: list[Entity])
     cache = tmp_path / "lazy"
 
     def build() -> Catalog:
-        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
+        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()})
         catalog.set_entities(sample_entries)
         catalog.build()
         return catalog
@@ -73,7 +73,7 @@ def test_catalog_lru_refresh_bypasses_memory(tmp_path: Path, sample_entries: lis
     cache = tmp_path / "lazy"
 
     def build() -> Catalog:
-        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()}, default_field="title")
+        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()})
         catalog.set_entities(sample_entries)
         catalog.build()
         return catalog

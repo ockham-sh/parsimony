@@ -63,7 +63,6 @@ def _build_parquet_catalog(tmp_path: Path) -> Catalog:
             "FREQ_label": BM25Index(),
             "REF_AREA_label": BM25Index(),
         },
-        default_field="title",
         field_links={"FREQ_label": "FREQ_code", "REF_AREA_label": "REF_AREA_code"},
     )
     catalog.set_entities(entities)

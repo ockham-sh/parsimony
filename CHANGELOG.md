@@ -6,8 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- `CatalogMatch.matched` — `"lexical" | "semantic" | "both"`: which component
+  surfaced the row's evidence (`None` on filter-only matches). The trap
+  signal: an all-`"semantic"` result page means nothing lexically real
+  matched — rephrase the query rather than trust the order.
+  `search_index_values` returns the same evidence kind per value.
+- Every catalog-backed search connector now ends with the same ranking trio —
+  `coverage`, `score`, `matched` — defined once as `RANKING_COLUMNS`
+  (`COVERAGE_COLUMN` / `SCORE_COLUMN` / `MATCHED_COLUMN` in
+  `parsimony.catalog.search`) and appended automatically to every
+  `make_local_search_connector` output spec; hand-rolled search connectors
+  reuse the same constants. Identical meanings on every provider; what varies
+  per surface is only the distribution of values (graded coverage on facet
+  surfaces, mostly-0.0-with-exact-pins on prose catalogs).
+- `CatalogValueMatch.matched` — `Catalog.search_values` now reports the
+  evidence kind per value (it was already computed for fusion), so value-level
+  consumers can emit the same trio.
+
 ### Changed
 
+- **BREAKING — factory search connectors declare the discovery surface.**
+  `make_local_search_connector` ranked queries search the connector's declared
+  surface — a new `search_fields=` parameter, defaulting to the entity recipe
+  `ENTITY_SEARCH_FIELDS = ("title", "description")`, intersected with the
+  loaded catalog's indexes — as literal text, and each connector's description
+  states its declared surface. Consequences: the `FIELD: value` DSL no longer applies to
+  factory-built connectors (exact reads use `filter=`); description evidence
+  now ranks lexically (the description index was previously built and shipped
+  but never searched on this path); and the two-field surface takes the
+  lexical-first facet regime instead of single-field RRF, so a short generic
+  title can no longer out-rank a row whose description carries the query's
+  words.
+
+- **BREAKING — catalog search is one native path; the fusion library is
+  gone.** Hybrid fields combine their components by surface arity: on a
+  multi-field facet surface, lexical-first with semantic void-fill (the
+  vector ranks a field only when BM25 fully abstains); on a single-field
+  surface, tie-aware unweighted Reciprocal Rank Fusion (k=60) over the BM25
+  and vector-top-k rankings. Row ordering: multi-field surfaces keep
+  `(coverage desc, score desc)`; single-field surfaces rank
+  `(coverage == 1.0, score desc)` — an exactly-consumed value still pins
+  rank 1, but partial containment no longer orders (on one long-text field
+  it proxied title brevity, not relevance). `HybridIndex` no longer takes
+  `fusion=`; snapshots write a frozen legacy `fusion` key that `load()`
+  ignores, so old snapshots load unchanged and no republish is needed.
+- **BREAKING — index policy is role-based.** `adaptive_field_index` and the
+  `HYBRID_UNIQUE_VALUE_LIMIT` / `HYBRID_BM25_WEIGHT` / `HYBRID_VECTOR_WEIGHT`
+  constants are removed; `discovery_indexes` picks index kind by field role
+  (identifiers BM25-only; title/description always hybrid) and accepts an
+  optional `embedder=`.
+- **BREAKING — `Catalog.search` drops `namespaces=`** (dead parameter, zero
+  callers anywhere).
 - **BREAKING — `OutputConfig` is renamed `OutputSpec` and no longer transforms
   data.** It is now a purely declarative labeling of column roles: no `dtype=`
   coercion, no `mapped_name=` renaming, no eager validation against the
@@ -133,6 +184,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   path was tracked in shadow state that only `attach_parquet_rows()` set;
   save now reads it from the attached backend, so load → save → load
   round-trips.
+
+### Removed
+
+- **BREAKING — `Catalog(default_field=...)` and `BroadSearchConfigError`.**
+  Broad (no-`fields=`) search targets the `title` index by convention — every
+  production caller passed `default_field="title"`, the exact value the
+  fallback already resolved. Nothing validates a broad field at construction
+  or build any more; a plain-text query on a catalog with no title index
+  still raises `BroadSearchUnavailableError` at query time, and any other
+  surface is declared per call with `fields=`. The persisted `default_field`
+  snapshot key remains parsed and digest-checked (written as `null` by new
+  saves), ignored at runtime.
+- `parsimony/ranking.py` and the package exports `RRF`, `Ranker`, `Ranking`,
+  `ZScoreFusion`, `MinMaxScoreFusion`; the `score_candidates()` / `ranking()`
+  methods on index classes. Released `parsimony-sdmx` wheels import
+  `ZScoreFusion` at module level — upgrade core and the sdmx package
+  together (the paired connectors release floor-bumps its pin).
 
 ## [0.7.5] - 2026-06-19
 

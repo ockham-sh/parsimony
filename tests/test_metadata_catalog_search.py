@@ -80,10 +80,9 @@ def test_metadata_is_searchable_only_when_index_targets_it() -> None:
     description_indexed = Catalog(
         name="test_ns",
         indexes={"description": BM25Index()},
-        default_field="description",
     )
     description_indexed.set_entities(entries)
     description_indexed.build()
-    hits = description_indexed.search("renewable wind energy", limit=2)
+    hits = description_indexed.search("renewable wind energy", fields=["description"], limit=2)
     assert hits[0].code == "A.1"
     assert hits[0].score > 0

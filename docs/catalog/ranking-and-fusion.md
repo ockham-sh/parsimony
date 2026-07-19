@@ -1,307 +1,315 @@
 # Ranking and fusion
 
-The `parsimony.ranking` module is the small, dependency-light layer (standard library plus
-pydantic only) that turns per-index candidate lists into one final ranked list. It models
-retrieval results as immutable dataclasses and combines them with pure-policy *fusion
-rankers* — Reciprocal Rank Fusion, min-max score fusion, or z-score score fusion. The
-[catalog's hybrid index](indexes.md) uses this layer to merge BM25 and vector results, and
-the [search API](search.md) uses it to assemble `CatalogMatch` results. You can also use it
-standalone to fuse any set of named rankings.
+Every match a `Catalog` returns carries two kinds of evidence and a label: `coverage`, a
+**fact**; `score`, a **guess**; and `matched`, which engine produced the evidence. This
+page starts with that model and a handful of worked examples, then works down into the
+mechanics that compute the three numbers.
 
-## The data model
+One fact underlies all of it: a `Catalog` scores a field's **distinct** indexed values,
+not one score per row — see [value deduplication](indexes.md#value-deduplication-and-row-postings)
+— and every row that carries a scored value inherits that evidence through the field's
+postings. Everything below is in terms of *values* (the docs also call them **cells**: one
+indexed field value, e.g. one row's `title` or one row's `region`), with row-level
+`coverage`/`score`/`matched` built from them.
 
-Three frozen dataclasses describe a single ranked identity and two collections of them. All
-are immutable, so you build a new instance rather than mutating an existing one.
+## The two channels
 
-| Type | Fields | Meaning |
-|------|--------|---------|
-| `RankedItem` | `namespace`, `code`, `rank`, `score` | One ranked catalog identity. |
-| `RankedSetItem` | `index`, `namespace`, `code`, `rank`, `score` | The same, plus the name of the index that produced it. |
-| `Ranking` | `items: tuple[RankedItem, ...] = ()` | An ordered ranked list. |
-| `RankingSet` | `items: tuple[RankedSetItem, ...] = ()` | A flat collection of per-index ranked rows. |
+| | Kind | Answers | Computed from |
+|---|---|---|---|
+| `coverage` | fact | How much of the query is exactly satisfied by this row's values? | Token containment only |
+| `score` | guess | How similar does the row look overall? | Lexical BM25 + semantic vector |
+| `matched` | label | Which engine produced the evidence — `"lexical"`, `"semantic"`, or `"both"`? | Which component(s) contributed |
 
-`rank` is a zero-based integer (rank `0` is the top result), and `score` is the fused or
-raw relevance score. The collections validate their contents at construction:
+`coverage` is verifiable: it only ever credits a row for query tokens some field value
+of that row provably contains, nothing more. `score` is a similarity estimate — useful,
+but never provably correct. `matched` doesn't score anything; it just says which of the
+two engines is behind the evidence you're looking at, so a `None` (filter-only, no
+query), `"lexical"` (token overlap), `"semantic"` (vector proximity), or `"both"` tells
+you where to trust and where to double-check.
 
-- `Ranking` requires its items to be unique by `(namespace, code)`. A duplicate raises
-  `ValueError("Ranking entries must be unique by (namespace, code)")`.
-- `RankingSet` requires uniqueness by `(index, namespace, code)`, raising
-  `ValueError("RankingSet entries must be unique by (index, namespace, code)")` otherwise.
-- Both reject any item with `rank < 0`, raising a `ValueError` about
-  "zero-based non-negative integers".
+`CatalogValueMatch`, the result type from [`Catalog.search_values`](search.md), carries
+the same trio per value — `coverage`, `score`, and `matched` — so value-level consumers
+report evidence exactly like row search does.
 
-Both collections expose a `.empty()` classmethod that returns the empty instance
-(`Ranking(())` / `RankingSet(())`).
+**The one-sentence contract: verified facts outrank guesses; guesses stay visible,
+labeled as guesses.** Nothing with a `coverage` you can trust more than a `coverage` you
+can't is ever ranked below it, and nothing with only a `score` is ever hidden — it just
+ranks by how good a guess it is.
 
-```python
-from parsimony.ranking import RankedItem, Ranking
+## Coverage, step by step
 
-ranking = Ranking((
-    RankedItem(namespace="us_state", code="CA", rank=0, score=0.9),
-    RankedItem(namespace="us_state", code="NY", rank=1, score=0.7),
-))
-print(len(ranking.items))          # 2
-print(Ranking.empty().items)       # ()
-```
+Coverage is computed in three steps:
 
-!!! note "Import paths"
-    Only `RRF`, `Ranker`, `Ranking`, `ZScoreFusion`, and `MinMaxScoreFusion` are re-exported
-    from the top-level package (`from parsimony import RRF`). Everything else in this
-    module — `RankedItem`, `RankedSetItem`, `RankingSet`, `concat`, `ranking_from_scores`,
-    the `*Spec` models, `RankerSpec`, and `ranker_to_spec` / `ranker_from_spec` — lives only
-    under `parsimony.ranking`. The clearest convention for ranking-heavy code is to import
-    the whole surface from there: `from parsimony.ranking import ...`.
+1. **Tokenize the query.** `"annual rate of change"` → `{annual, rate, of, change}`.
+2. **Consume cells.** A cell (one indexed field value) is *consumed* only if **every**
+   token the cell contains also appears in the query — all-or-nothing per cell. A cell
+   that claims anything the query didn't ask for is a different concept, not a weaker
+   match, so it isn't partially credited.
+3. **Union and divide.** A row's `coverage` is the fraction of the *query's* tokens
+   covered by the union of that row's consumed cells, across whichever fields the
+   search touched.
 
-## Building a RankingSet with `concat`
+Consumption is binary per cell (a cell either qualifies or it doesn't); `coverage` itself
+is graded per query, because a row can consume several cells and each contributes
+whichever of its own tokens the query asked for.
 
-You rarely build a `RankingSet` by hand. The `concat` function takes a mapping of
-index-name to `Ranking` and flattens it into one `RankingSet`, stamping every item with its
-source index name. The dict's iteration order is preserved in the resulting tuple.
+The five examples below are all run against a live catalog to pin down the exact
+numbers; each query tokenizes to lowercase words.
 
-```python
-from parsimony.ranking import RankedItem, Ranking, concat
+### False friend
 
-bm25 = Ranking((
-    RankedItem(namespace="indicator", code="gdp", rank=0, score=12.0),
-    RankedItem(namespace="indicator", code="cpi", rank=1, score=8.0),
-))
-vector = Ranking((
-    RankedItem(namespace="indicator", code="cpi", rank=0, score=0.82),
-    RankedItem(namespace="indicator", code="gdp", rank=1, score=0.61),
-))
+Query `"annual rate of change"` over a `title` field:
 
-rankings = concat({"bm25": bm25, "vector": vector})
-print(len(rankings.items))  # 4 — two rows from each index, each tagged with its index name
-```
+| Row title | Consumed? | `coverage` | `score` | Rank |
+|---|---|---|---|---|
+| "Annual rate of change" | yes — every cell token is in the query | `1.0` | `1.0` | pinned, #1 |
+| "Annual average rate of change" | no — `average` is not in the query | `0.0` | `1.0` | visible, #2 |
 
-## The `Ranker` protocol
+Both rows land on the same `score` here (BM25 favors the longer title's extra term
+overlap just as much as the shorter one's exact match), but only the first row's title
+is *entirely* contained in the query. The second is a different, more specific concept
+("average rate of change" vs. "rate of change") and is graded accordingly — still
+returned, still visible, just not pinned above the literal match.
 
-A ranker is a *pure policy*: a callable that takes a `RankingSet` and a keyword-only `limit`
-and returns one fused `Ranking`. The `Ranker` protocol captures exactly that contract.
+### Term repetition
 
-```python
-from typing import Protocol
-from parsimony.ranking import Ranking, RankingSet
+Query `"current account"` over a `title` field:
 
-class Ranker(Protocol):
-    def __call__(self, rankings: RankingSet, *, limit: int) -> Ranking: ...
-```
+| Row title | Consumed? | `coverage` | `score` | Rank |
+|---|---|---|---|---|
+| "Current account" | yes | `1.0` | `0.667` | pinned, #1 |
+| "Current account, Current transfers" | no — `transfers` is extra | `0.0` | `1.0` | visible, #2 |
 
-Three concrete rankers ship in the box (`RRF`, `MinMaxScoreFusion`, `ZScoreFusion`), all
-frozen dataclasses. Any object matching the protocol — including your own implementation —
-is accepted at runtime, for example as the `fusion` argument of a
-[`HybridIndex`](indexes.md). A custom ranker cannot be serialized, however; see
-[serialization](#serializing-rankers) below.
+The repeated tokens in the second title actually earn it the *higher* BM25 score. It
+still can't outbid the first row's coverage pin — score alone never beats a verified
+fact.
 
-## Reciprocal Rank Fusion (`RRF`)
+### Facet AND across fields (the main payoff)
 
-`RRF` fuses on *rank position*, not raw score. For every `RankedSetItem` it accumulates
-`weight / (k + rank + 1.0)` into a per-`(namespace, code)` total, where `weight` is the
-index's weight (default `1.0`) and `k` defaults to `60`. Because contributions accumulate
-across indexes, an identity that appears in several indexes is rewarded over one that
-appears in only one — even if its raw scores are small.
-
-| Parameter | Type | Default | Notes |
-|-----------|------|---------|-------|
-| `weights` | `Mapping[str, float]` | `{}` (every index `1.0`) | Per-index multipliers; finite and non-negative. |
-| `k` | `int` | `60` | Smoothing constant; must be positive. |
+Query `"quarterly services germany"` scored across three metadata fields at once:
 
 ```python
-from parsimony.ranking import RRF, RankedSetItem, RankingSet
-
-rankings = RankingSet((
-    RankedSetItem(index="a", namespace="n", code="A", rank=0, score=100.0),
-    RankedSetItem(index="a", namespace="n", code="B", rank=1, score=90.0),
-    RankedSetItem(index="b", namespace="n", code="B", rank=0, score=0.1),
-))
-
-final = RRF()(rankings, limit=2)
-print([item.code for item in final.items])  # ['B', 'A'] — B wins by appearing in both
-print([item.rank for item in final.items])  # [0, 1]
+matches = catalog.search(
+    "quarterly services germany", fields=["freq", "item", "geo"], limit=10,
+)
 ```
 
-!!! tip "RRF is rank-based, not score-based"
-    A tiny raw score at rank 0 beats a huge raw score at rank 1. To bias toward one index
-    despite that, weight it: `RRF(weights={"strong": 10.0})` promotes the `strong` index's
-    rows.
+| Row | `freq` | `item` | `geo` | Cells consumed | `coverage` | `score` |
+|---|---|---|---|---|---|---|
+| A | Quarterly | Services | Germany | 3 of 3 | `1.0` | `3.0` |
+| B | Quarterly | Services | France | 2 of 3 | `0.667` | `2.0` |
+| C | Quarterly | Goods | Italy | 1 of 3 | `0.333` | `1.0` |
 
-`RRF(k=0)` raises `ValueError("RRF k must be positive")`.
+This is coverage doing its real job: an AND across independently-scored facets. Row A
+fully satisfies all three query terms and ranks first; B satisfies two of three and
+ranks second regardless of how close its raw `score` gets to A's — a row that consumes
+more of the query outranks one that merely looks similar.
 
-## Score fusion: `MinMaxScoreFusion` and `ZScoreFusion`
+### Title degeneration (why partial coverage doesn't rank on a single field)
 
-The two score-fusion rankers normalize each index's raw scores onto a common scale before
-combining them, so an index with naturally large scores does not dominate one with small
-scores. Both take only a `weights` mapping (no `k`).
+Query `"unemployment rate monthly"` over a `title` field:
 
-### MinMaxScoreFusion
+| Row title | Consumed? | `coverage` | `score` | Rank |
+|---|---|---|---|---|
+| "Unemployment rate (%) - monthly data" | no — extra tokens | `0.0` | `1.0` | #1 (score order) |
+| "Unemployment rate" | yes, but only 2 of 3 query tokens | `0.667` | `0.667` | #2 (score order) |
 
-For each index, `MinMaxScoreFusion` finds the min and max score and adds
-`((score - min) / (max - min)) * weight` for each item. If an index's scores are all equal
-(`max == min`) it is **skipped entirely** — a constant-score index contributes nothing.
+Neither row hits `coverage == 1.0`, so neither pins — both rank by `score` alone, and
+the longer title wins because it actually shares more terms with the query. If a
+single-field surface ranked by raw `coverage` instead, the short title's higher fraction
+(`0.667` vs. `0.0`) would put it first — rewarding brevity, not relevance, since a short
+value "contains" more of a long query than a long value does by construction. That's why
+[row ranking](#row-ranking-coverage-tiers-by-surface-arity) on a single field only lets a
+full `1.0` pin outrank the fuzzy order; every other `coverage` value is reported but does
+not participate in ordering.
+
+### The known limit
+
+Query `"annual index germany"` — three facet words, no word naming the actual concept —
+scored across the same three fields:
+
+| Row | `freq` | `item` | `geo` | Cells consumed | `coverage` | `score` |
+|---|---|---|---|---|---|---|
+| "Administrative index series" (wrong concept) | Annual | Index | Germany | 3 of 3 | `1.0` | `3.0` |
+| "Consumer price index" (intended) | Annual | Consumer price index | Germany | 2 of 3 | `0.667` | `3.0` |
+
+The wrong-concept row's `item` value is the bare word "Index," which is fully contained
+in the query; the intended row's `item` value, "Consumer price index," carries two extra
+tokens (`consumer`, `price`) the query never asked for, so it isn't consumed. Both rows
+tie on `score`, but the wrong-concept row's full coverage pins it above the row an
+analyst actually wants. See [Known limits](#known-limits) below — this is a documented,
+accepted tradeoff, not a bug.
+
+## Score
+
+`score` sums, over the searched fields, each field's **normalized** contribution: the
+row's best-matching value in that field, divided by that field's own top score for this
+query. Every field therefore contributes `0.0`–`1.0`, so agreeing evidence across fields
+accumulates and no single field's raw magnitude — BM25 and cosine similarity live on
+entirely different scales — can dominate the row's total.
+
+The corollary: `score` is relative to *this query's* best hit. It is never an absolute
+relevance measure and is never comparable across different queries or different
+catalogs — `0.6` on one search says nothing about `0.6` on another.
+
+## Row ranking: coverage tiers by surface arity
+
+Value-level fusion produces one score per distinct field value; `Catalog.search` then
+grades every row that carries a scored or fully-consumed value into a `(coverage, score,
+matched)` triple and orders rows by how many fields the search touched — a **facet
+surface** (`fields=[a, b, ...]`, several fields) or a **title surface** (broad search, a
+DSL clause, or `fields=["one_field"]`, exactly one field):
+
+- **Facet surface**: rows rank `(coverage desc, score desc)` throughout. `coverage`
+  counts provably-satisfied constraints — a row that fully consumes three of three query
+  facets outranks one that consumes two of three, regardless of raw `score`. This is the
+  facet-AND example above.
+- **Title surface**: there is no cross-field union to accumulate, so ranking on raw
+  `coverage` here would just proxy value *brevity* (a short title "contains" more of a
+  long query than a long title does, which says nothing about relevance — the title
+  degeneration example above). Only a full-consumption hit — `coverage == 1.0`, a
+  literal pin — outranks the fuzzy order; every other row ranks by `score` alone.
+  `coverage` is still reported on the match (the raw measurement); it just doesn't
+  participate in ordering below the `1.0` tier.
+
+This is a deliberate contract, not an anomaly: on a title surface a high-`score` row can
+rank below a `coverage=1.0` row with a lower score.
+
+## Reading a result page
+
+- **`coverage == 1.0`** — your query is literally satisfied by this row's values (an
+  exact or subset containment hit).
+- **`0 < coverage < 1`** — that fraction of your query's tokens is provably satisfied by
+  this row; the rest is unverified.
+- **`coverage == 0` and a high `score`** — the row *looks* similar but nothing in it is
+  provably a match. Check `matched`: `"semantic"` means the resemblance is entirely a
+  vector guess.
+- **A whole page of `matched == "semantic"`** — nothing lexically real matched anywhere
+  in the result set; the vector index is guessing at meaning with no literal anchor.
+  Rephrase the query rather than trust the ranking order as-is.
+
+Row-level containment (`coverage > 0`) is always lexical evidence by construction — a
+token-subset test, not an embedding — so a row with positive `coverage` always carries
+at least `"lexical"` in its evidence, even when its positive `score` came only from the
+vector component.
+
+On discovery-connector pages the lexical evidence may live in the `description` field —
+searched, but deliberately not a result column — so `matched` cannot be reconstructed
+from the visible rows: it is the engine's receipt for text it read on the agent's
+behalf. See [the discovery-connector surface](search.md#the-discovery-connector-surface).
+
+## Under the hood
+
+The sections below are the mechanics that produce the `coverage`/`score`/`matched`
+numbers above: how a hybrid field's BM25 and vector components combine at the value
+level (two regimes, picked automatically), the noise floor on the fuzzy-score table, and
+what a snapshot's legacy `fusion` key means today.
+
+!!! note "There is no configurable fusion"
+    The `parsimony.ranking` module — `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`,
+    `Ranking`/`RankingSet`, weights, custom `Ranker` implementations — has been
+    removed. Fusion is now two fixed, unweighted algorithms, chosen automatically by
+    how many fields a search touches. There is nothing to tune, subclass, or supply to
+    a `HybridIndex` constructor. See [Snapshots](#snapshots-fusion-is-native-not-stored)
+    below for what that means for old saved catalogs.
+
+### Two regimes, picked by surface arity
+
+A **surface** is the set of fields one `Catalog.search` call scores against: a single
+field (broad search against the `title` index, a resolved `FIELD: value` DSL clause, or
+`fields=["title"]`), or several (`fields=["title", "region"]`). A `HybridIndex`
+field's two components — a `BM25Index` and a `VectorIndex` — combine differently
+depending on which kind of surface it is being searched under. The regime is picked by
+the *call*, never by counting a field's distinct values; a field with ten values and a
+field with a million follow the exact same rule.
+
+#### Multi-field surfaces: lexical-first, semantic void-fill
+
+When `fields=[...]` names more than one field, every hybrid component in scope is
+lexical-first: BM25 ranks the field whenever it has any positive score at all. The
+vector component only steps in when lexical evidence **abstains entirely** for that
+field — the semantic bridge for query phrasing that shares no vocabulary with the
+indexed values (`"young people"` → `"less than 25 years"`), without letting the
+never-abstaining vector perturb an order lexical evidence has already decided.
 
 ```python
-from parsimony.ranking import MinMaxScoreFusion, RankedSetItem, RankingSet
-
-rankings = RankingSet((
-    RankedSetItem(index="bm25", namespace="n", code="A", rank=0, score=10.0),
-    RankedSetItem(index="bm25", namespace="n", code="B", rank=1, score=0.0),
-    RankedSetItem(index="vector", namespace="n", code="B", rank=0, score=0.9),
-    RankedSetItem(index="vector", namespace="n", code="A", rank=1, score=0.8),
-))
-
-final = MinMaxScoreFusion(weights={"bm25": 0.2, "vector": 1.0})(rankings, limit=2)
-print([item.code for item in final.items])  # ['B', 'A']
+matches = catalog.search("young people", fields=["title", "age_group"], limit=10)
 ```
 
-### ZScoreFusion
+Here, if `title`'s BM25 finds any positive hit, `age_group`'s vector component is
+still free to void-fill *if `age_group`'s own BM25 comes back empty* — void-fill is
+decided per field, not once for the whole surface.
 
-`ZScoreFusion` normalizes by the *standard score*: for each index it computes the mean and
-the **sample** standard deviation (variance divided by `n - 1`, Bessel's correction) and
-adds `((score - mean) / std) * weight` for each item. This is the default fusion policy for
-[`HybridIndex`](indexes.md).
+#### Single-field surfaces: tie-aware Reciprocal Rank Fusion (RRF, k=60)
 
-A single-row index, or any index whose standard deviation collapses to `0.0` (or `NaN`),
-contributes `0.0` for every one of its items — the items still appear, just with no
-contribution from that index.
+When a query scores exactly one field, that field carries all the recall alone, so
+both components get a vote: BM25's positive scores and the vector's top-*k* candidates
+fuse with unweighted Reciprocal Rank Fusion, `k=60`.
 
-```python
-from parsimony.ranking import RankedItem, Ranking, ZScoreFusion, concat
-
-r1 = Ranking((
-    RankedItem(namespace="n", code="A", rank=0, score=10.0),
-    RankedItem(namespace="n", code="B", rank=1, score=20.0),
-    RankedItem(namespace="n", code="C", rank=2, score=30.0),
-))
-r2 = Ranking((
-    RankedItem(namespace="n", code="A", rank=0, score=1.0),
-    RankedItem(namespace="n", code="B", rank=1, score=2.0),
-    RankedItem(namespace="n", code="C", rank=2, score=3.0),
-))
-
-rs = concat({"idx1": r1, "idx2": r2})
-final = ZScoreFusion(weights={"idx1": 2.0, "idx2": 0.5})(rs, limit=5)
-print([item.code for item in final.items])   # ['C', 'B', 'A']
-print([item.score for item in final.items])  # [2.5, 0.0, -2.5]
+```text
+fused(value) = Σ 1 / (60 + rank)   summed over every component that surfaced value
 ```
 
-With three equally-spaced scores (10 / 20 / 30) the sample-std normalization gives exactly
-`+1 / 0 / -1` per index; weighting `idx1` by `2.0` and `idx2` by `0.5` sums those to
-`+2.5 / 0.0 / -2.5`.
+`rank` is a **1-based competition rank over that component's own scores** — tied
+scores share a rank, so a plateau of equally-scored lexical hits contributes
+identically to every value in it, and the other component decides the order within
+the tie. A value surfaced by only one component gets no contribution from the other; a
+value both components agree on roughly doubles a single-component hit, so agreement
+stays visible even after the per-field score normalization above.
 
-### Weights
+There is no `weights=` or `k=` to configure. `k` is a fixed module constant
+(`RRF_K = 60` in `parsimony.catalog.indexes`), and both components contribute equally
+— RRF is rank-based, not score-based, so a component with naturally larger raw scores
+never dominates the other.
 
-All three rankers accept a `weights` mapping keyed by index name. Any index not listed
-defaults to `1.0`. Weights are validated and coerced at construction:
+### `top_k_values`: a noise floor, not just a cost cap
 
-- Each value is coerced to `float`; a non-finite value (`inf` / `nan`) or a negative value
-  raises `ValueError("Ranker weights must be finite non-negative numbers")`.
-- Keys are coerced with `str(...)`, so non-string keys are stringified rather than rejected.
+Per field, only the top `top_k_values` scored values feed the fuzzy-score band
+(default `50`; the same value also bounds the vector candidate pool in both fusion
+regimes). This is deliberate: values past the cutoff would otherwise contribute weak
+positives — a stray token match three hundred candidates deep — that add noise
+without adding signal.
 
-```python
-from parsimony.ranking import RRF, MinMaxScoreFusion
+Fully-consumed values are gated separately from the score table and always count
+toward `coverage`, no matter where they would have fallen in the fuzzy ranking.
+Truncation can only cost you fuzzy recall on distant, low-confidence values; it never
+drops an exact or subset-consumed match.
 
-RRF(weights={"bad": -1.0})                  # ValueError: ...finite non-negative...
-MinMaxScoreFusion(weights={"bad": float("nan")})  # ValueError: ...finite non-negative...
-```
+### Snapshots: fusion is native, not stored
 
-!!! note "Frozen dataclasses still normalize their input"
-    `RRF`, `MinMaxScoreFusion`, and `ZScoreFusion` are frozen, but each rewrites `weights`
-    during construction (via `object.__setattr__`) to the validated `dict[str, float]`. The
-    stored `weights` is always a plain dict, not the `Mapping` you passed in.
+A `HybridIndex` snapshot's `meta.json` still writes a `fusion` key — frozen so
+pre-0.0.2 readers that expect one keep parsing successfully — but it is inert:
+`HybridIndex.load()` ignores it entirely. Fusion is computed natively at query time
+from the two regimes above, not from a serialized policy. A snapshot written by an
+older Parsimony version loads and searches unchanged; there is nothing to migrate.
 
-## Final ordering, ranks, and ties
+## Known limits
 
-All three rankers feed their accumulated `(namespace, code, score)` rows to
-`ranking_from_scores`, which is also usable on its own. It sorts by **descending score**,
-breaking ties by the rows' original insertion order, then assigns **0-based competition
-ranks**: every item in a tie group shares the position of the group's first member.
-
-```python
-from parsimony.ranking import ranking_from_scores
-
-rows = [("n", "A", 5.0), ("n", "B", 5.0), ("n", "C", 5.0), ("n", "D", 1.0)]
-final = ranking_from_scores(rows, limit=2)
-print([(item.code, item.rank) for item in final.items])
-# [('A', 0), ('B', 0), ('C', 0)]
-```
-
-!!! warning "A tie group can push the output past `limit`"
-    `limit` caps the *rank* of a tie group's first member, not the output length. A tie
-    group whose rank is `>= limit` is dropped, but a tie group that *starts* below the limit
-    is emitted in full — even if that yields more than `limit` items. Above, `limit=2`
-    returns three items because A, B, and C all sit at rank `0`. `D` is dropped because the
-    next rank position (`3`) is `>= limit`.
-
-An empty `RankingSet`, a `limit <= 0`, or (for the score fusions) a state where every index
-turned out constant all yield `Ranking.empty()`.
-
-```python
-from parsimony.ranking import RRF, RankingSet
-
-print(RRF()(RankingSet.empty(), limit=10).items)  # ()
-```
-
-## Serializing rankers
-
-To persist a fusion policy in a [catalog snapshot](snapshots.md), each built-in ranker has a
-matching pydantic spec model. The specs use `extra="forbid"` (unknown keys are rejected) and
-a `kind` literal discriminator.
-
-| Ranker | Spec | `kind` discriminator |
-|--------|------|----------------------|
-| `RRF` | `RRFSpec` | `"rrf"` (also carries `k`) |
-| `MinMaxScoreFusion` | `MinMaxScoreFusionSpec` | `"min_max_score_fusion"` |
-| `ZScoreFusion` | `ZScoreFusionSpec` | `"z_score_fusion"` |
-
-`RankerSpec` is the discriminated-union type alias over the three, keyed on `kind`. Convert
-in either direction with `ranker_to_spec` and `ranker_from_spec`.
-
-```python
-from parsimony.ranking import RRF, RRFSpec, ranker_from_spec, ranker_to_spec
-
-spec = ranker_to_spec(RRF(weights={"title_bm25": 0.2}, k=42))
-assert spec == RRFSpec(weights={"title_bm25": 0.2}, k=42)
-
-ranker = ranker_from_spec(spec)
-assert isinstance(ranker, RRF)
-assert ranker.weights == {"title_bm25": 0.2}
-assert ranker.k == 42
-```
-
-Because `RankerSpec` is a pydantic discriminated union, you can validate an arbitrary raw
-config (for example from a JSON snapshot) and build a ranker from it:
-
-```python
-from pydantic import TypeAdapter
-from parsimony.ranking import RankerSpec, ZScoreFusion, ranker_from_spec
-
-raw = {"kind": "z_score_fusion", "weights": {"bm25": 1.0, "vector": 2.0}}
-spec = TypeAdapter(RankerSpec).validate_python(raw)
-ranker = ranker_from_spec(spec)
-assert isinstance(ranker, ZScoreFusion)
-assert ranker.weights == {"bm25": 1.0, "vector": 2.0}
-```
-
-!!! warning "Only the three built-ins are serializable"
-    `ranker_to_spec` raises `TypeError` for any ranker that is not `RRF`,
-    `MinMaxScoreFusion`, or `ZScoreFusion` — including a perfectly valid custom `Ranker`
-    protocol implementation (the message ends "is runtime-only and cannot be serialized").
-    `ranker_from_spec` raises `TypeError` for an unrecognized spec type. If you supply a
-    custom fusion ranker to a `HybridIndex`, that index cannot be saved to a snapshot.
-
-## Where this fits
-
-You usually do not call this layer directly. The [catalog](index.md) builds it for you: a
-[`HybridIndex`](indexes.md) ranks its BM25 and vector components separately with
-`ranking_from_scores`, joins them with `concat`, and fuses with its `fusion` ranker (default
-`ZScoreFusion()`); the hybrid-search [policy](indexes.md) constructs a weighted
-`ZScoreFusion`; and [`Catalog.search`](search.md) turns the resulting `Ranking` into the
-`CatalogMatch` list it returns. Reach for `parsimony.ranking` directly when you are building
-a custom index, tuning fusion weights, or fusing rankings produced outside the catalog.
+- **Facet-only queries with no concept word.** A query built entirely from facet words —
+  `"annual index germany"`, with no word naming what's actually being searched for — can
+  be fully consumed by a row that happens to match on facets alone but is conceptually
+  wrong, which then out-ranks the intended row (the *Known limit* worked example above).
+  Coverage rewards provable containment; it has no way to know that "index" alone is too
+  generic a concept word to anchor the query. The mitigation is qualitative, not
+  structural: include at least one word that names the concept, not just its facets.
+- **RRF is magnitude-blind.** Single-field fusion (RRF, `k=60`) is rank-based by design —
+  see [the two regimes](#two-regimes-picked-by-surface-arity) — which is exactly what
+  keeps one component's raw score scale from dominating the other. The tradeoff is that
+  RRF also throws away *how much* better one candidate is than the next: a landslide
+  winner in one component and a candidate that barely edges out its neighbor contribute
+  identically to the fused rank as long as their relative order is the same. When two
+  single-field results have close `score`s, that closeness may understate or overstate
+  how differentiated the underlying evidence actually was. A concrete symptom: a short
+  generic title ("SWESTR Index") can out-rank the intended row ("SWESTR — Swedish Krona
+  Short-Term Rate") on BM25 length normalization alone, since RRF turns that sliver of
+  an edge into a full rank step. This is why the discovery-connector factory declares
+  `fields=["title", "description"]` — a two-field surface takes the lexical-first facet
+  regime instead — leaving RRF to deliberately-narrowed single-field surfaces (e.g.
+  SDMX dataset titles, where a flow's identity *is* its title).
 
 ## See also
 
-- [Indexes](indexes.md) — the BM25, vector, and hybrid indexes whose results these rankers fuse.
-- [Building and searching](search.md) — how `Catalog.search` produces and consumes rankings.
-- [Snapshots and persistence](snapshots.md) — where serialized ranker specs are stored.
-- [The Catalog](index.md) — the discovery layer that ties indexes, search, and ranking together.
+- [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, and the discovery index policy.
+- [Building and searching](search.md) — `Catalog.search`, `fields=`, and `CatalogMatch`.
+- [Entities](entities.md) — the `CatalogMatch` model these scores populate.
+- [Snapshots and persistence](snapshots.md) — the legacy `fusion` key in a `HybridIndex` manifest.

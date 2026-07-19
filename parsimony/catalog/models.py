@@ -123,5 +123,4 @@ __all__ = [
     "field_text",
     "field_values",
     "normalize_entity_code",
-    "normalize_namespace",
 ]

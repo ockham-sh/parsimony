@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Internal: the catalog's layout branch (in-memory entities vs attached
+  parquet rows) is now decided in one place per concern — row iteration for
+  scored search lives in a single candidate-row source, and the remaining
+  layout checks test backend presence directly. No behavior change; closes
+  out the #84 razor review.
+
 - **BREAKING — factory search connectors declare the discovery surface.**
   `make_local_search_connector` ranked queries search the connector's declared
   surface — a new `search_fields=` parameter, defaulting to the entity recipe
@@ -158,6 +164,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Removed
 
+- **BREAKING — `Catalog(backend=...)` constructor parameter is gone** (zero
+  external callers; snapshot loading sets the config internally). The one way
+  to give a catalog a backend config is `attach_parquet_rows(config=...)`,
+  which is where the parquet file it describes actually arrives.
+- **BREAKING — `Catalog.is_parquet_backend` is gone** (zero callers anywhere,
+  including this codebase once its last internal read was inlined). The
+  layout shows itself behaviorally: a value-indexed catalog has empty
+  `entities` while `len()` counts the attached parquet rows.
 - **BREAKING — `InMemoryRowBackend` and the `RowBackend` protocol are gone.**
   The class was scaffolding: memory-mode search always iterated the catalog's
   own entity list directly, and nothing but an internal row count ever

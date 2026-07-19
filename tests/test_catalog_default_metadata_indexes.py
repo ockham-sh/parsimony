@@ -25,7 +25,7 @@ def test_default_policy_indexes_metadata_at_build() -> None:
     )
     cat.build()
 
-    assert set(cat._indexed_fields()) == {"code", "title", "region", "sector"}
+    assert set(cat.indexes) == {"code", "title", "region", "sector"}
     res = cat.search("sector: tech", limit=5)
     assert {m.code for m in res} == {"A"}
 
@@ -44,4 +44,4 @@ def test_explicit_indexes_are_not_augmented() -> None:
     )
     cat.build()
 
-    assert cat._indexed_fields() == ["title"]
+    assert set(cat.indexes) == {"title"}

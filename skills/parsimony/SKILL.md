@@ -79,10 +79,10 @@ call — never invoke one you have not read:
 print(connectors["sdmx_datasets_search"].describe())
 ```
 
-`.describe()` gives the parameters (required/optional, with namespace hints), the output schema
-(column names and roles) when the connector declares one, and the full description. Knowing the
-params and outputs up front is what keeps you from guessing an argument name — or guessing an id
-you don't actually have.
+`.describe()` is a connector's own introspection API — it gives the parameters (required/optional,
+with namespace hints), the output schema (column names and roles) when the connector declares one,
+and the full description. Knowing the params and outputs up front is what keeps you from guessing
+an argument name — or guessing an id you don't actually have.
 
 ## 3. Find the code — search the catalog
 
@@ -95,6 +95,17 @@ hits = connectors["sdmx_datasets_search"](query="euro area unemployment rate", l
 print(hits.to_llm())         # bounded preview: the result's columns + first rows
 ids = hits.raw               # the full result frame; columns vary by connector — read them, don't assume
 ```
+
+Every ranked catalog search ends with the same three columns — read them before trusting row
+order, not after: `coverage` is the fraction of the query's tokens a row's indexed values
+literally satisfy (all-or-nothing per value) — `1.0` is a verified fact, not a guess, and explains
+a row ranked above a higher `score`; `score` is similarity relative to *this query's* best hit, not
+comparable across queries or catalogs; `matched` says whether that evidence was `lexical`,
+`semantic`, or `both` — an all-`semantic` page means nothing you typed was found verbatim anywhere,
+so rephrase rather than trust the order. A search call returns a relevance-ranked top-N, not the
+whole catalog; to read a slice exhaustively instead, drop `query=` and pass `filter=` (an exact AND
+on the result columns, e.g. `{"code": "..."}`) with a higher `limit` — that enumerates from the
+same cached catalog, no re-crawl.
 
 A fetch parameter shown with a `namespace=` hint in `.describe()` means its legal values come
 from that catalog namespace — search there first.

@@ -18,14 +18,11 @@ __all__ = [
 ]
 
 import inspect
-import types as _types
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, Union, get_args, get_origin, get_type_hints, overload
-
-from pydantic import BaseModel
+from typing import Any, get_args, get_type_hints, overload
 
 from parsimony.errors import ParseError
 from parsimony.namespace import Namespace
@@ -50,22 +47,36 @@ def _param_type_label(param: inspect.Parameter, hints: Mapping[str, Any]) -> str
     return str(ann).replace("typing.", "")
 
 
-def _exposed_param_rows(c: Connector) -> list[tuple[str, str, bool]]:
+def _param_description(ann: Any) -> str | None:
+    """Pull a description out of ``Annotated[X, Field(description=...)]`` metadata, if present.
+
+    Duck-typed on ``.description`` rather than importing ``pydantic.fields.FieldInfo`` — any
+    ``Annotated`` metadata object exposing that attribute works, not just pydantic's.
+    """
+    for m in getattr(ann, "__metadata__", ()):
+        desc = getattr(m, "description", None)
+        if isinstance(desc, str) and desc.strip():
+            return desc.strip()
+    return None
+
+
+def _exposed_param_rows(c: Connector) -> list[tuple[str, str, bool, str | None]]:
     try:
         hints = get_type_hints(c.fn, include_extras=True)
     except Exception:  # noqa: BLE001 - local annotations may be unavailable
         hints = {}
-    rows: list[tuple[str, str, bool]] = []
+    rows: list[tuple[str, str, bool, str | None]] = []
     for name, param in c.exposed_signature.parameters.items():
         if param.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
             continue
         required = param.default is inspect.Parameter.empty
-        rows.append((name, _param_type_label(param, hints), required))
+        ann = hints.get(name, param.annotation)
+        rows.append((name, _param_type_label(param, hints), required, _param_description(ann)))
     return rows
 
 
 def _summarize_params(c: Connector) -> str:
-    parts = [f"{name}{'' if required else '?'}: {typ}" for name, typ, required in _exposed_param_rows(c)]
+    parts = [f"{name}{'' if required else '?'}: {typ}" for name, typ, required, _desc in _exposed_param_rows(c)]
     return ", ".join(parts)
 
 
@@ -107,76 +118,6 @@ def _strip_annotated(ann: Any) -> Any:
         if args:
             return args[0]
     return ann
-
-
-def _json_type_for_annotation(ann: Any) -> dict[str, Any]:
-    """Map a Python annotation to a minimal JSON Schema fragment."""
-    ann = _strip_annotated(ann)
-    if ann is inspect.Parameter.empty or ann is Any:
-        return {}
-    if ann is str:
-        return {"type": "string"}
-    if ann is int:
-        return {"type": "integer"}
-    if ann is float:
-        return {"type": "number"}
-    if ann is bool:
-        return {"type": "boolean"}
-    origin = get_origin(ann)
-    if origin is not None:
-        args = get_args(ann)
-        if origin is list or str(origin) in {"list", "typing.List"}:
-            item = _json_type_for_annotation(args[0]) if args else {}
-            return {"type": "array", "items": item or {"type": "string"}}
-        if origin is dict or str(origin) in {"dict", "typing.Dict"}:
-            return {"type": "object"}
-        # Handle Union[X, None] (typing.Optional) and X | None (PEP 604).
-        # get_origin returns typing.Union for the former and types.UnionType
-        # for the latter; both need to be checked explicitly.
-        is_union = origin is Union or (hasattr(_types, "UnionType") and origin is _types.UnionType)
-        if is_union:
-            non_none = [a for a in args if a is not type(None)]
-            if len(non_none) == 1:
-                return _json_type_for_annotation(non_none[0])
-    if isinstance(ann, type) and issubclass(ann, BaseModel):
-        return ann.model_json_schema()
-    return {"type": "string"}
-
-
-def _param_schema_from_connector(c: Connector) -> dict[str, Any]:
-    """Build a JSON Schema for the connector's exposed call surface."""
-    exposed = c.exposed_signature
-    params = [
-        p
-        for p in exposed.parameters.values()
-        if p.kind not in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD) and p.name not in c.secrets
-    ]
-    if len(params) == 1:
-        ann = get_type_hints(c.fn, include_extras=True).get(params[0].name, params[0].annotation)
-        ann = _strip_annotated(ann)
-        if isinstance(ann, type) and issubclass(ann, BaseModel):
-            return ann.model_json_schema()
-
-    try:
-        hints = get_type_hints(c.fn, include_extras=True)
-    except Exception:  # noqa: BLE001 - local annotations may be unavailable
-        hints = {}
-
-    properties: dict[str, Any] = {}
-    required: list[str] = []
-    for param in params:
-        ann = hints.get(param.name, param.annotation)
-        spec = _json_type_for_annotation(ann)
-        if param.default is not inspect.Parameter.empty and param.default is not None:
-            spec.setdefault("default", param.default)
-        properties[param.name] = spec
-        if param.default is inspect.Parameter.empty:
-            required.append(param.name)
-
-    schema: dict[str, Any] = {"type": "object", "properties": properties}
-    if required:
-        schema["required"] = required
-    return schema
 
 
 def _public_signature(signature: inspect.Signature, bound: Mapping[str, Any]) -> inspect.Signature:
@@ -225,11 +166,6 @@ class Connector:
     def exposed_signature(self) -> inspect.Signature:
         """Signature currently visible to callers after binding."""
         return _public_signature(self.signature, self.bound_arguments)
-
-    @property
-    def param_schema(self) -> Mapping[str, Any]:
-        """JSON Schema for the connector's exposed parameters (MCP / tool adapters)."""
-        return MappingProxyType(_param_schema_from_connector(self))
 
     def bind(self, **kwargs: Any) -> Connector:
         """Return a new connector with parameters fixed by name."""
@@ -332,13 +268,15 @@ def describe_connector(c: Connector) -> str:
     param_rows = _exposed_param_rows(c)
     if param_rows:
         lines.append("Parameters:")
-        for fname, typ, required in param_rows:
+        for fname, typ, required, pdesc in param_rows:
             req_label = "required" if required else "optional"
             line = f"  {fname}: {typ} ({req_label})"
             ns = c.namespace_hints.get(fname)
             if ns:
                 line += f"  —  namespace={ns!r}"
             lines.append(line)
+            if pdesc:
+                lines.append(f"    {pdesc}")
         lines.append("")
 
     if c.output_spec is not None:
@@ -349,6 +287,8 @@ def describe_connector(c: Connector) -> str:
             role_str = col.role.value.upper()
             suffix = f"  namespace={col.namespace!r}" if col.namespace else ""
             lines.append(f"  {col.name:<{name_w}}{role_str:<10}{suffix}")
+            if col.description:
+                lines.append(f"    {col.description}")
         lines.append("")
 
     if c.tags:
@@ -363,12 +303,17 @@ def _returns_clause(output: OutputSpec) -> str:
     """Trailing ``Returns: ...`` fragment for a connector's static output schema.
 
     Emits one ``name (ROLE)`` token per LLM-visible column, with ``ns:<namespace>``
-    appended for KEY/METADATA columns that declare one. Columns marked
-    ``exclude_from_llm_view`` are omitted; declaration order is preserved (the
-    card sits in the prompt-cached prefix, so output must stay deterministic).
-    Returns an empty string when no column is visible.
+    appended for KEY/METADATA columns that declare one, and the column's own
+    ``description`` when it carries one (optionally opt out via ``render_description_in_card=False``).
+    Columns marked ``exclude_from_llm_view`` are omitted; declaration order is
+    preserved (the card sits in the prompt-cached prefix, so output must stay
+    deterministic). Returns an empty string when no column is visible.
     """
-    tokens = [f"{col.name} {col.llm_annotation()}" for col in output.columns if not col.exclude_from_llm_view]
+    tokens = [
+        f"{col.name} {col.llm_annotation(with_description=True)}"
+        for col in output.columns
+        if not col.exclude_from_llm_view
+    ]
     if not tokens:
         return ""
     return f" Returns: {', '.join(tokens)}."
@@ -385,11 +330,14 @@ def llm_card(c: Connector) -> str:
         desc += _returns_clause(c.output_spec)
     lines.append(desc)
 
-    for fname, typ, required in _exposed_param_rows(c):
+    for fname, typ, required, pdesc in _exposed_param_rows(c):
         opt = "?" if not required else ""
         ns = c.namespace_hints.get(fname)
         ns_hint = f" [ns:{ns}]" if ns else ""
-        lines.append(f"- {fname}{opt}: {typ}{ns_hint}")
+        line = f"- {fname}{opt}: {typ}{ns_hint}"
+        if pdesc:
+            line += f"  —  {pdesc}"
+        lines.append(line)
 
     return "\n".join(lines)
 

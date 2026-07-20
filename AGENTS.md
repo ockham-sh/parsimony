@@ -19,7 +19,7 @@ make format   # ruff format + auto-fix
 | Catalog index types | `parsimony/catalog/indexes.py` |
 | Plugin discovery | `parsimony/discover.py` |
 | CLI (`list`, `cache`) | `parsimony/cli.py` |
-| Agent skill (a repo artifact, not packaged) | `skills/parsimony/SKILL.md` — installed by `npx skills add ockham-sh/parsimony` / `gh skill install` / `uvx npx-skills add`, never via the CLI |
+| Agent skill | `skills/parsimony/SKILL.md` — installed by `npx skills add ockham-sh/parsimony` / `gh skill install` / `uvx npx-skills add`; also force-included into the wheel at `parsimony/skills/` so `importlib.resources.files("parsimony")` can reach it at runtime for the embedded-agent path |
 | Global cache (root, subdirs, `TTLDiskCache`) | `parsimony/cache.py` |
 | Conformance suite | `parsimony/testing.py` |
 | Error hierarchy | `parsimony/errors.py` |

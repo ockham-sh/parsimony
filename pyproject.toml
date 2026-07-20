@@ -116,8 +116,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["parsimony"]
 
+# The repo-root skills/ dir stays put (npx skills add / uvx npx-skills add walk the git repo,
+# not the wheel) but is also mapped into the built wheel so importlib.resources.files("parsimony")
+# can reach it at runtime — same one file, two consumption paths.
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "parsimony/skills"
+
 [tool.hatch.build.targets.sdist]
-include = ["parsimony", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["parsimony", "skills", "README.md", "LICENSE", "CHANGELOG.md"]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib --cov=parsimony --cov-report=term-missing --cov-fail-under=80"

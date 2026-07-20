@@ -59,6 +59,13 @@ import inspect
 print(list(demo_search.exposed_signature.parameters))   # ['query']
 ```
 
+!!! tip "Introspecting a connector"
+    `describe()` and `to_llm()` are a connector's own introspection API —
+    read `.exposed_signature` directly when you want the `inspect.Signature`
+    object itself (as above), or call `describe()` for the human/LLM-readable
+    rendering, which additionally carries namespace hints and the output
+    schema.
+
 ### Calling without wrapping: `call_raw`
 
 `connector.call_raw(**kwargs)` invokes the underlying function and returns

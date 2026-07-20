@@ -82,6 +82,8 @@ class Column(BaseModel):
     #: any other role — Parsimony enforces no metadata-namespace behavior.
     namespace: str | None = None
     exclude_from_llm_view: bool = False
+    #: Whether ``llm_annotation(with_description=True)`` includes ``description``.
+    render_description_in_card: bool = True
 
     @model_validator(mode="after")
     def _validate_exclude_and_namespace(self) -> Column:
@@ -94,15 +96,22 @@ class Column(BaseModel):
                 raise ValueError("namespace must be non-empty when set")
         return self
 
-    def llm_annotation(self) -> str:
+    def llm_annotation(self, *, with_description: bool = False) -> str:
         """Governed schema token for LLM views: ``(ROLE)`` or ``(ROLE ns:<namespace>)``.
 
         Single source of truth for how a column's role + namespace is rendered
         into any LLM-facing view (connector card, result preview, fetch log).
+        Post-call views (result previews, fetch logs) call this with the default
+        ``with_description=False`` and stay terse; the pre-call connector card
+        passes ``with_description=True`` so an agent learns what a column means
+        before it calls the connector, not after.
         """
         role = self.role.value.upper()
         ns = f" ns:{self.namespace}" if self.namespace else ""
-        return f"({role}{ns})"
+        annotation = f"({role}{ns})"
+        if with_description and self.description and self.render_description_in_card:
+            annotation += f"  —  {self.description}"
+        return annotation
 
 
 class Provenance(BaseModel):

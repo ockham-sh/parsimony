@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import logging
 import sys
 from collections.abc import Sequence
 from types import ModuleType
@@ -36,6 +37,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="parsimony",
         description="Parsimony CLI — connector framework for financial data.",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Log progress to stderr, including catalog and model downloads.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -105,9 +112,29 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _configure_logging(*, verbose: bool) -> None:
+    """Attach a stderr handler for ``parsimony``'s own logs.
+
+    The library itself configures nothing — installing handlers is the
+    application's call, not a library's. This *is* the application, so it is the
+    right place to make parsimony's INFO records visible; without a handler here
+    they are never even constructed, and a ``cache`` command that triggers a
+    catalog download would stall with no explanation.
+
+    Scoped to the ``parsimony`` logger rather than ``basicConfig`` so the CLI does
+    not also turn on every third-party library's logging.
+    """
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    package_logger = logging.getLogger("parsimony")
+    package_logger.addHandler(handler)
+    package_logger.setLevel(logging.INFO if verbose else logging.WARNING)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry point. Returns the process exit code."""
     args = _build_parser().parse_args(argv)
+    _configure_logging(verbose=args.verbose)
     if args.command == "list":
         return _run_list(json_output=args.json_output, strict=args.strict)
     if args.command == "cache":

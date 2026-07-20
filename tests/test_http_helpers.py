@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 import traceback
 from contextlib import suppress
@@ -470,3 +471,48 @@ def test_http_client_exhausted_retries_returns_response_for_check_status() -> No
     with pytest.raises(ProviderError) as mapped:
         check_status(response, provider="example", op_name="still-failing")
     assert mapped.value.status_code == 503
+
+
+def test_per_request_logging_stays_below_info(caplog: pytest.LogCaptureFixture) -> None:
+    """Request/response tracing is DEBUG, so INFO stays reserved for slow one-offs.
+
+    A paginated fetch makes hundreds of calls. At INFO these lines bury the
+    events a caller turned logging on to see in the first place — a catalog
+    download, a model load — which is the same failure mode as a progress bar
+    spamming a captured log, one level up.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"ok": True})
+
+    http = _keyed_client(handler)
+    with caplog.at_level(logging.DEBUG, logger="parsimony.transport"):
+        http.request("GET", "/data", op_name="fetch")
+
+    levels = {r.getMessage(): r.levelno for r in caplog.records}
+    assert levels, "expected the request to be traced at some level"
+    assert all(level <= logging.DEBUG for level in levels.values()), levels
+
+
+def test_retry_backoff_stays_at_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Sleeping on a retry is not routine tracing and must survive the demotion.
+
+    This is the one blocking wait in the transport, and the line names the delay
+    — demoting it with the per-request lines would make a backoff look like a hang.
+    """
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(503)
+
+    http = HttpClient(
+        "https://api.example.com",
+        provider="example",
+        _transport=httpx.MockTransport(handler),  # type: ignore[arg-type]
+        retry_policy=HttpRetryPolicy(max_attempts=2, base_delay_s=0.0, jitter_s=0.0),
+    )
+    with caplog.at_level(logging.WARNING, logger="parsimony.transport"), suppress(ConnectorError):
+        http.request("GET", "/data", op_name="fetch")
+
+    assert [r for r in caplog.records if "Retrying" in r.getMessage()], [r.getMessage() for r in caplog.records]

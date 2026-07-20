@@ -99,15 +99,30 @@ ids = hits.raw               # the full result frame; columns vary by connector 
 A fetch parameter shown with a `namespace=` hint in `.describe()` means its legal values come
 from that catalog namespace — search there first.
 
-The **first** search against a provider downloads its catalog (a few seconds, sometimes up to a
-minute on a large one); it is then cached locally and every later search is instant. A slow first
-call is expected — don't treat it as a hang or retry it. The cache persists across sessions. If a
+A first search pays two one-time costs, both of them normal — **neither is a hang, and retrying
+only starts them over**:
+
+- **The catalog downloads** (typically a few seconds). Paid once per catalog, not once per
+  session: a provider may expose many catalogs, and each is fetched the first time you search it,
+  so a task spanning several pays it several times.
+- **The embedding model loads** on the first semantic search in each process, and downloads once
+  per machine (~90 MB), which is the slower of the two on a fresh install.
+
+Both are then cached and every later search is instant. The cache persists across sessions. If a
 catalog has been republished (or a cached copy is corrupt), bust it from the shell and re-run —
 the next search re-downloads it. Clearing is targeted: list what's cached, then drop one repo:
 
 ```bash
 parsimony cache info --repos                       # cached catalogs, by Hugging Face repo + size
 parsimony cache clear --repo parsimony-dev/sdmx    # drop just that provider's catalogs
+```
+
+To tell a slow step apart from a genuine stall rather than wait it out, turn on logging before the
+call. Each catalog fetch, model download, and model load logs a line when it starts and one when
+it finishes, with size and elapsed time — so a start with no finish is still running, not stuck:
+
+```python
+import logging; logging.basicConfig(level=logging.INFO)
 ```
 
 ## Errors (every failure is typed; messages carry the next action)

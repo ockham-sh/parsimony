@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -115,8 +116,10 @@ def load_or_build_catalog(
         raise _to_catalog_not_found(load_exc, url=url) from load_exc
 
     logger.info("Building catalog for %s into %s", url, cache)
+    started = time.monotonic()
     catalog = build()
     catalog.save(f"file://{cache}", builder="lazy")
+    logger.info("Built catalog for %s in %.1fs", url, time.monotonic() - started)
     return catalog
 
 

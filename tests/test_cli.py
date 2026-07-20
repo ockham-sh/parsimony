@@ -8,11 +8,14 @@ module.
 from __future__ import annotations
 
 import json
+import logging
+from collections.abc import Iterator
 from types import ModuleType
 from typing import Any
 
 import pytest
 
+from parsimony import cli
 from parsimony.connector import Connectors, connector
 from parsimony.discover import Provider
 
@@ -234,3 +237,33 @@ def test_list_does_not_report_provider_build_protocols(
 
     assert exit_code == 0
     assert "catalogs" not in payload["plugins"][0]
+
+
+def test_verbose_flag_surfaces_parsimony_logs(capsys: pytest.CaptureFixture[str]) -> None:
+    """``-v`` attaches a handler so parsimony's own INFO records reach stderr.
+
+    Without one the record is never even constructed (root defaults to WARNING),
+    which is why a catalog download used to stall with no explanation at all.
+    """
+    cli._configure_logging(verbose=True)
+    logging.getLogger("parsimony.catalog.remote").info("Fetching catalog hf://x/y")
+
+    assert "Fetching catalog hf://x/y" in capsys.readouterr().err
+
+
+def test_without_verbose_info_is_suppressed(capsys: pytest.CaptureFixture[str]) -> None:
+    """The default stays quiet — verbosity is opt-in, not the CLI's house style."""
+    cli._configure_logging(verbose=False)
+    logging.getLogger("parsimony.catalog.remote").info("Fetching catalog hf://x/y")
+
+    assert capsys.readouterr().err == ""
+
+
+@pytest.fixture(autouse=True)
+def _reset_parsimony_logger() -> Iterator[None]:
+    """Undo handler/level changes so these tests don't leak into the rest of the run."""
+    package_logger = logging.getLogger("parsimony")
+    handlers, level = list(package_logger.handlers), package_logger.level
+    yield
+    package_logger.handlers = handlers
+    package_logger.setLevel(level)

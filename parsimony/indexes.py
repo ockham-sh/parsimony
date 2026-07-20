@@ -22,6 +22,7 @@ import logging
 import math
 import os
 import re
+import time
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -81,6 +82,12 @@ def _build_ivfflat(matrix: np.ndarray, *, dim: int) -> faiss.Index:
     quantizer = faiss.IndexFlatIP(dim)
     index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_INNER_PRODUCT)
 
+    # Training is the slow half (k-means over up to IVF_TRAIN_SAMPLE_CAP vectors)
+    # and it is only reached on the largest catalogs, so it is announced before it
+    # starts rather than described after it finishes.
+    logger.info("build_faiss: training IndexIVFFlat n=%d nlist=%d", n, nlist)
+    started = time.monotonic()
+
     if n > IVF_TRAIN_SAMPLE_CAP:
         rng = np.random.default_rng(seed=0)
         sample_ids = rng.choice(n, size=IVF_TRAIN_SAMPLE_CAP, replace=False)
@@ -91,11 +98,12 @@ def _build_ivfflat(matrix: np.ndarray, *, dim: int) -> faiss.Index:
     index.nprobe = max(1, int(nlist * IVF_NPROBE_FRACTION))
     index.add(matrix)
     logger.info(
-        "build_faiss: IndexIVFFlat n=%d nlist=%d nprobe=%d trained_on=%d",
+        "build_faiss: IndexIVFFlat n=%d nlist=%d nprobe=%d trained_on=%d in %.1fs",
         n,
         nlist,
         index.nprobe,
         train.shape[0],
+        time.monotonic() - started,
     )
     return index
 

@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import huggingface_hub
 import huggingface_hub.hf_api
@@ -39,11 +41,23 @@ def _backdate_built_at(snapshot_dir: Path, *, age_s: float) -> None:
     meta_path.write_text(json.dumps(data))
 
 
+FAKE_COMMIT_SHA = "a" * 40
+
+
 class _FakeRepoFile:
     """Stand-in for ``huggingface_hub.hf_api.RepoFile`` (a blob entry)."""
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, size: int = 0) -> None:
         self.path = path
+        self.size = size
+
+
+class _FakeRef:
+    """Stand-in for a branch/tag entry in ``list_repo_refs``."""
+
+    def __init__(self, name: str, target_commit: str) -> None:
+        self.name = name
+        self.target_commit = target_commit
 
 
 def _install_subpath_fakes(monkeypatch: pytest.MonkeyPatch, sub: str, snap: Path) -> dict[str, object]:
@@ -57,13 +71,21 @@ def _install_subpath_fakes(monkeypatch: pytest.MonkeyPatch, sub: str, snap: Path
     recorded: dict[str, object] = {}
 
     class FakeHfApi:
+        def list_repo_refs(self, *, repo_id, repo_type=None):
+            recorded["refs_repo_id"] = repo_id
+            recorded["refs_calls"] = int(recorded.get("refs_calls", 0)) + 1
+            return SimpleNamespace(
+                branches=[_FakeRef("main", FAKE_COMMIT_SHA)],
+                tags=[_FakeRef("v1", "b" * 40)],
+            )
+
         def list_repo_tree(self, *, repo_id, path_in_repo=None, recursive=False, repo_type=None, revision=None):
             recorded["repo_id"] = repo_id
             recorded["path_in_repo"] = path_in_repo
             recorded["recursive"] = recursive
             recorded["repo_type"] = repo_type
             recorded["revision"] = revision
-            return [_FakeRepoFile(f) for f in repo_files]
+            return [_FakeRepoFile(f, size=len((snap / f).read_bytes())) for f in repo_files]
 
     def fake_download(*, repo_id, filename, repo_type, revision, cache_dir):
         recorded["download_revision"] = revision
@@ -142,26 +164,160 @@ def test_load_hf_subpath_threads_revision(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert recorded["download_revision"] == "deadbeef"  # each blob fetched at the pin
 
 
-def test_load_hf_subpath_logs_first_pull(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A cache miss logs a one-line first-pull signal for the human watching logs."""
+def test_branch_revision_is_pinned_to_a_commit_sha(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """An unpinned load resolves ``main`` to a sha once, then uses it everywhere.
+
+    ``hf_hub_download`` only skips its per-file HEAD when the revision is a commit
+    sha, so resolving the branch once is what lets a warm bundle re-resolve with no
+    network at all. Listing at the same sha also stops a mid-fetch republish from
+    assembling a bundle out of two different commits.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    recorded = _install_subpath_fakes(monkeypatch, sub, snap)
+
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache")
+
+    assert recorded["refs_calls"] == 1  # resolved once, not per file
+    assert recorded["revision"] == FAKE_COMMIT_SHA
+    assert recorded["download_revision"] == FAKE_COMMIT_SHA
+
+
+def test_sha_revision_skips_the_ref_lookup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A revision that is already a commit sha is immutable — nothing to resolve."""
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    recorded = _install_subpath_fakes(monkeypatch, sub, snap)
+    sha = "c" * 40
+
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, revision=sha, cache_dir=tmp_path / "hfcache")
+
+    assert "refs_calls" not in recorded  # no ref round-trip at all
+    assert recorded["revision"] == sha
+    assert recorded["download_revision"] == sha
+
+
+def test_downloads_run_concurrently_and_preserve_order(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Files are fetched in parallel, and results stay in listing order.
+
+    Order is load-bearing: the snapshot directory is derived by pairing the first
+    result's path with the first requested filename.
+    """
     sub = "sdmx_datasets_ecb"
     snap = tmp_path / "snap"
     _write_catalog(snap / sub)
     _install_subpath_fakes(monkeypatch, sub, snap)
-    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: None)  # not cached
+
+    file_count = sum(1 for p in (snap / sub).rglob("*") if p.is_file())
+    # Every file must be in flight at once before any of them may finish. Under a
+    # serial loop the first call blocks forever and the test fails on the timeout;
+    # under the thread pool all parties arrive and it releases immediately.
+    barrier = threading.Barrier(min(file_count, catalog_remote._DEFAULT_DOWNLOAD_WORKERS), timeout=10)
+    real_download = huggingface_hub.hf_hub_download
+
+    def concurrent_download(*, repo_id, filename, repo_type, revision, cache_dir):
+        barrier.wait()
+        return real_download(
+            repo_id=repo_id, filename=filename, repo_type=repo_type, revision=revision, cache_dir=cache_dir
+        )
+
+    monkeypatch.setattr(huggingface_hub, "hf_hub_download", concurrent_download)
+
+    target = catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache")
+
+    assert (target / "meta.json").is_file()  # snapshot dir derived correctly from ordered results
+
+
+@pytest.mark.parametrize("value", ["1", "ON", "yes", "true"])
+def test_hf_transfer_forces_serial_downloads(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """``hf_transfer`` parallelises a single file itself, so we must not stack a pool on it.
+
+    Driven through the environment rather than ``huggingface_hub.constants``: the
+    constant is absent at both ends of the supported version range, so asserting
+    against it passed locally and failed in CI on nothing but resolver luck. The
+    env var is the knob a user actually sets, in the spellings hub accepts.
+    """
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", value)
+    assert catalog_remote._download_workers() == 1
+
+
+@pytest.mark.parametrize("value", ["", "0", "off", "no"])
+def test_downloads_stay_concurrent_without_hf_transfer(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Anything hub does not read as true leaves the thread pool at full width."""
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", value)
+    assert catalog_remote._download_workers() > 1
+
+
+def test_downloads_stay_concurrent_when_hf_transfer_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The common case: the variable is not in the environment at all."""
+    monkeypatch.delenv("HF_HUB_ENABLE_HF_TRANSFER", raising=False)
+    assert catalog_remote._download_workers() > 1
+
+
+def test_fetch_logs_start_and_completion_pair(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A fetch brackets itself with a pre-download line and a completion line.
+
+    The order is the point: the size has to land *before* the wait for a caller
+    to judge whether a stall is proportionate, and a start with no matching
+    finish is what marks a long wait as progress rather than a hang.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
 
     with caplog.at_level(logging.INFO, logger="parsimony.catalog.remote"):
         Catalog.load(f"hf://parsimony-dev/sdmx/{sub}")
 
-    assert any("first load" in r.getMessage() for r in caplog.records)
+    messages = [r.getMessage() for r in caplog.records]
+    started = [m for m in messages if m.startswith("Downloading ")]
+    finished = [m for m in messages if m.startswith("Downloaded catalog")]
+    assert len(started) == 1, messages
+    assert len(finished) == 1, messages
+    assert f"hf://parsimony-dev/sdmx/{sub}" in started[0]
+    assert "MB) for catalog" in started[0]  # size known before the wait, not after
+    assert messages.index(started[0]) < messages.index(finished[0])
 
 
-def test_load_hf_subpath_cache_hit_is_silent(
+def test_cold_pull_announces_itself_before_the_repo_listing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A warm (already-cached) load emits no first-pull noise."""
+    """A cold resolve logs before listing the repo, not just before downloading.
+
+    The listing is a network round-trip that can stall for minutes on a large
+    repo, and it happens *before* the file count and size are knowable. Without
+    a line ahead of it, the whole stall is silent and the first output arrives
+    only once the slow part is already over.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
+
+    with caplog.at_level(logging.INFO, logger="parsimony.catalog.remote"):
+        Catalog.load(f"hf://parsimony-dev/sdmx/{sub}")
+
+    messages = [r.getMessage() for r in caplog.records]
+    resolving = [m for m in messages if m.startswith("Resolving catalog")]
+    assert len(resolving) == 1, messages
+    # Ahead of the download line, which cannot be emitted until listing returns.
+    assert messages.index(resolving[0]) < min(i for i, m in enumerate(messages) if m.startswith("Downloading "))
+
+
+def test_fetch_logs_even_when_meta_json_is_already_cached(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A cached ``meta.json`` must not silence a real bundle download.
+
+    ``meta.json`` is one file of many in a bundle, so gating the log on its
+    presence hid exactly the largest fetches: a republish (the old commit's
+    ``meta.json`` is still cached while every file re-downloads), an interrupted
+    first pull, and any post-TTL revalidation.
+    """
     sub = "sdmx_datasets_ecb"
     snap = tmp_path / "snap"
     _write_catalog(snap / sub)
@@ -169,9 +325,32 @@ def test_load_hf_subpath_cache_hit_is_silent(
     monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: snap / sub / "meta.json")
 
     with caplog.at_level(logging.INFO, logger="parsimony.catalog.remote"):
-        Catalog.load(f"hf://parsimony-dev/sdmx/{sub}")
+        catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache")
 
-    assert not any("first load" in r.getMessage() for r in caplog.records)
+    assert any(m.getMessage().startswith("Downloading ") for m in caplog.records)
+
+
+def test_revalidate_ttl_hit_is_silent_and_makes_no_hub_call(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Within the revalidate window a repeat resolution logs nothing and skips the Hub.
+
+    This — not the presence of ``meta.json`` — is what keeps a warm path quiet.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    recorded = _install_subpath_fakes(monkeypatch, sub, snap)
+    cache_dir = tmp_path / "hfcache"
+
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir)
+    calls_after_first = recorded["refs_calls"]
+
+    with caplog.at_level(logging.INFO, logger="parsimony.catalog.remote"):
+        catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir)
+
+    assert recorded["refs_calls"] == calls_after_first  # no second Hub round-trip
+    assert not caplog.records
 
 
 def test_load_hf_subpath_offline_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -181,6 +360,11 @@ def test_load_hf_subpath_offline_fallback(monkeypatch: pytest.MonkeyPatch, tmp_p
     _write_catalog(cached_target)
 
     class BoomApi:
+        # Resolving the ref is the first network call the fetch makes, so an
+        # offline run fails here rather than at the listing.
+        def list_repo_refs(self, **kwargs):
+            raise OSError("network unreachable")
+
         def list_repo_tree(self, **kwargs):
             raise OSError("network unreachable")
 
@@ -201,6 +385,11 @@ def test_load_hf_subpath_no_cache_reraises(monkeypatch: pytest.MonkeyPatch, tmp_
     """Listing failure with no cached snapshot surfaces the original error."""
 
     class BoomApi:
+        # Resolving the ref is the first network call the fetch makes, so an
+        # offline run fails here rather than at the listing.
+        def list_repo_refs(self, **kwargs):
+            raise OSError("network unreachable")
+
         def list_repo_tree(self, **kwargs):
             raise OSError("network unreachable")
 
@@ -226,6 +415,11 @@ def test_download_hf_subpath_offline_fallback_raises_past_max_age(
     _backdate_built_at(cached_target, age_s=3600)
 
     class BoomApi:
+        # Resolving the ref is the first network call the fetch makes, so an
+        # offline run fails here rather than at the listing.
+        def list_repo_refs(self, **kwargs):
+            raise OSError("network unreachable")
+
         def list_repo_tree(self, **kwargs):
             raise OSError("network unreachable")
 
@@ -246,6 +440,11 @@ def test_download_hf_subpath_offline_fallback_within_max_age_serves_and_warns(
     _backdate_built_at(cached_target, age_s=120)
 
     class BoomApi:
+        # Resolving the ref is the first network call the fetch makes, so an
+        # offline run fails here rather than at the listing.
+        def list_repo_refs(self, **kwargs):
+            raise OSError("network unreachable")
+
         def list_repo_tree(self, **kwargs):
             raise OSError("network unreachable")
 
@@ -355,3 +554,57 @@ def test_snapshot_age_s_reads_built_at(tmp_path: Path) -> None:
 def test_snapshot_age_s_missing_meta_returns_none(tmp_path: Path) -> None:
     """No ``meta.json`` (or a corrupt one) is a soft failure, not an exception."""
     assert catalog_remote._snapshot_age_s(tmp_path / "nothing-here") is None
+
+
+def test_revalidation_that_downloads_nothing_stays_silent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Past the TTL the Hub is re-listed, but an all-cached pass must not claim a download.
+
+    This is the honesty case: the revalidation still costs a listing round-trip,
+    so something *does* happen — but nothing transfers, and a log line saying
+    otherwise would teach a reader to distrust the ones that matter.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
+    cache_dir = tmp_path / "hfcache"
+    # Every file already on disk, so there is nothing left to fetch — including
+    # meta.json, which is what marks this a revalidation rather than a cold pull.
+    monkeypatch.setattr(catalog_remote, "_uncached_files", lambda root, files, **kwargs: [])
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", lambda root, sub, **kwargs: snap / sub / "meta.json")
+
+    with caplog.at_level(logging.INFO, logger="parsimony.catalog.remote"):
+        # revalidate_ttl_s=None forces the listing rather than the TTL shortcut.
+        catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=cache_dir, revalidate_ttl_s=None)
+
+    assert not caplog.records
+
+
+def test_cache_probe_uses_the_pinned_sha_not_the_branch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The cached-snapshot probe must ask at the commit sha the files were fetched at.
+
+    Downloading at a sha does not write the repo's ``refs/<branch>`` pointer, so
+    a probe by branch name cannot see a snapshot this function itself wrote. It
+    returns None forever, which silently disables the offline stale-cache
+    fallback — the code reports the Hub as unreachable with a perfectly good
+    copy on disk.
+    """
+    sub = "sdmx_datasets_ecb"
+    snap = tmp_path / "snap"
+    _write_catalog(snap / sub)
+    _install_subpath_fakes(monkeypatch, sub, snap)
+
+    seen: list[object] = []
+    real = catalog_remote._cached_meta_path
+
+    def spy(root: str, sub: str, **kwargs: object) -> object:
+        seen.append(kwargs.get("revision"))
+        return real(root, sub, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(catalog_remote, "_cached_meta_path", spy)
+    catalog_remote.download_hf_subpath("parsimony-dev/sdmx", sub, cache_dir=tmp_path / "hfcache")
+
+    assert seen, "expected the cache to be probed"
+    assert all(rev == FAKE_COMMIT_SHA for rev in seen), seen

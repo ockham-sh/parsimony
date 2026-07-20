@@ -27,6 +27,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- Catalog fetches are now much faster and no longer silent. A bundle is ~100
+  small files, so a cold fetch was bound by sequential per-file round-trips
+  rather than bandwidth — 45s to move under 1MB. Files are now downloaded
+  concurrently, and a branch revision is resolved to a commit sha once so
+  already-cached files skip their HEAD request entirely. Measured against
+  `hf://parsimony-dev/sdmx`: a cold fetch drops ~45s → ~7s, and a warm
+  re-resolution ~19s → ~0.4s. Pinning the listing and the downloads to one
+  commit also stops a mid-fetch republish from assembling a bundle out of two
+  different commits. Set `HF_HUB_ENABLE_HF_TRANSFER` to keep downloads serial.
+- Catalog fetches log how many files and how many MB are about to transfer
+  *before* downloading them, and the elapsed time after, on
+  `parsimony.catalog.remote`; the embedding-model download logs the same pair on
+  `parsimony.embedder`. The order is the point: the size has to arrive before
+  the wait for a caller to judge whether a stall is proportionate, and a start
+  with no matching finish is what marks a long wait as progress rather than a
+  hang. Both lines are skipped when every file is already cached, so a
+  revalidation never claims a download that did not happen. Previously the
+  single fetch line was gated on a cached `meta.json` — one file of ~100 —
+  which silenced exactly the largest downloads (a republish, an interrupted
+  pull, any post-TTL revalidation).
+- A cold catalog resolve announces itself *before* listing the repo, not only
+  before downloading. The listing is a network round-trip that can stall for
+  minutes on a large repo, and it runs before the file count and size are
+  knowable, so it was previously silent for its whole duration. A revalidation
+  — anything with a snapshot already on disk — stays quiet.
+- Loading the embedding model logs a start/finish pair on `parsimony.embedder`.
+  It costs seconds on the first semantic search of every process even when the
+  model is fully cached, and suppressing the `Loading weights` bar removed the
+  only signal it had. Unlike the bar, these lines survive redirection off a tty.
+- Per-request HTTP tracing moved from INFO to DEBUG on `parsimony.transport`.
+  It emits two lines per call, so a paginated fetch buried the events a caller
+  enabled INFO to see — a catalog download, a model load — under hundreds of
+  lines of chatter. Retry/backoff warnings are unchanged; they name a real
+  blocking wait. This matches where `httpx`, `urllib3` and `requests` log
+  theirs; recover the old behaviour with DEBUG on `parsimony.transport`.
+- Catalog builds, ONNX export, ONNX quantization, and FAISS IVF training each
+  log a matching completion line with elapsed time. All four previously
+  announced a slow step and then went silent, which is the one shape a log
+  cannot recover from: no way to tell still-working from died-halfway.
+
 - Internal: the catalog's layout branch (in-memory entities vs attached
   parquet rows) is now decided in one place per concern — row iteration for
   scored search lives in a single candidate-row source, and the remaining
@@ -194,6 +234,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- The `Loading weights` progress bar no longer leaks to stderr on every fresh
+  process that loads the default embedder (transformers 5.x). Suppressed via
+  transformers' own flag for the duration of the model load, deliberately not
+  `disable_progress_bar()` — that also disables huggingface_hub's bars
+  globally, which would take the catalog and model *download* progress with it.
 - `Catalog.load(<parquet snapshot>).save(...)` no longer raises. The rows
   path was tracked in shadow state that only `attach_parquet_rows()` set;
   save now reads it from the attached backend, so load → save → load

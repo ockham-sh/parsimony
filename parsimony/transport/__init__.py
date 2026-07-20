@@ -368,7 +368,14 @@ class HttpClient:
         request_params = {**self._default_query_params, **(params or {})}
         request_headers = {**self._default_headers, **(headers or {})}
 
-        logger.info(
+        # Debug, not info: this fires twice per HTTP call, and a paginated fetch
+        # makes hundreds of calls. At INFO it buries the events a caller actually
+        # turned logging on to see — a catalog download, a model load — under
+        # per-request chatter. That is the same failure mode as the progress bar
+        # this package suppresses elsewhere, one level up. Per-request tracing is
+        # a debugging tool, so it lives at the level named for debugging, which is
+        # also where httpx, urllib3 and requests put theirs.
+        logger.debug(
             "%s %s",
             method,
             path,
@@ -427,7 +434,7 @@ class HttpClient:
 
         if response.history:
             final_url = _safe_redirect_url(response.url)
-            logger.info(
+            logger.debug(
                 "Followed %d redirect(s) to %s",
                 len(response.history),
                 final_url,
@@ -437,7 +444,7 @@ class HttpClient:
                 },
             )
 
-        logger.info(
+        logger.debug(
             "Response %s",
             response.status_code,
             extra={

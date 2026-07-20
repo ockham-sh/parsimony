@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -89,3 +90,30 @@ def test_lazy_catalog_dir_under_connectors(tmp_path: Path, monkeypatch: pytest.M
     monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(tmp_path))
     path = lazy_catalog_dir("treasury", "treasury")
     assert path.endswith("connectors/treasury/catalogs/treasury")
+
+
+def test_catalog_build_is_bracketed(
+    tmp_path: Path, sample_entries: list[Entity], caplog: pytest.LogCaptureFixture
+) -> None:
+    """Building a catalog logs a completion line, not just a start line.
+
+    A build is unbounded — it embeds every value in the catalog — so the start
+    line alone cannot distinguish "still working" from "died mid-build". The
+    pair, with elapsed time, is what makes a captured log answerable.
+    """
+
+    def build() -> Catalog:
+        catalog = Catalog("demo", indexes={"code": BM25Index(), "title": BM25Index()})
+        catalog.set_entities(sample_entries)
+        catalog.build()
+        return catalog
+
+    with caplog.at_level(logging.INFO, logger="parsimony.catalog.search"):
+        load_or_build_catalog(f"file://{tmp_path / 'missing'}", cache_path=tmp_path / "cache", build=build)
+
+    messages = [r.getMessage() for r in caplog.records]
+    started = [m for m in messages if m.startswith("Building catalog")]
+    finished = [m for m in messages if m.startswith("Built catalog")]
+    assert len(started) == 1, messages
+    assert len(finished) == 1, messages
+    assert messages.index(started[0]) < messages.index(finished[0])

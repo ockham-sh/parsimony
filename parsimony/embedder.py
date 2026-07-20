@@ -27,6 +27,8 @@ import logging
 import math
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
@@ -132,21 +134,67 @@ def _load_sentence_transformer(model_name: str, device: str | None) -> SentenceT
     entirely. The Hub is contacted only on a genuine cache miss (first run), to
     download the model once.
     """
+    # Announced and timed *around the import*, which pulls in torch and is the
+    # dominant cost on a first load — several seconds against a fraction of one
+    # for materializing the weights. Timing only the construction would report a
+    # tenth of the wait the caller actually experiences, which is the kind of
+    # log that teaches a reader to distrust the rest.
+    #
+    # This path needs a pair at all because suppressing the ``Loading weights``
+    # bar (see ``_quiet_weight_loading``) took away its only signal, and it runs
+    # on the first semantic search of every process even when the model is fully
+    # cached. Unlike a tqdm bar these survive redirection off a tty. Any download
+    # pair nests inside this interval — the model is fetched, then read.
+    logger.info("Loading embedding model %s", model_name)
+    started = time.monotonic()
+
     from sentence_transformers import SentenceTransformer
 
     model: SentenceTransformer
     # A model given as a local path is already resolved — load it directly.
     if Path(model_name).is_dir():
-        model = SentenceTransformer(model_name, device=device)
-        return model
+        with _quiet_weight_loading():
+            model = SentenceTransformer(model_name, device=device)
+    else:
+        local_dir = _resolve_cached_model_dir(model_name)
+        with _quiet_weight_loading():
+            if local_dir is None:
+                # Hub unavailable / repo unresolvable — let SentenceTransformer resolve it.
+                model = SentenceTransformer(model_name, device=device)
+            else:
+                model = SentenceTransformer(local_dir, device=device)
 
-    local_dir = _resolve_cached_model_dir(model_name)
-    if local_dir is None:
-        # Hub unavailable / repo unresolvable — let SentenceTransformer resolve it.
-        model = SentenceTransformer(model_name, device=device)
-        return model
-    model = SentenceTransformer(local_dir, device=device)
+    logger.info("Loaded embedding model %s in %.1fs", model_name, time.monotonic() - started)
     return model
+
+
+@contextmanager
+def _quiet_weight_loading() -> Iterator[None]:
+    """Silence transformers' ``Loading weights`` bar for the duration of a model load.
+
+    Materializing the model writes a tqdm bar to stderr on every fresh process.
+    It is progress on parsimony's own internals — not on anything the caller asked
+    for — so it is noise in agent and pipeline logs, and it is drawn unconditionally
+    (unlike Hugging Face's download bars, which hide themselves off a TTY).
+
+    Deliberately *not* ``transformers.utils.logging.disable_progress_bar()``: that
+    also calls ``huggingface_hub``'s global ``disable_progress_bars()``, which would
+    take the catalog and model *download* bars with it — the one progress signal a
+    human watching a slow first call actually wants. Toggling the module flag that
+    transformers' own ``tqdm`` wrapper consults keeps the blast radius to this load,
+    and the prior value is restored so a caller's explicit setting survives.
+    """
+    try:
+        from transformers.utils import logging as hf_logging
+    except ImportError:  # transformers absent (e.g. a non-torch embedder path)
+        yield
+        return
+    prior = hf_logging._tqdm_active
+    hf_logging._tqdm_active = False
+    try:
+        yield
+    finally:
+        hf_logging._tqdm_active = prior
 
 
 def _resolve_cached_model_dir(model_name: str) -> str | None:
@@ -169,10 +217,18 @@ def _resolve_cached_model_dir(model_name: str) -> str | None:
         return snapshot_download(model_name, local_files_only=True)  # cached → offline
     except OSError:
         pass
+    # Only reached on a genuine cache miss, where this is a ~90 MB download that
+    # stalls the first search of a fresh install. Bracket it the same way the
+    # catalog fetch is bracketed: without the pair, a captured log cannot tell a
+    # one-time model download from a hung process.
+    logger.info("Downloading embedding model %s from Hugging Face", model_name)
+    started = time.monotonic()
     try:
-        return snapshot_download(model_name)  # first run: download once
+        resolved = snapshot_download(model_name)  # first run: download once
     except OSError:
         return None
+    logger.info("Downloaded embedding model %s in %.1fs", model_name, time.monotonic() - started)
+    return resolved
 
 
 class SentenceTransformerEmbedder:
@@ -459,15 +515,18 @@ class OnnxEmbedder:
         fp32_dir = root / slug / "fp32"
         if not _has_onnx_model(fp32_dir):
             logger.info("ONNX export: %s → %s", self._model_name, fp32_dir)
+            started = time.monotonic()
             fp32_dir.mkdir(parents=True, exist_ok=True)
             ort_model = ORTModelForFeatureExtraction.from_pretrained(self._model_name, export=True)
             ort_model.save_pretrained(fp32_dir)
             AutoTokenizer.from_pretrained(self._model_name).save_pretrained(fp32_dir)
+            logger.info("ONNX export complete: %s in %.1fs", fp32_dir, time.monotonic() - started)
 
         if not self._quantize:
             return fp32_dir
 
         logger.info("ONNX quantize (int8, avx2): %s → %s", self._model_name, target)
+        quantize_started = time.monotonic()
         target.mkdir(parents=True, exist_ok=True)
         from optimum.onnxruntime import ORTQuantizer
         from optimum.onnxruntime.configuration import AutoQuantizationConfig
@@ -480,6 +539,7 @@ class OnnxEmbedder:
         quantizer.quantize(save_dir=target, quantization_config=qconfig)
         # Copy tokenizer alongside the quantized model.
         AutoTokenizer.from_pretrained(fp32_dir).save_pretrained(target)
+        logger.info("ONNX quantize complete: %s in %.1fs", target, time.monotonic() - quantize_started)
         return target
 
     def _pick_onnx_file(self, model_dir: Path) -> Path:

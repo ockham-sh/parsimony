@@ -241,17 +241,24 @@ def _matches_to_dataframe(
 #: hand-rolled catalog search connectors. What varies per surface is the *distribution*
 #: of values (graded coverage on facet surfaces, mostly-0.0 on prose catalogs), never
 #: the schema or the semantics.
+#:
+#: ``description`` here is the single source of truth for what the trio means (quoted
+#: into the ``parsimony`` skill, not duplicated there) — but ``render_description_in_card``
+#: is False so a connector's compact ``to_llm()`` card doesn't repeat the same three
+#: sentences on every ranked connector in a bound catalog. ``describe()`` still shows it.
 COVERAGE_COLUMN = Column(
     name="coverage",
     role=ColumnRole.DATA,
     description="Fraction of the query's tokens this row's indexed values literally "
     "satisfy (all-or-nothing per value) — 1.0 is a verified fact, not a guess, and "
     "explains a row ranked above higher scores. Often 0.0 on prose catalogs.",
+    render_description_in_card=False,
 )
 SCORE_COLUMN = Column(
     name="score",
     role=ColumnRole.DATA,
     description="Similarity relative to this query's best hit — not comparable across queries or catalogs.",
+    render_description_in_card=False,
 )
 MATCHED_COLUMN = Column(
     name="matched",
@@ -259,22 +266,9 @@ MATCHED_COLUMN = Column(
     description="Which evidence surfaced this row: 'lexical', 'semantic', or 'both' "
     "(empty on filter-only reads). An all-'semantic' page means nothing lexically real "
     "matched anywhere — rephrase the query rather than trust the order.",
+    render_description_in_card=False,
 )
 RANKING_COLUMNS = (COVERAGE_COLUMN, SCORE_COLUMN, MATCHED_COLUMN)
-
-
-#: Appended to every factory-built search description, after a composed sentence
-#: naming the connector's declared surface. The mechanics — lexical-first evidence,
-#: the "not exhaustive" contract — are properties of the factory, not of any one
-#: provider — stated here once, un-rottably.
-RANKED_SEARCH_CAVEAT = (
-    " Lexical evidence first; semantic similarity only fills in where nothing "
-    "literal matches, and the matched column labels each row's evidence. Returns a "
-    "relevance-ranked top-N, not the full catalog. To read a whole slice "
-    "exhaustively, drop query= and pass filter= (an exact AND on the result columns, "
-    'e.g. {"code": "..."}) with a higher limit; that enumerates from the same cached '
-    "catalog, no re-crawl."
-)
 
 #: The entity recipe: the surface a standard discovery catalog declares — curated
 #: title and description text. Ontology-shaped catalogs (rows composed of codelist
@@ -366,7 +360,7 @@ def make_local_search_connector(
 
     plural = "fields" if len(declared) > 1 else "field"
     surface_note = f" Matches query words against the catalog's {', '.join(declared)} {plural}."
-    full_description = description.rstrip() + surface_note + RANKED_SEARCH_CAVEAT
+    full_description = description.rstrip() + surface_note
     _search.__doc__ = full_description
     _search.__name__ = f"{provider}_search"
     return connector(output=output, tags=list(tags), description=full_description)(_search)

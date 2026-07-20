@@ -230,14 +230,29 @@ def test_downloads_run_concurrently_and_preserve_order(monkeypatch: pytest.Monke
     assert (target / "meta.json").is_file()  # snapshot dir derived correctly from ordered results
 
 
-def test_hf_transfer_forces_serial_downloads(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``hf_transfer`` parallelises a single file itself, so we must not stack a pool on it."""
-    from huggingface_hub import constants
+@pytest.mark.parametrize("value", ["1", "ON", "yes", "true"])
+def test_hf_transfer_forces_serial_downloads(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """``hf_transfer`` parallelises a single file itself, so we must not stack a pool on it.
 
-    monkeypatch.setattr(constants, "HF_HUB_ENABLE_HF_TRANSFER", True)
+    Driven through the environment rather than ``huggingface_hub.constants``: the
+    constant is absent at both ends of the supported version range, so asserting
+    against it passed locally and failed in CI on nothing but resolver luck. The
+    env var is the knob a user actually sets, in the spellings hub accepts.
+    """
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", value)
     assert catalog_remote._download_workers() == 1
 
-    monkeypatch.setattr(constants, "HF_HUB_ENABLE_HF_TRANSFER", False)
+
+@pytest.mark.parametrize("value", ["", "0", "off", "no"])
+def test_downloads_stay_concurrent_without_hf_transfer(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """Anything hub does not read as true leaves the thread pool at full width."""
+    monkeypatch.setenv("HF_HUB_ENABLE_HF_TRANSFER", value)
+    assert catalog_remote._download_workers() > 1
+
+
+def test_downloads_stay_concurrent_when_hf_transfer_is_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The common case: the variable is not in the environment at all."""
+    monkeypatch.delenv("HF_HUB_ENABLE_HF_TRANSFER", raising=False)
     assert catalog_remote._download_workers() > 1
 
 

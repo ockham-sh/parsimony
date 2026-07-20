@@ -20,6 +20,7 @@ tolerance). Both default to the old, unbounded behaviour when passed ``None``.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 # round-trips rather than bandwidth. 8 matches ``snapshot_download``'s own default
 # — enough to hide the latency, conservative enough not to trip Hub rate limits.
 _DEFAULT_DOWNLOAD_WORKERS = 8
+
+# Mirrors huggingface_hub's own truthiness set for its boolean env vars.
+_TRUE_VALUES = {"1", "ON", "YES", "TRUE"}
 
 # Mirrors the condition ``hf_hub_download`` itself uses to decide whether it may
 # skip its HEAD request and return the cached pointer path directly. Spelled out
@@ -473,10 +477,15 @@ def _download_workers() -> int:
     ``hf_transfer`` parallelises the transfer of a *single* file internally, so
     stacking a thread pool on top of it fights its own scheduler — ``huggingface_hub``
     drops to a serial loop for the same reason. Mirror that.
-    """
-    from huggingface_hub import constants
 
-    return 1 if constants.HF_HUB_ENABLE_HF_TRANSFER else _DEFAULT_DOWNLOAD_WORKERS
+    Read from the environment rather than ``huggingface_hub.constants``: the
+    constant is absent at both ends of the version range this package supports
+    (added after 0.25, removed again in 1.x), so touching it raises
+    ``AttributeError`` depending only on which version resolved. The env var is
+    the documented user-facing knob and has been stable throughout — same trap,
+    same answer, as the commit-sha regex above.
+    """
+    return 1 if os.environ.get("HF_HUB_ENABLE_HF_TRANSFER", "").upper() in _TRUE_VALUES else _DEFAULT_DOWNLOAD_WORKERS
 
 
 def _upload_hf(local_dir: Path, root: str, sub: str) -> None:

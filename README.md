@@ -25,7 +25,15 @@ We try to keep it lightweight, simple, and [parsimonious](https://en.wikipedia.o
 
 ## Quickstart
 
-You can define connectors for internal data or use community plugins with prebuilt connectors. For official statistics, `parsimony-sdmx` is a good starting point. See [parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors) for other financial and economic data sources.
+Parsimony is at its best alongside a coding agent. The included [Agent Skill](skills/parsimony/SKILL.md) -- for Cursor, Claude Code, Codex, and other compatible agents -- teaches the agent to discover connectors, search catalogs, and fetch data:
+
+```bash
+npx skills add ockham-sh/parsimony
+```
+
+Without a global Node installation, use `uvx npx-skills add ockham-sh/parsimony`.
+
+The agent uses the library the same way you would. You can define connectors for internal data or use community plugins with prebuilt connectors. For official statistics, `parsimony-sdmx` is a good starting point. See [parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors) for other financial and economic data sources.
 
 Each plugin provides a `CONNECTORS` collection with its available connectors.
 
@@ -139,17 +147,6 @@ print(hits.raw)
 
 Some plugins use published catalogs from [Hugging Face](https://huggingface.co/parsimony-dev) to make sources such as Eurostat, ECB, and IMF searchable. See [Catalog](docs/catalog/index.md) for indexes and saved catalogs.
 
-## Using Parsimony with agents
-
-Parsimony becomes particularly useful for knowledge work when it's used alongside a coding agent. An agent that can run Python can use connectors as tools. It can list the available connectors, check their parameters, search for identifiers, and fetch data from public or internal sources, all using a single access pattern.
-
-The included [Agent Skill](skills/parsimony/SKILL.md) gives Cursor, Claude Code, Codex, and other compatible agents these instructions:
-
-```bash
-npx skills add ockham-sh/parsimony
-```
-
-Without a global Node installation, use `uvx npx-skills add ockham-sh/parsimony`.
 
 ## Documentation
 

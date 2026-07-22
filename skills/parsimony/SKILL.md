@@ -1,6 +1,6 @@
 ---
 name: parsimony
-description: Use when discovering or fetching macro, financial, economic, or official-statistics data (FRED, ECB, Eurostat, BLS, central banks, market data, SEC filings) from Python via the parsimony library, instead of hand-rolling requests against provider APIs.
+description: Use when discovering or fetching macro, financial, economic, or official-statistics data (FRED, ECB, Eurostat, BLS, central banks, market data, SEC filings) from Python via the parsimony library, or when wrapping a not-yet-covered data source as a reusable connector, instead of hand-rolling one-off requests scripts against provider APIs.
 ---
 
 # parsimony
@@ -41,9 +41,10 @@ result.to_llm()              # a bounded, schema-aware text preview to drop into
 - `result.raw` is the payload (a `DataFrame` for a tabular fetch; some connectors return other
   shapes). `result.provenance` carries `source`, `params`, and `fetched_at`. Prefer
   `result.to_llm()` for a governed, length-bounded preview rather than dumping the raw frame.
-- `discover.load_all()` is forgiving (skips broken/uninstalled plugins); `discover.load("fred")`
-  is strict (raises `LookupError` if not installed); `discover.iter_providers()` lists installed
-  packages without importing them.
+- `discover.load_all()` is forgiving (logs and skips broken or uninstalled plugins) — unless
+  *every* installed provider fails to load, which raises `RuntimeError` rather than hand back an
+  empty bundle. `discover.load("fred")` is strict (raises `LookupError` if not installed);
+  `discover.iter_providers()` lists installed packages without importing them.
 
 Each task runs three discovery moves before the fetch: **route** to a connector, **inspect** it,
 **find** the id.
@@ -58,6 +59,10 @@ connectors = discover.load_all()
 print(connectors.describe())               # one line per connector: name + what it does
 ```
 
+If the project keeps a local connector library (a `connectors/` package exporting a `CONNECTORS` bundle — see [the authoring guide](references/authoring.md)), merge it into the same bundle first:
+`connectors = discover.load_all() + LOCAL`. Local and installed connectors then behave
+identically everywhere below.
+
 Pick the connector whose description matches the domain you need — the description names the
 institution (e.g. "Banco de España", "Swiss National Bank"), which the short code (`bde`, `snb`)
 alone does not. Most providers separate **discovery from retrieval**: one connector searches or
@@ -69,6 +74,10 @@ connectors covers the provider you need — the user may already have several, j
 the catalog of installable connectors (the exact `parsimony-<name>` package per provider) is
 **parsimony-connectors** (https://github.com/ockham-sh/parsimony-connectors); read its connector
 list, then tell the user which `parsimony-<name>` to `pip install`.
+
+If no published connector covers the source at all, author a project-local connector: read
+[the authoring guide](references/authoring.md) for the contract and the conventions. Author and test the connector first, then run the analysis through it.
+The routing order is: installed → installable → author.
 
 ## 2. Inspect a connector before you call it
 
@@ -165,4 +174,6 @@ result = fred(series_id="UNRATE")
 ---
 
 In short: **route** with `discover.load_all().describe()`, **inspect** the chosen connector with
-`connectors["x"].describe()`, **search** the catalog for the opaque id, then **fetch**.
+`connectors["x"].describe()`, **search** the catalog for the opaque id, then **fetch**. And when
+no connector — installed or installable — covers the source, **author** a local one
+([authoring guide](references/authoring.md)).

@@ -21,7 +21,12 @@ import httpx
 import pandas as pd
 
 from parsimony.errors import EmptyDataError, ParseError, UnauthorizedError
-from parsimony.transport import HttpClient, check_status
+from parsimony.transport import (
+    DEFAULT_HTTP_RETRY_POLICY,
+    HttpClient,
+    HttpRetryPolicy,
+    check_status,
+)
 
 
 def require_key(arg: str, *, env_var: str, provider: str) -> str:
@@ -132,11 +137,18 @@ def make_http_client(
     query_params: dict[str, Any] | None = None,
     headers: dict[str, Any] | None = None,
     timeout: float = 15.0,
+    retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
 ) -> HttpClient:
     """Construct a configured :class:`HttpClient` for a provider base URL.
 
     *provider* is the slug stamped on every typed error the client raises
     (via :func:`~parsimony.transport.check_status` or a transport failure).
+
+    *retry_policy* controls which failures are retried. The default retries only
+    transient server errors (5xx) and connection failures. Pass a custom
+    :class:`~parsimony.transport.HttpRetryPolicy` for a provider that also emits
+    *retryable* 4xx (e.g. an API that intermittently answers a valid request with
+    a spurious 400), or ``None`` to disable retries entirely.
     """
     return HttpClient(
         base_url,
@@ -144,6 +156,7 @@ def make_http_client(
         query_params=query_params or {},
         headers=headers or {},
         timeout=timeout,
+        retry_policy=retry_policy,
     )
 
 
@@ -154,6 +167,7 @@ def make_api_key_client(
     api_key: str,
     api_key_param: str = "apikey",
     timeout: float = 15.0,
+    retry_policy: HttpRetryPolicy | None = DEFAULT_HTTP_RETRY_POLICY,
 ) -> HttpClient:
     """Construct an :class:`HttpClient` with a default API-key query parameter."""
     return make_http_client(
@@ -161,4 +175,5 @@ def make_api_key_client(
         provider=provider,
         query_params={api_key_param: api_key},
         timeout=timeout,
+        retry_policy=retry_policy,
     )

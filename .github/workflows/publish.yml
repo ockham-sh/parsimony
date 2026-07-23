@@ -73,11 +73,50 @@ jobs:
           "$venv/bin/python" -m pip install --quiet --upgrade pip
           "$venv/bin/python" -m pip install "$(ls dist/*.whl)"
           "$venv/bin/python" -c "import parsimony; from parsimony.discover import load_all; load_all(); print('published-resolution smoke OK: parsimony-core')"
+          # The bundled connectors.json fallback (parsimony/_data/) is a wheel
+          # asset, not a source-tree file — confirm it actually made it into
+          # the built artifact and that parsimony.registry can load it with
+          # remote access cut off (proves the fallback path, not just import).
+          "$venv/bin/python" -c "
+          import unittest.mock as mock
+          import httpx
+          from parsimony.registry import list_available
+
+          with mock.patch('httpx.get', side_effect=httpx.ConnectError('network disabled for this smoke test')):
+              registry = list_available()
+          assert registry.source == 'bundled', registry.source
+          assert registry.connectors, 'bundled connectors.json produced zero rows'
+          print(f'published-resolution smoke OK: bundled fallback ({len(registry.connectors)} connectors)')
+          "
+
+  verify-bundled-manifest:
+    name: Bundled connectors.json matches upstream
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare against the parsimony-connectors source of truth
+        # parsimony/_data/connectors.json is a release-time snapshot, not a
+        # runtime cache (see parsimony/_data/README.md) — this job makes
+        # "keep it fresh" mechanical instead of "manual if remembered".
+        # Fails the release if the bundled file drifts from what
+        # ockham-sh/parsimony-connectors currently generates on its trunk
+        # branch — the same source parsimony.dev/connectors.json proxies.
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            https://raw.githubusercontent.com/ockham-sh/parsimony-connectors/main/connectors.json \
+            -o /tmp/upstream-connectors.json
+          if ! diff -u parsimony/_data/connectors.json /tmp/upstream-connectors.json; then
+            echo "::error file=parsimony/_data/connectors.json::stale — copy ../parsimony-connectors/connectors.json over this file verbatim before tagging this release."
+            exit 1
+          fi
+          echo "parsimony/_data/connectors.json is byte-identical to parsimony-connectors@main."
 
   publish-pypi:
     name: Publish to PyPI
     if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi')
-    needs: [build, smoke]
+    needs: [build, smoke, verify-bundled-manifest]
     runs-on: ubuntu-latest
     environment:
       name: pypi
@@ -99,7 +138,7 @@ jobs:
   publish-testpypi:
     name: Publish to TestPyPI
     if: github.event_name == 'workflow_dispatch' && inputs.target == 'testpypi'
-    needs: [build, smoke]
+    needs: [build, smoke, verify-bundled-manifest]
     runs-on: ubuntu-latest
     environment:
       name: testpypi

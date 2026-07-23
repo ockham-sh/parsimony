@@ -160,6 +160,7 @@ class Connector:
     namespace_hints: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
     bound_arguments: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}), repr=False)
     secrets: tuple[str, ...] = ()
+    requires: tuple[str, ...] = ()
     role: str | None = None
 
     @property
@@ -279,6 +280,10 @@ def describe_connector(c: Connector) -> str:
                 lines.append(f"    {pdesc}")
         lines.append("")
 
+    if c.requires:
+        lines.append(f"Requires: {', '.join(c.requires)}")
+        lines.append("")
+
     if c.output_spec is not None:
         lines.append("Output Schema:")
         cols = c.output_spec.columns
@@ -323,7 +328,8 @@ def llm_card(c: Connector) -> str:
     """Compact token-efficient description of *c* for LLM system prompts."""
     lines: list[str] = []
     tag_suffix = f" [{', '.join(c.tags)}]" if c.tags else ""
-    lines.append(f"### {c.name}{tag_suffix}")
+    requires_suffix = f" (needs {', '.join(c.requires)})" if c.requires else ""
+    lines.append(f"### {c.name}{tag_suffix}{requires_suffix}")
 
     desc = " ".join(c.description.split())
     if c.output_spec is not None:
@@ -369,6 +375,7 @@ def connector(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    requires: tuple[str, ...] = (),
     role: str | None = None,
 ) -> Callable[[Callable[..., Any]], Connector]: ...
 
@@ -382,6 +389,7 @@ def connector(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    requires: tuple[str, ...] = (),
     role: str | None = None,
 ) -> Callable[[Callable[..., Any]], Connector] | Connector:
     """Decorate a synchronous data connector.
@@ -419,6 +427,7 @@ def connector(
             properties=_mapping_proxy(properties),
             namespace_hints=ns_hints,
             secrets=secret_tup,
+            requires=tuple(requires),
             role=role,
         )
 
@@ -505,6 +514,7 @@ def loader(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    requires: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate a synchronous **loader** — stricter ``output`` contract than :func:`connector`."""
 
@@ -517,6 +527,7 @@ def loader(
         tags=merged_tags,
         properties=properties,
         secrets=secrets,
+        requires=requires,
         role="loader",
     )
 
@@ -529,6 +540,7 @@ def enumerator(
     tags: list[str] | None = None,
     properties: dict[str, Any] | None = None,
     secrets: tuple[str, ...] = (),
+    requires: tuple[str, ...] = (),
 ) -> Callable[[Callable[..., Any]], Connector]:
     """Decorate a synchronous **enumerator** returning a raw ``pd.DataFrame``."""
 
@@ -544,6 +556,7 @@ def enumerator(
             tags=merged_tags,
             properties=dict(properties or {}),
             secrets=secrets,
+            requires=requires,
             role="enumerator",
         )(inner)
 
@@ -649,24 +662,9 @@ class Connectors:
         names = [c.name for c in self._items]
         return f"Connectors({names!r})"
 
-    def bind_env(self, overrides: Mapping[str, str] | None = None) -> Connectors:
-        """Compatibility shim: flat connectors resolve credentials at call time.
-
-        Returns ``self`` unchanged. Hosts (MCP, agents) load ``.env`` into
-        ``os.environ`` before calling; connector implementations use
-        :func:`parsimony.transport.helpers.require_key` for env fallback.
-        """
-        _ = overrides
-        return self
-
     def env_vars(self) -> frozenset[str]:
-        """Declared env-var names for this collection (empty for flat connectors)."""
-        return frozenset()
-
-    @property
-    def unbound(self) -> tuple[str, ...]:
-        """Connector names missing required credentials (empty for flat connectors)."""
-        return ()
+        """Union of env-var names the collection's connectors declare via ``requires``."""
+        return frozenset(name for c in self._items for name in c.requires)
 
     def filter(
         self,

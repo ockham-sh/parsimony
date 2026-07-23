@@ -52,6 +52,11 @@ def demo_search(monkeypatch, tmp_path):
     )
 
 
+def test_factory_connector_declares_no_requires(demo_search) -> None:
+    """Local catalog search needs no credentials — nothing to declare."""
+    assert demo_search.requires == ()
+
+
 def test_query_ranked_search(demo_search) -> None:
     df = demo_search(query="Germany", limit=5).frame
     assert isinstance(df, pd.DataFrame)

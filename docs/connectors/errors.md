@@ -112,6 +112,9 @@ regardless of which HTTP status the upstream actually returned.
 
 The keyword-only `env_var` names the environment variable the agent should set;
 when present, the default message tells the agent exactly which variable to export.
+This is the same name a well-formed connector declares in
+[`requires=`](defining-connectors.md#declaring-required-env-vars): the static declaration and
+the env var this error names are, by contract, the one variable the call needs.
 
 ```python
 from parsimony.errors import UnauthorizedError

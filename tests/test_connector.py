@@ -321,6 +321,35 @@ class TestConnectorExecution:
                 return query
 
 
+class TestConnectorRequires:
+    def test_requires_defaults_empty(self) -> None:
+        assert demo_search.requires == ()
+
+    def test_requires_stored_and_normalized_to_tuple(self) -> None:
+        @connector(requires=["FOO_API_KEY"])  # type: ignore[arg-type]
+        def keyed(query: str) -> pd.DataFrame:
+            """Needs an env var."""
+            return _make_search_df(query)
+
+        assert keyed.requires == ("FOO_API_KEY",)
+
+    def test_loader_threads_requires(self) -> None:
+        @loader(output=FETCH_OUTPUT, requires=("FOO_API_KEY",))
+        def load_keyed(series_id: str) -> pd.DataFrame:
+            """Load with a required env var."""
+            return _make_fetch_df()
+
+        assert load_keyed.requires == ("FOO_API_KEY",)
+
+    def test_enumerator_threads_requires(self) -> None:
+        @enumerator(output=ENUMERATE_OUTPUT, requires=("FOO_API_KEY",))
+        def enumerate_keyed() -> pd.DataFrame:
+            """Enumerate with a required env var."""
+            return pd.DataFrame({"code": ["A"], "title": ["Series A"]})
+
+        assert enumerate_keyed.requires == ("FOO_API_KEY",)
+
+
 class TestConnectorsCollection:
     def test_names_iter_len_and_lookup(self) -> None:
         c = _fake_connectors()
@@ -343,6 +372,22 @@ class TestConnectorsCollection:
         a = Connectors([demo_search])
         b = Connectors([demo_fetch])
         assert (a + b).names() == ["demo_fetch", "demo_search"]
+
+    def test_env_vars_is_union_of_requires(self) -> None:
+        @connector(requires=("FOO_API_KEY", "SHARED_KEY"))
+        def a(query: str) -> str:
+            """A."""
+            return query
+
+        @connector(requires=("SHARED_KEY",))
+        def b(query: str) -> str:
+            """B."""
+            return query
+
+        assert Connectors([a, b, demo_search]).env_vars() == frozenset({"FOO_API_KEY", "SHARED_KEY"})
+
+    def test_env_vars_empty_when_nothing_declared(self) -> None:
+        assert _fake_connectors().env_vars() == frozenset()
 
 
 class TestResultWrap:

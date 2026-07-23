@@ -107,7 +107,7 @@ except RegistryError as exc:
     ...  # neither the live registry nor the bundled snapshot loaded — see the exception message
 
 for c in registry.connectors:
-    print(c.package, c.provider, c.entry_point, c.connector_count, c.keyless)
+    print(c.package, c.provider, c.entry_point, c.connector_count, c.keyless, c.requires)
 ```
 
 (`parsimony list --available` on the command line does the same thing for a quick human check.)
@@ -122,9 +122,8 @@ institution or source it names, not just the short code. Once you've picked a ma
 1. Install it into the active environment the same safe way as bootstrap above (`python -m pip
    install <package>` or `uv pip install <package>`; never `--break-system-packages`; stop and ask
    the user on a PEP 668 or permissions failure).
-2. If the package is not `keyless`, resolving a credential also needs the user — ask for the key
-   named in the connector's `secrets=` (surfaced once you inspect it in step 2) rather than
-   guessing an env var.
+2. If the package is not `keyless`, resolving a credential also needs the user — ask them to set
+   the env var(s) named in `c.requires` (e.g. `FRED_API_KEY`) rather than guessing a name.
 3. Reload and verify: re-run `discover.load_all()` (or `discover.load(entry_point)`) and confirm
    the new provider now appears before calling any of its connectors.
 

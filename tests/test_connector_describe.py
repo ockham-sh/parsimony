@@ -58,7 +58,12 @@ def fred_search(query: str) -> pd.DataFrame:
     return pd.DataFrame({"code": ["A"], "title": ["GDP"]})
 
 
-@connector(output=FETCH_OUTPUT, tags=["loader", "fred"], properties={"provider": "fred", "tier": "premium"})
+@connector(
+    output=FETCH_OUTPUT,
+    tags=["loader", "fred"],
+    properties={"provider": "fred", "tier": "premium"},
+    requires=("FRED_API_KEY",),
+)
 def fred_fetch(
     series_id: Annotated[str, "ns:fred_series"],
     start_date: str | None = None,
@@ -154,6 +159,14 @@ class TestConnectorDescribe:
         assert "Properties:" in text
         assert "provider" in text
 
+    def test_requires_line_after_parameters(self) -> None:
+        text = fred_fetch.describe()
+        assert "Requires: FRED_API_KEY" in text
+        assert text.index("Parameters:") < text.index("Requires: FRED_API_KEY")
+
+    def test_no_requires_line_when_empty(self) -> None:
+        assert "Requires:" not in fred_search.describe()
+
 
 class TestConnectorToLlm:
     def test_llm_card_includes_name_description_and_params(self) -> None:
@@ -166,6 +179,21 @@ class TestConnectorToLlm:
         text = fred_fetch.bind(api_key="secret").to_llm()
         assert "series_id" in text
         assert "api_key" not in text
+
+    def test_header_needs_token(self) -> None:
+        header = fred_fetch.to_llm().splitlines()[0]
+        assert header == "### fred_fetch [loader, fred] (needs FRED_API_KEY)"
+
+    def test_header_needs_token_multiple_names(self) -> None:
+        @connector(requires=("A_KEY", "B_KEY"))
+        def multi(query: str) -> pd.DataFrame:
+            """Needs two env vars."""
+            return pd.DataFrame()
+
+        assert multi.to_llm().splitlines()[0] == "### multi (needs A_KEY, B_KEY)"
+
+    def test_header_no_needs_token_when_empty(self) -> None:
+        assert "(needs" not in fred_search.to_llm()
 
 
 class TestConnectorToLlmReturns:
@@ -212,6 +240,7 @@ class TestConnectorsDescribeToLlm:
         assert "Header" in text
         assert "## Demo (5)" in text
         assert "fred_search" in text
+        assert "### fred_fetch [loader, fred] (needs FRED_API_KEY)" in text
 
     def test_empty_collection(self) -> None:
         assert Connectors([]).describe() == "Connectors (empty)"

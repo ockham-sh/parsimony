@@ -55,7 +55,7 @@ def _build_parser() -> argparse.ArgumentParser:
             "Inspects the 'parsimony.providers' entry-point group. Shows each "
             "plugin's name, version, connector count, and conformance status. "
             "With --strict, imports each plugin to run the conformance suite and "
-            "to list the credential (secret) parameters its connectors declare; "
+            "to list the env vars its connectors declare via requires=; "
             "exits non-zero on any failure. With --available, lists installable "
             "parsimony-<name> packages from the parsimony-connectors manifest "
             "instead of what's installed."
@@ -170,21 +170,21 @@ class _PluginRow(TypedDict):
     connector_count: int
     conformance: str  # "pass" | "fail" | "skipped"
     conformance_detail: str | None
-    # Declared credential parameter NAMES (strict mode only) are intentionally not
-    # a field here; they ride in a side map so no row field carries secret-derived
-    # data. The names themselves are public (each connector exposes them in its
-    # signature and docstring) — they are parameter names like "api_key", never values.
+    # Declared env-var NAMES (strict mode only) are intentionally not a field
+    # here; they ride in a side map so no row field carries credential-derived
+    # data. The names themselves are public (each connector declares them via
+    # requires=) — names like "FRED_API_KEY", never values.
 
 
 def _run_list(*, json_output: bool, strict: bool) -> int:
-    rows, secrets_by_name = _collect_rows(strict=strict)
+    rows, requires_by_name = _collect_rows(strict=strict)
     if json_output:
         payload: dict[str, Any] = {
-            "plugins": [{**dict(r), "secrets": secrets_by_name.get(r["name"], [])} for r in rows],
+            "plugins": [{**dict(r), "requires": requires_by_name.get(r["name"], [])} for r in rows],
         }
         print(json.dumps(payload, indent=2))
     else:
-        _render_table(rows, secrets_by_name, sys.stdout)
+        _render_table(rows, requires_by_name, sys.stdout)
     if strict and any(r["conformance"] == "fail" for r in rows):
         return 1
     return 0
@@ -194,14 +194,14 @@ def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], dict[str, list[str
     """Walk ``iter_providers`` metadata-only.
 
     Only imports each plugin when ``strict`` is requested because conformance
-    needs the module. Returns the rows plus a side map of plugin name to its
-    declared credential parameter names, kept out of the rows so no row field
-    carries secret-derived data.
+    needs the module. Returns the rows plus a side map of plugin name to the
+    env vars its connectors declare via ``requires=``, kept out of the rows so
+    no row field carries credential-derived data.
     """
     from parsimony.testing import ConformanceError, assert_plugin_valid
 
     rows: list[_PluginRow] = []
-    secrets_by_name: dict[str, list[str]] = {}
+    requires_by_name: dict[str, list[str]] = {}
 
     for provider in iter_providers():
         module: ModuleType | None = None
@@ -213,8 +213,8 @@ def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], dict[str, list[str
             connectors = provider.load()
             connector_count = len(connectors)
             if strict:
-                # Declared credential parameter NAMES (e.g. "api_key"), not values.
-                secrets_by_name[provider.name] = sorted({s for c in connectors for s in c.secrets})
+                # Declared env-var NAMES (e.g. "FRED_API_KEY"), not values.
+                requires_by_name[provider.name] = sorted({r for c in connectors for r in c.requires})
         except Exception as exc:  # noqa: BLE001 — plugin own arbitrary init code
             if strict:
                 conformance = "fail"
@@ -244,10 +244,10 @@ def _collect_rows(*, strict: bool) -> tuple[list[_PluginRow], dict[str, list[str
                 "conformance_detail": detail,
             }
         )
-    return rows, secrets_by_name
+    return rows, requires_by_name
 
 
-def _render_table(rows: list[_PluginRow], secrets_by_name: dict[str, list[str]], stream: TextIO) -> None:
+def _render_table(rows: list[_PluginRow], requires_by_name: dict[str, list[str]], stream: TextIO) -> None:
     if not rows:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
@@ -256,26 +256,26 @@ def _render_table(rows: list[_PluginRow], secrets_by_name: dict[str, list[str]],
         )
         return
 
-    header = ["NAME", "VERSION", "CONNECTORS", "CONFORMANCE", "SECRETS"]
+    header = ["NAME", "VERSION", "CONNECTORS", "CONFORMANCE", "REQUIRES"]
     body: list[list[str]] = [header]
     for r in rows:
-        # Secrets are only inspected in --strict mode; "?" marks "not inspected",
-        # "-" marks "inspected, declares none". These are public parameter names
-        # (e.g. "api_key"), not values.
-        names = secrets_by_name.get(r["name"], [])
+        # Requires is only inspected in --strict mode; "?" marks "not inspected",
+        # "-" marks "inspected, declares none". These are public env-var names
+        # (e.g. "FRED_API_KEY"), not values.
+        names = requires_by_name.get(r["name"], [])
         if r["conformance"] == "skipped":
-            secrets_cell = "?"
+            requires_cell = "?"
         elif names:
-            secrets_cell = ", ".join(names)
+            requires_cell = ", ".join(names)
         else:
-            secrets_cell = "-"
+            requires_cell = "-"
         body.append(
             [
                 r["name"],
                 r["version"] or "?",
                 str(r["connector_count"]) if r["connector_count"] else "0",
                 r["conformance"],
-                secrets_cell,
+                requires_cell,
             ]
         )
 

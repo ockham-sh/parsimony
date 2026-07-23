@@ -125,6 +125,13 @@ recorded provenance `params`.
     provenance does not reflect the full argument set passed to your function. `bind` also
     rejects unknown names and re-binding an already-bound name with `TypeError`.
 
+A separate declaration, `requires=(...)`, answers a different question: not *must this value be
+hidden?* (that is `secrets=`) but *must this value exist?* It names the environment variables a
+call needs to succeed — the same names a connector's fast-fail passes to `UnauthorizedError` —
+and core surfaces them in the LLM cards and via `Connectors.env_vars()` without ever reading
+`os.environ`. The two are independent; see
+[Defining connectors](../connectors/defining-connectors.md#declaring-required-env-vars).
+
 ## Loaders and enumerators: two stricter verbs
 
 `@connector` is the general case. Two specializations add output-schema contracts that mark a

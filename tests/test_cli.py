@@ -28,6 +28,7 @@ def _toy(name: str, **kwargs: Any):
     _fn.__doc__ = "Fetch a toy observation with a plenty long description."
     _fn.__name__ = name
     kwargs.setdefault("secrets", ("api_key",))
+    kwargs.setdefault("requires", ("FOO_API_KEY",))
     return connector(**kwargs)(_fn)
 
 
@@ -110,6 +111,8 @@ def test_list_json_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captur
     assert entry["version"] == "0.1.0"
     assert entry["connector_count"] == 1
     assert entry["conformance"] == "pass"
+    assert entry["requires"] == ["FOO_API_KEY"]
+    assert "secrets" not in entry
     assert "env_vars" not in payload
 
 
@@ -154,6 +157,8 @@ def test_list_table_output(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captu
 
     assert exit_code == 0
     assert "table" in captured.out
+    assert "REQUIRES" in captured.out
+    assert "SECRETS" not in captured.out
 
 
 def test_list_empty_when_no_providers(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture) -> None:
@@ -258,6 +263,7 @@ def _fake_registry(*, source: str = "remote") -> ConnectorRegistry:
                 provider="FRED (Federal Reserve Economic Data)",
                 entry_point="fred",
                 connector_count=2,
+                requires=("FRED_API_KEY",),
                 keyless=False,
             ),
         ),

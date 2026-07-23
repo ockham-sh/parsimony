@@ -257,7 +257,7 @@ Knowing *when* each rule fires saves debugging time — most failures surface at
 | Connector returned `Result`/tuple | every call | `TypeError` |
 | KEY namespace present, declared columns exist in data | entity projection (`result.entities` / `result.data`) | `ValueError` |
 
-Everything `@connector` does — [binding](calling-binding-composing.md), `secrets=` stripping from provenance, [`Connectors`](calling-binding-composing.md) composition with `+`, `describe()` / `to_llm()` cards — applies unchanged to loaders and enumerators. The verbs only add the schema contract on top.
+Everything `@connector` does — [binding](calling-binding-composing.md), `secrets=` stripping from provenance, [`requires=`](defining-connectors.md#declaring-required-env-vars) env-var declaration, [`Connectors`](calling-binding-composing.md) composition with `+`, `describe()` / `to_llm()` cards — applies unchanged to loaders and enumerators. The verbs only add the schema contract on top.
 
 ## See also
 

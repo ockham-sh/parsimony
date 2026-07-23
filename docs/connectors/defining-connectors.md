@@ -91,11 +91,12 @@ connector, so write it as a precise capability statement.
 | `tags` | `list[str] \| None` | `()` | Free-form labels used by `Connectors.search`/`filter`. |
 | `properties` | `dict[str, Any] \| None` | `{}` | Exact-match metadata used by `Connectors.search`. |
 | `secrets` | `tuple[str, ...]` | `()` | Parameter names to strip from provenance. |
+| `requires` | `tuple[str, ...]` | `()` | Env-var names that must resolve for a call to succeed; surfaced in the cards, never read by core. |
 
 `tags` and `properties` are stored as read-only views (`tags` as a tuple, `properties` as a
 `MappingProxyType`). `output` is an [`OutputSpec`](results.md); when present, it is attached to
 every result on `result.output_spec` — the framework never inspects or applies it to the data
-itself. The `secrets` and `output` keywords are covered in their own sections below.
+itself. The `secrets`, `requires`, and `output` keywords are covered in their own sections below.
 
 ```python
 @connector(tags=["finance"], properties={"region": "us"})
@@ -137,6 +138,50 @@ canonical idiom for injecting credentials and base URLs without leaking them to 
     Only the exact declared parameter names are removed. A sensitive value passed under a
     parameter that is not listed in `secrets=` is recorded in provenance verbatim.
 
+## Declaring required env vars
+
+`secrets=` and `requires=` answer two different questions, and they are independent:
+
+- **`secrets=` — must this value be *hidden*?** It names *parameters* whose call-time values
+  are redacted from provenance and error surfaces. It says nothing about whether the connector
+  can run without the value.
+- **`requires=` — must this value *exist*?** It names *environment variables* that must resolve
+  for a call to succeed. A name in `requires=` is exactly the env var that
+  [`UnauthorizedError`](errors.md#unauthorizederror-401403-bad-credentials) names when the
+  connector is called with nothing configured.
+
+`requires=` is a **static declaration, never resolution** — core stores the tuple verbatim and
+never reads `os.environ` from it (nor validates the names against the signature; an env var need
+not correspond to any parameter). Resolving the value, and fast-failing when it is absent, is
+the connector body's job — typically via `require_key` (from
+`parsimony.transport.helpers`), which raises `UnauthorizedError(env_var=...)` before any
+network call. `requires=` is the matching *declaration* of that runtime behaviour, so tooling
+can report what a connector needs without importing and calling it.
+
+```python
+import os
+import pandas as pd
+from parsimony import connector
+from parsimony.transport.helpers import require_key
+
+@connector(secrets=("api_key",), requires=("FRED_API_KEY",))
+def fred_fetch(series_id: str, api_key: str = "") -> pd.DataFrame:
+    """Fetch FRED observations by series_id."""
+    key = require_key(api_key, env_var="FRED_API_KEY", provider="fred")  # fast-fails if absent
+    return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0]})
+```
+
+Because the two axes are independent, all four combinations occur:
+
+| | `requires` non-empty | `requires` empty |
+|---|---|---|
+| **`secrets` non-empty** | required key — the call cannot succeed unconfigured (`fred`, `eia`) | optional key — a secret-marked param the call does *not* require; the key only lifts a quota (`riksbank`, `bls`) |
+| **`secrets` empty** | a required env var with no parameter at all — e.g. `sec_edgar`'s `SEC_EDGAR_USER_AGENT` header | keyless (`treasury`, `boc`) |
+
+Neither field derives from the other. For an *optional* key, the env var the connector reads
+when the parameter is omitted lives only in the docstring/prose — `requires=` stays empty
+because the call still succeeds without it.
+
 ## Namespace hints
 
 Annotate a parameter with `Annotated[T, "ns:<namespace>"]` to declare which catalog
@@ -154,7 +199,7 @@ OUT = OutputSpec(columns=[
     Column(name="value", role=ColumnRole.DATA),
 ])
 
-@connector(output=OUT)
+@connector(output=OUT, requires=("FRED_API_KEY",))
 def fred_fetch(series_id: Annotated[str, "ns:fred_series"]) -> pd.DataFrame:
     """Fetch FRED time series observations by series_id."""
     return pd.DataFrame({"date": ["2020-01-01"], "value": [1.0]})
@@ -275,10 +320,12 @@ Every connector renders itself two ways. Both operate on the *exposed* signature
 parameters (including bound secrets) are invisible in both.
 
 - **`describe()`** — a multi-line, human-readable block: header, description, a `Parameters`
-  section (each parameter's type, `required`/`optional`, and any `namespace=` hint), an
+  section (each parameter's type, `required`/`optional`, and any `namespace=` hint), a
+  `Requires: <ENV_VAR>, ...` line when `requires=` is non-empty, an
   `Output Schema` section (column name + role + namespace) when `output=` is set, and `Tags` /
   `Properties` lines.
-- **`to_llm()`** — a compact, token-efficient card for system prompts: `### <name> [tags]`, the
+- **`to_llm()`** — a compact, token-efficient card for system prompts: `### <name> [tags] (needs <ENV_VAR>)`
+  (the `(needs …)` suffix appears only when `requires=` is non-empty), the
   collapsed description (with a `Returns: <col> (ROLE ns:x), ...` line when an `OutputSpec`
   declares columns — one `name (ROLE)` token per LLM-visible column, `ns:` appended for KEY/METADATA
   columns that declare a namespace, columns with `exclude_from_llm_view` omitted), then one
@@ -287,7 +334,7 @@ parameters (including bound secrets) are invisible in both.
 
 ```python
 print(fred_fetch.to_llm())
-# ### fred_fetch
+# ### fred_fetch (needs FRED_API_KEY)
 # Fetch FRED time series observations by series_id. Returns: date (KEY ns:fred_series), value (DATA).
 # - series_id: str [ns:fred_series]
 
@@ -299,6 +346,8 @@ print(fred_fetch.describe())
 #
 # Parameters:
 #   series_id: str (required)  —  namespace='fred_series'
+#
+# Requires: FRED_API_KEY
 #
 # Output Schema:
 #   date   KEY         namespace='fred_series'
@@ -321,6 +370,7 @@ print(fred_fetch.describe())
 | `properties` | field | Read-only metadata mapping. |
 | `namespace_hints` | field | Read-only `{param: namespace}` mapping from `Annotated` hints. |
 | `secrets` | field | `tuple[str, ...]` of secret parameter names. |
+| `requires` | field | `tuple[str, ...]` of env-var names the call needs to succeed. |
 | `output_spec` | field | The `OutputSpec` or `None`. |
 | `exposed_signature` | property | The post-binding `inspect.Signature` callers and cards see. |
 | `describe()` / `to_llm()` | method | Human and LLM projections. |

@@ -121,14 +121,24 @@ See [defining connectors](../connectors/defining-connectors.md) and
 [loaders and enumerators](../connectors/loaders-and-enumerators.md) for the full
 contracts and validation timing.
 
-### Injecting secrets with `bind`
+### Declaring credentials: `secrets=` and `requires=`
 
-Declare credential parameters in `secrets=(...)`. Declared secret names are validated
-against the function's real parameters at decoration time (an unknown name raises
-`ValueError`) and are stripped from the recorded provenance. To supply a key without
-exposing it to an LLM or a downstream caller, fix it with `bind` — the bound parameter
-disappears from `exposed_signature`, from the `describe()`/`to_llm()` cards, and from
-provenance.
+Two independent declarations describe a connector's credential shape, and they answer two
+different questions:
+
+- **`secrets=` — must this value be hidden?** Declare credential *parameters* in
+  `secrets=(...)`. Declared secret names are validated against the function's real parameters
+  at decoration time (an unknown name raises `ValueError`) and are stripped from the recorded
+  provenance. To supply a key without exposing it to an LLM or a downstream caller, fix it with
+  `bind` — the bound parameter disappears from `exposed_signature`, from the
+  `describe()`/`to_llm()` cards, and from provenance.
+- **`requires=` — must this value exist?** Declare, as a **literal tuple of env-var names**,
+  every env var a call needs to succeed: `requires=("ACME_API_KEY",)`. Declare it on **every
+  verb that cannot succeed unconfigured**. The name you list is the exact env var your body
+  passes to `UnauthorizedError(env_var=...)` on a fast-fail (see [Raising typed
+  errors](#raising-typed-errors) below), so the declaration and the runtime behaviour name the
+  same variable. Core never reads the env var from `requires=` — it only surfaces it in the
+  cards and under `parsimony list --strict`.
 
 ```python
 import os
@@ -138,9 +148,19 @@ wired = acme_fetch.bind(api_key=os.environ["ACME_API_KEY"])
 # wired.exposed_signature now omits api_key entirely
 ```
 
-This is the standard idiom for wiring a base URL or API key into a connector before
-handing the collection to an agent. See
-[calling, binding, and composing](../connectors/calling-binding-composing.md).
+Keep the two separate: a verb that runs *without* a key (an optional-quota key, or a keyless
+verb) keeps `requires=()` even if it declares `secrets=`; a verb that needs a non-secret env
+var (a required `User-Agent`, say) declares `requires=` with no `secrets=` at all. This is the
+standard idiom for wiring a base URL or API key into a connector before handing the collection
+to an agent. See [calling, binding, and composing](../connectors/calling-binding-composing.md)
+and [Defining connectors](../connectors/defining-connectors.md#declaring-required-env-vars).
+
+!!! note "The `requires=` declaration must match runtime behaviour"
+    `requires=` is a promise about what the body does: a name in it must be an env var whose
+    absence actually fast-fails the call, and a verb that fast-fails must declare it. Core does
+    not enforce this — the [parsimony-connectors `CredentialDeclarationSuite`](https://github.com/ockham-sh/parsimony-connectors/blob/main/docs/contributing/authoring-a-connector.md)
+    is what proves the declaration and the fast-fail agree, and the manifest's `keyless` flag is
+    computed as `not requires`, so a wrong declaration mislabels your package.
 
 ## Using the HTTP transport
 
@@ -273,7 +293,7 @@ ENUM_OUTPUT = OutputSpec(
 )
 
 
-@connector(output=FETCH_OUTPUT, tags=["acme", "tool"], secrets=("api_key",))
+@connector(output=FETCH_OUTPUT, tags=["acme", "tool"], secrets=("api_key",), requires=("ACME_API_KEY",))
 def acme_fetch(series_id: str, api_key: str) -> pd.DataFrame:
     """Fetch a series of observations for the given series_id from the ACME API."""
     df = pd.DataFrame(
@@ -298,9 +318,11 @@ CONNECTORS = Connectors([acme_fetch, acme_enumerate])
 
 Two details worth noting:
 
-- `acme_fetch` declares `api_key` as a secret; a consumer fixes it via
+- `acme_fetch` declares `api_key` as a secret **and** `ACME_API_KEY` in `requires=` — it
+  cannot succeed unconfigured, so both apply. A consumer fixes the key via
   `CONNECTORS.bind(api_key=...)` (binding is scoped per-connector — only connectors that
-  actually expose `api_key` receive it).
+  actually expose `api_key` receive it); `requires=` is what `parsimony list --strict` reports
+  and what the card's `(needs ACME_API_KEY)` suffix comes from.
 - `acme_enumerate` is an enumerator, so its schema has a namespaced KEY and a TITLE, no
   DATA columns, and the function annotates a `pd.DataFrame` return. That shape is checked
   at decoration time; the returned frame's actual columns are only checked later, if and

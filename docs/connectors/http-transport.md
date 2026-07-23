@@ -255,7 +255,10 @@ def check_status(
 
 The optional `env_var=` names the environment variable a missing credential
 would come from; it is threaded into the `UnauthorizedError` so the agent-facing
-message can name it. `response` is duck-typed on `.status_code`/`.headers`, so a
+message can name it. Use the same literal name your connector declares in
+[`requires=`](defining-connectors.md#declaring-required-env-vars) — the static
+declaration and this runtime error should name the one variable the call needs.
+`response` is duck-typed on `.status_code`/`.headers`, so a
 `curl_cffi` response works as well as an `httpx` one.
 
 ```python

@@ -63,16 +63,22 @@ call.
 
 ## Credentials
 
-Take the key as a parameter, declare it in `secrets=` so it stays out of provenance, and resolve
-a missing key with `require_key` so the typed error names the env var to set:
+Two independent declarations describe a keyed connector, answering two different questions:
+
+- **`secrets=` — must this value be hidden?** Take the key as a parameter and list it in
+  `secrets=` so it stays out of provenance and error surfaces.
+- **`requires=` — must this value exist?** If the verb cannot succeed without the key, declare
+  the env var it needs as a literal tuple, `requires=("EXAMPLE_API_KEY",)`. Use the *same*
+  literal name you pass to `require_key`/`UnauthorizedError`, so the declaration matches the
+  fast-fail. A verb that runs fine unconfigured leaves `requires=()`.
 
 ```python
 from parsimony.transport.helpers import require_key
 
-@connector(secrets=("api_key",))
+@connector(secrets=("api_key",), requires=("EXAMPLE_API_KEY",))
 def example_fetch(series_id: str, api_key: str | None = None) -> pd.DataFrame:
     """Fetch a series from Example.org by id. Needs an Example.org API key."""
-    key = require_key(api_key, env_var="EXAMPLE_API_KEY", provider="example")
+    key = require_key(api_key, env_var="EXAMPLE_API_KEY", provider="example")  # fast-fails if absent
     ...
 ```
 

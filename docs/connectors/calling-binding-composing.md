@@ -114,8 +114,12 @@ print(result.provenance.params)               # {'series_id': 'GDP', 'base_url':
     whether you fix it with `bind()` or pass it at call time. Binding hides a
     parameter from the **call surface** regardless of whether it is a secret.
     Combine them — `secrets=("api_key",)` plus `bind(api_key=...)` — so the key
-    is both invisible to callers and absent from provenance. See
-    [Defining connectors](defining-connectors.md) for the `secrets=` declaration
+    is both invisible to callers and absent from provenance. `secrets=` (must this
+    value be hidden?) is separate again from
+    [`requires=`](defining-connectors.md#declaring-required-env-vars) (must this
+    value exist?), which declares the env vars a call needs and drives
+    `Connectors.env_vars()`. See
+    [Defining connectors](defining-connectors.md) for both declarations
     and [Errors](errors.md) for the agent-facing error contract.
 
 Binding is composable: each `bind()` call returns a new connector, accumulating
@@ -227,6 +231,12 @@ wired = all_tools.bind(api_key="shared-key")   # binds api_key only where it exi
 | `__len__()` / `__iter__()` | `int` / iterator | count and iteration over the connectors |
 | `filter(predicate)` | `Connectors` | connectors for which `predicate(connector)` is true |
 | `search(query, tags=, **properties)` | `Connectors` | substring match plus tag/property filters |
+| `env_vars()` | `frozenset[str]` | union of every connector's declared [`requires=`](defining-connectors.md#declaring-required-env-vars) env vars |
+
+`env_vars()` reports which environment variables the bundle needs to be fully operational —
+the union of each connector's declared `requires=`, deduplicated. It reads the static
+declarations only; it never touches `os.environ`. Use it to pre-flight a bundle (warn about
+unset variables before an agent run) without importing or calling anything.
 
 ```python
 # Keep only the loaders.

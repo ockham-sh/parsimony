@@ -40,7 +40,8 @@ class to subclass.
 | **Description required** | Docstring or `description=` on the decorator (20–800 chars for conformance) |
 | **Return raw data** | `pd.DataFrame`, `Series`, scalar, or `dict` — never a `Result` or `(data, props)` tuple |
 | **Flat parameters** | Top-level scalar parameters are the call surface; no bundled `params: BaseModel` |
-| **Secrets in provenance** | Declare credential parameters via `secrets=(...)`; bound or call-time secret values are stripped from provenance and LLM cards |
+| **Secrets in provenance** | Declare credential *parameters* via `secrets=(...)`; bound or call-time secret values are stripped from provenance and LLM cards |
+| **Required env vars** | Declare the env vars a call needs via `requires=(...)`, a literal tuple of names; surfaced in the cards and `parsimony list --strict`, never resolved by core |
 
 Pick the decorator that matches the verb:
 
@@ -55,12 +56,27 @@ Column roles (`KEY`, `TITLE`, `DATA`, `METADATA`) and `OutputSpec` are documente
 
 ## Credentials
 
-Auth belongs in the connector implementation, not decorator metadata beyond `secrets=`.
+Two orthogonal decorator declarations describe a connector's credential shape; auth *logic*
+belongs in the connector implementation, not in metadata beyond these two.
+
+- **`secrets=`** answers *must this value be hidden?* — it names parameters whose values are
+  stripped from provenance and error surfaces.
+- **`requires=`** answers *must this value exist?* — it names the env vars a call needs to
+  succeed. A name in `requires=` is exactly the env var
+  [`UnauthorizedError`](connectors/errors.md) names on a fast-fail. It is a static declaration:
+  core stores the tuple and never reads `os.environ` from it.
+
+The two are independent — a connector may declare either, both, or neither (see
+[Defining connectors](connectors/defining-connectors.md#declaring-required-env-vars) for the
+four combinations). The declaration must match the connector's actual runtime behaviour: a verb
+that fast-fails without an env var declares it in `requires=`; a verb that runs unconfigured
+does not.
 
 - Use `Connector.bind(api_key=...)` (or `Connectors.bind(...)`) to fix credentials and
   remove them from the exposed call surface.
-- Env-var fallback (e.g. `FRED_API_KEY`) lives inside the connector via
-  `parsimony.transport.helpers.require_key`.
+- Env-var resolution and the matching fast-fail (e.g. `FRED_API_KEY`) live inside the connector
+  via `parsimony.transport.helpers.require_key`; `requires=("FRED_API_KEY",)` is the static
+  companion that declares it.
 - Optional provider helpers such as `load(api_key=...)` that return bound `Connectors`
   are a convention, not a kernel requirement.
 

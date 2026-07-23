@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **Declarative credential requirement**: `@connector`, `@loader`, and `@enumerator`
+  accept `requires=(...)` — the env-var names that must resolve for a call to
+  succeed (the names `UnauthorizedError` would cite if the connector were called
+  with nothing configured). A static declaration, never resolution: nothing reads
+  `os.environ`. Orthogonal to `secrets=` (redaction). When non-empty,
+  `describe()` renders a `Requires: FRED_API_KEY` line after Parameters and the
+  `to_llm()` header carries a `(needs FRED_API_KEY)` token.
+- The registry accepts manifest `schema_version` 1 **and** 2. v2 rows carry
+  `requires: list[str]` and drop `keyless` from the wire;
+  `InstallableConnector` gains `requires: tuple[str, ...]` and keeps `keyless`
+  as a stored field (v1: trusted from the wire, `requires=()`; v2: derived as
+  `not requires`). Anything else still fails loudly, now naming `[1, 2]`.
 - `CatalogMatch.matched` — `"lexical" | "semantic" | "both"`: which component
   surfaced the row's evidence (`None` on filter-only matches). The trap
   signal: an all-`"semantic"` result page means nothing lexically real
@@ -27,6 +39,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **BREAKING — `Connectors.bind_env()` and `Connectors.unbound` are removed.**
+  Both were inert stubs since 0.5.0 (return `self` / `()`), with zero callers.
+- `Connectors.env_vars()` now returns the union of the env-var names its
+  connectors declare via `requires=` (still no `os.environ` read); it always
+  returned an empty `frozenset` before.
+- `parsimony list` replaces the SECRETS column with REQUIRES — the union of
+  each provider's declared `requires` env vars, sorted ("?" outside `--strict`,
+  "-" when a provider declares none). The `--json` payload key `secrets` is
+  renamed `requires` with the same sourcing.
 - Catalog fetches are now much faster and no longer silent. A bundle is ~100
   small files, so a cold fetch was bound by sequential per-file round-trips
   rather than bandwidth — 45s to move under 1MB. Files are now downloaded

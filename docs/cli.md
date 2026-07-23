@@ -38,11 +38,11 @@ the Python API uses — and reports each **installed** [provider plugin](plugins
 usage: parsimony list [-h] [--json] [--strict | --available]
 
 Inspects the 'parsimony.providers' entry-point group. Shows each plugin's
-name, version, connector count, and conformance status. With --strict,
-imports each plugin to run the conformance suite and to list the credential
-(secret) parameters its connectors declare; exits non-zero on any failure.
-With --available, lists installable parsimony-<name> packages from the
-parsimony-connectors manifest instead of what's installed.
+name, version, connector count, and conformance status. With --strict, imports
+each plugin to run the conformance suite and to list the env vars its
+connectors declare via requires=; exits non-zero on any failure. With
+--available, lists installable parsimony-<name> packages from the parsimony-
+connectors manifest instead of what's installed.
 
 options:
   -h, --help    show this help message and exit
@@ -65,16 +65,19 @@ side-effect-free even when plugins have heavy imports.
 A typical table with one plugin installed looks like this:
 
 ```text
-NAME    VERSION  CONNECTORS  CONFORMANCE
-------  -------  ----------  -----------
-fred    0.1.0    ?           skipped
+NAME    VERSION  CONNECTORS  CONFORMANCE  REQUIRES
+------  -------  ----------  -----------  --------
+fred    0.1.0    ?           skipped      ?
 
 1 plugin(s) discovered.
 ```
 
-The columns are `NAME`, `VERSION`, `CONNECTORS`, and `CONFORMANCE`. A missing version renders
-as `?`, and a zero (or not-yet-counted) connector count renders as `?`. A `N plugin(s)
-discovered.` footer follows the table.
+The columns are `NAME`, `VERSION`, `CONNECTORS`, `CONFORMANCE`, and `REQUIRES`. A missing
+version renders as `?`, and a zero (or not-yet-counted) connector count renders as `?`. The
+`REQUIRES` column lists the env vars the plugin's connectors declare via `requires=` — names
+like `FRED_API_KEY`, never values. It is only inspected under `--strict`: `?` marks "not
+inspected", `-` marks "inspected, declares none". A `N plugin(s) discovered.` footer follows
+the table.
 
 When no plugins are installed — core ships zero connectors — `list` prints a hint instead of
 an empty table:
@@ -87,8 +90,10 @@ Run `parsimony list --available` to see installable packages, e.g. `pip install 
 ### `--json`
 
 `--json` emits a single dict with one `plugins` key instead of the table. Each entry carries
-`name`, `module`, `distribution`, `version`, `connector_count`, `conformance`, and
-`conformance_detail`. With no plugins installed:
+`name`, `module`, `distribution`, `version`, `connector_count`, `conformance`,
+`conformance_detail`, and `requires` (the sorted env-var names the plugin's connectors
+declare via `requires=`; empty unless `--strict` inspected the plugin). With no plugins
+installed:
 
 ```text
 {
@@ -118,7 +123,8 @@ $ parsimony list --json --strict
       "version": "0.1.0",
       "connector_count": 1,
       "conformance": "pass",
-      "conformance_detail": null
+      "conformance_detail": null,
+      "requires": ["FOO_API_KEY"]
     }
   ]
 }

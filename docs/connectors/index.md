@@ -83,6 +83,7 @@ def fetch(series_id: str, api_key: str) -> pd.DataFrame:
 | `tags` | `()` | Free-form labels (`loader`/`enumerator` set them automatically). |
 | `properties` | `{}` | Read-only metadata you can filter the [collection](calling-binding-composing.md) on. |
 | `secrets` | `()` | Parameter names stripped from provenance; validated against the signature. |
+| `requires` | `()` | Env-var names a call needs to succeed; surfaced in the cards, never read by core. |
 
 [`loader` and `enumerator`](loaders-and-enumerators.md) are stricter factories
 built on the same machinery — they add output-schema contracts and a verb tag.

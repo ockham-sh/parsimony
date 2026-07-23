@@ -4,7 +4,8 @@ Two verbs:
 
 * ``parsimony list`` — enumerate installed plugins and their connectors.
   ``--strict`` folds the conformance suite in: exit non-zero on
-  any plugin failure.
+  any plugin failure. ``--available`` lists *installable* packages from
+  the ``parsimony-connectors`` manifest instead of what's installed.
 * ``parsimony cache {path,info,clear}`` — inspect or clear the global
   parsimony cache (HF snapshots, ONNX models, connector scratch).
 
@@ -24,6 +25,7 @@ from typing import Any, TextIO, TypedDict
 
 from parsimony import cache
 from parsimony.discover import iter_providers
+from parsimony.registry import ConnectorRegistry, RegistryError, list_available
 
 __all__ = ["main"]
 
@@ -54,14 +56,25 @@ def _build_parser() -> argparse.ArgumentParser:
             "plugin's name, version, connector count, and conformance status. "
             "With --strict, imports each plugin to run the conformance suite and "
             "to list the credential (secret) parameters its connectors declare; "
-            "exits non-zero on any failure."
+            "exits non-zero on any failure. With --available, lists installable "
+            "parsimony-<name> packages from the parsimony-connectors manifest "
+            "instead of what's installed."
         ),
     )
     ls.add_argument("--json", dest="json_output", action="store_true", help="Emit JSON instead of a table.")
-    ls.add_argument(
+    ls_mode = ls.add_mutually_exclusive_group()
+    ls_mode.add_argument(
         "--strict",
         action="store_true",
         help="Run conformance checks; exit non-zero on any failure.",
+    )
+    ls_mode.add_argument(
+        "--available",
+        action="store_true",
+        help=(
+            "List installable parsimony-<name> packages from the connectors.json manifest "
+            "(fetched over HTTPS; falls back to a bundled offline snapshot on any failure)."
+        ),
     )
 
     cc = subparsers.add_parser(
@@ -136,6 +149,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     _configure_logging(verbose=args.verbose)
     if args.command == "list":
+        if args.available:
+            return _run_list_available(json_output=args.json_output)
         return _run_list(json_output=args.json_output, strict=args.strict)
     if args.command == "cache":
         return _run_cache(args)
@@ -236,7 +251,7 @@ def _render_table(rows: list[_PluginRow], secrets_by_name: dict[str, list[str]],
     if not rows:
         print("No parsimony plugins discovered (0 plugins).", file=stream)
         print(
-            "Install one to get started, e.g. `pip install parsimony-fred`.",
+            "Run `parsimony list --available` to see installable packages, e.g. `pip install parsimony-fred`.",
             file=stream,
         )
         return
@@ -276,6 +291,70 @@ def _render_table(rows: list[_PluginRow], secrets_by_name: dict[str, list[str]],
     for r in rows:
         if r["conformance"] == "fail":
             print(f"  ! {r['name']}: {r['conformance_detail']}", file=stream)
+
+
+# ---------------------------------------------------------------------------
+# list --available
+# ---------------------------------------------------------------------------
+#
+# Thin consumer of parsimony.registry: this verb owns argument handling and
+# rendering only. Fetch, validation, and the bundled-snapshot fallback all
+# live in parsimony.registry.list_available(), which is the reusable, typed
+# entry point for library callers (the agent skill included) too.
+
+
+def _run_list_available(*, json_output: bool) -> int:
+    try:
+        registry = list_available()
+    except RegistryError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if json_output:
+        payload: dict[str, Any] = {
+            "source": registry.source,
+            "generated_at": registry.generated_at,
+            "connectors": [
+                {
+                    "package": c.package,
+                    "provider": c.provider,
+                    "entry_point": c.entry_point,
+                    "connector_count": c.connector_count,
+                    "keyless": c.keyless,
+                }
+                for c in registry.connectors
+            ],
+        }
+        print(json.dumps(payload, indent=2))
+    else:
+        _render_available_table(registry, sys.stdout)
+    return 0
+
+
+def _render_available_table(registry: ConnectorRegistry, stream: TextIO) -> None:
+    if not registry.connectors:
+        print("No installable connectors listed in the registry.", file=stream)
+        return
+
+    header = ["PACKAGE", "PROVIDER", "ENTRY POINT", "CONNECTORS", "KEYLESS"]
+    body: list[list[str]] = [header]
+    for c in registry.connectors:
+        body.append([c.package, c.provider, c.entry_point, str(c.connector_count), "yes" if c.keyless else "no"])
+
+    widths = [max(len(row[i]) for row in body) for i in range(len(header))]
+    for i, row in enumerate(body):
+        line = "  ".join(cell.ljust(widths[j]) for j, cell in enumerate(row))
+        print(line, file=stream)
+        if i == 0:
+            print("  ".join("-" * w for w in widths), file=stream)
+
+    print(file=stream)
+    print(
+        f"{len(registry.connectors)} installable package(s) ({registry.source} registry, "
+        f"generated {registry.generated_at}).",
+        file=stream,
+    )
+    print("Install a match with `pip install <package>`.", file=stream)
 
 
 # ---------------------------------------------------------------------------

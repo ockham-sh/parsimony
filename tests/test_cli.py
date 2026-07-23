@@ -18,6 +18,7 @@ import pytest
 from parsimony import cli
 from parsimony.connector import Connectors, connector
 from parsimony.discover import Provider
+from parsimony.registry import ConnectorRegistry, InstallableConnector, RegistryError
 
 
 def _toy(name: str, **kwargs: Any):
@@ -237,6 +238,116 @@ def test_list_does_not_report_provider_build_protocols(
 
     assert exit_code == 0
     assert "catalogs" not in payload["plugins"][0]
+
+
+# ---------------------------------------------------------------------------
+# list --available
+#
+# The CLI is a thin consumer of parsimony.registry.list_available(); these
+# tests only cover argument handling and rendering/delegation, not the
+# fetch/fallback logic itself (see tests/test_registry.py for that).
+# ---------------------------------------------------------------------------
+
+
+def _fake_registry(*, source: str = "remote") -> ConnectorRegistry:
+    return ConnectorRegistry(
+        generated_at="2026-07-22",
+        connectors=(
+            InstallableConnector(
+                package="parsimony-fred",
+                provider="FRED (Federal Reserve Economic Data)",
+                entry_point="fred",
+                connector_count=2,
+                keyless=False,
+            ),
+        ),
+        source=source,  # type: ignore[arg-type]
+    )
+
+
+def test_list_available_json_delegates_to_registry(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    from parsimony.cli import main
+
+    monkeypatch.setattr(cli, "list_available", lambda: _fake_registry(source="remote"))
+
+    exit_code = main(["list", "--available", "--json"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    payload = json.loads(captured.out)
+    assert payload["source"] == "remote"
+    assert payload["generated_at"] == "2026-07-22"
+    assert payload["connectors"] == [
+        {
+            "package": "parsimony-fred",
+            "provider": "FRED (Federal Reserve Economic Data)",
+            "entry_point": "fred",
+            "connector_count": 2,
+            "keyless": False,
+        }
+    ]
+
+
+def test_list_available_table_shows_source_and_generated_at(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    from parsimony.cli import main
+
+    monkeypatch.setattr(cli, "list_available", lambda: _fake_registry(source="bundled"))
+
+    exit_code = main(["list", "--available"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "parsimony-fred" in captured.out
+    assert "bundled registry" in captured.out
+    assert "2026-07-22" in captured.out
+
+
+def test_list_available_empty_registry_prints_hint(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    from parsimony.cli import main
+
+    empty = ConnectorRegistry(generated_at="2026-07-22", connectors=(), source="remote")
+    monkeypatch.setattr(cli, "list_available", lambda: empty)
+
+    exit_code = main(["list", "--available"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 0
+    assert "No installable connectors" in captured.out
+
+
+def test_list_available_registry_error_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    from parsimony.cli import main
+
+    def raise_registry_error() -> ConnectorRegistry:
+        raise RegistryError(
+            "the connector registry is unavailable",
+            remote_error=RuntimeError("network down"),
+            bundled_error=RuntimeError("bundle missing"),
+        )
+
+    monkeypatch.setattr(cli, "list_available", raise_registry_error)
+
+    exit_code = main(["list", "--available"])
+    captured = capsys.readouterr()
+
+    assert exit_code == 1
+    assert "the connector registry is unavailable" in captured.err
+
+
+def test_list_available_and_strict_are_mutually_exclusive() -> None:
+    from parsimony.cli import main
+
+    with pytest.raises(SystemExit) as excinfo:
+        main(["list", "--available", "--strict"])
+    assert excinfo.value.code == 2
 
 
 def test_verbose_flag_surfaces_parsimony_logs(capsys: pytest.CaptureFixture[str]) -> None:

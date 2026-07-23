@@ -28,22 +28,34 @@ usage to stderr and exit `2` before any command runs.
 
 ## `parsimony list`
 
-`parsimony list` walks the `parsimony.providers` entry-point group — the same discovery
-mechanism the Python API uses (see [discovering installed providers](plugins/discovery.md)) —
-and reports each installed [provider plugin](plugins/index.md).
+`parsimony list` has two modes, matching the two questions `parsimony.discover` and
+`parsimony.registry` each answer (see [installed versus installable](plugins/discovery.md#installed-versus-installable)):
+by default it walks the `parsimony.providers` entry-point group — the same discovery mechanism
+the Python API uses — and reports each **installed** [provider plugin](plugins/index.md).
+`--available` instead reports what you could `pip install`, from the official registry.
 
 ```text
-usage: parsimony list [-h] [--json] [--strict]
+usage: parsimony list [-h] [--json] [--strict | --available]
 
 Inspects the 'parsimony.providers' entry-point group. Shows each plugin's
-connectors and env-var status. With --strict, runs the conformance suite
-against each plugin and exits non-zero on any failure.
+name, version, connector count, and conformance status. With --strict,
+imports each plugin to run the conformance suite and to list the credential
+(secret) parameters its connectors declare; exits non-zero on any failure.
+With --available, lists installable parsimony-<name> packages from the
+parsimony-connectors manifest instead of what's installed.
 
 options:
-  -h, --help  show this help message and exit
-  --json      Emit JSON instead of a table.
-  --strict    Run conformance checks; exit non-zero on any failure.
+  -h, --help    show this help message and exit
+  --json        Emit JSON instead of a table.
+  --strict      Run conformance checks; exit non-zero on any failure.
+  --available   List installable parsimony-<name> packages from the
+                connectors.json manifest (fetched over HTTPS; falls back to
+                a bundled offline snapshot on any failure).
 ```
+
+`--strict` and `--available` are mutually exclusive — they answer different questions (what's
+installed and conformant here, vs. what could be installed) and combining them is a `2`-exit
+argparse error.
 
 Without `--strict`, `list` is **metadata-only**: it reads each provider's entry-point
 metadata and never imports the plugin module. Every row therefore reports its connector count
@@ -69,7 +81,7 @@ an empty table:
 
 ```text
 No parsimony plugins discovered (0 plugins).
-Install one to get started, e.g. `pip install parsimony-fred`.
+Run `parsimony list --available` to see installable packages, e.g. `pip install parsimony-fred`.
 ```
 
 ### `--json`
@@ -121,6 +133,56 @@ plugins at all — it exits `0`.
     every installed provider imports cleanly, exports a non-empty `Connectors`, and passes the
     same five conformance checks plugin authors run locally. Wire it into a release pipeline
     and let the non-zero exit fail the build.
+
+### `--available`
+
+`--available` switches `list` from "what's installed" to "what could I install": it queries the
+official registry of `parsimony-<name>` packages — a thin CLI wrapper over
+[`parsimony.registry.list_available()`](reference/api.md) — instead of the
+`parsimony.providers` entry-point group. Use it when you need a source that isn't installed
+here yet.
+
+```text
+$ parsimony list --available
+PACKAGE           PROVIDER                              ENTRY POINT  CONNECTORS  KEYLESS
+----------------  ------------------------------------  -----------  ----------  -------
+parsimony-fred     FRED (Federal Reserve Economic Data)  fred         3           no
+parsimony-sdmx     SDMX protocol (ECB, Eurostat, ...)     sdmx         4           yes
+
+2 installable package(s) (remote registry, generated 2026-07-22).
+Install a match with `pip install <package>`.
+```
+
+The footer names the load `source`: `remote` when the live
+`https://parsimony.dev/connectors.json` endpoint answered, or `bundled` when it didn't and the
+CLI fell back to the read-only snapshot shipped in this release. A bundled fallback also logs a
+warning to stderr naming the canonical URL, since a bundled snapshot may predate newly published
+connectors — pass `-v`/`--verbose` to see it, or watch stderr directly. `--json` includes the
+same `source` field plus `generated_at` and a `connectors` array (`package`, `provider`,
+`entry_point`, `connector_count`, `keyless`):
+
+```text
+$ parsimony list --available --json
+{
+  "source": "remote",
+  "generated_at": "2026-07-22",
+  "connectors": [
+    {
+      "package": "parsimony-fred",
+      "provider": "FRED (Federal Reserve Economic Data)",
+      "entry_point": "fred",
+      "connector_count": 3,
+      "keyless": false
+    }
+  ]
+}
+```
+
+If neither the live endpoint nor the bundled snapshot can be loaded, `list --available` prints
+`error: ...` to stderr and exits `1` — see
+[Discovering installed providers § installed versus installable](plugins/discovery.md#installed-versus-installable)
+for how a caller (or the [agent skill](https://github.com/ockham-sh/parsimony/tree/main/skills/parsimony))
+is expected to handle that.
 
 ## `parsimony cache`
 
@@ -290,9 +352,9 @@ error: unknown cache subdir 'bogus'; expected one of ['catalogs', 'connectors', 
 
 | Code | When |
 |------|------|
-| `0`  | Any successful command, `--help`, a metadata-only or clean `--strict` list, an aborted or empty `cache clear`. |
-| `1`  | `parsimony list --strict` when at least one plugin's conformance is `fail`. |
-| `2`  | Argparse errors — missing or invalid subcommand, missing cache action — and `cache clear --subdir` with an unknown subdir name. |
+| `0`  | Any successful command, `--help`, a metadata-only or clean `--strict` list, a successful `--available` list (remote or bundled), an aborted or empty `cache clear`. |
+| `1`  | `parsimony list --strict` when at least one plugin's conformance is `fail`; `parsimony list --available` when neither the live registry nor the bundled snapshot could be loaded. |
+| `2`  | Argparse errors — missing or invalid subcommand, missing cache action, `--strict`/`--available` passed together — and `cache clear --subdir` with an unknown subdir name. |
 
 ```text
 $ parsimony
@@ -310,5 +372,6 @@ parsimony: error: argument command: invalid choice: 'bogus' (choose from 'list',
 
 - [Caching](caching.md) — the cache root, the four subdirectories, and `TTLDiskCache` behind the `cache` verb.
 - [Plugins and providers](plugins/index.md) — how `parsimony.providers` entry points and the `CONNECTORS` export work.
-- [Discovering installed providers](plugins/discovery.md) — the `parsimony.discover` API that `parsimony list` is built on.
+- [Discovering installed providers](plugins/discovery.md) — the `parsimony.discover` API that `parsimony list` is built on, and how it differs from `parsimony.registry`.
 - [Conformance testing](plugins/conformance.md) — the checks `parsimony list --strict` runs.
+- [Public API & import map](reference/api.md) — `parsimony.registry.list_available()`, the typed API behind `parsimony list --available`.

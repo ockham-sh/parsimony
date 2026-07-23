@@ -1,7 +1,7 @@
 # Public API & import map
 
 This page is the canonical map of what to import from where. Parsimony exposes a small,
-curated **top-level** surface (`from parsimony import ...`) of 32 names, plus a larger set of
+curated **top-level** surface (`from parsimony import ...`) of 33 names, plus a larger set of
 symbols that live only in submodules. When a name is not in the top-level list below, import it
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
@@ -17,7 +17,7 @@ print(len(parsimony.__all__))  # number of top-level exports
 
 ## Top-level names
 
-These 37 names are re-exported from the package root and make up `parsimony.__all__`. They are
+These 33 names are re-exported from the package root and make up `parsimony.__all__`. They are
 grouped below by concern; the grouping is editorial — at runtime they are a flat namespace.
 
 ### Connectors
@@ -105,12 +105,14 @@ See [Data stores](../catalog/data-store.md).
 | Name | Kind | Import |
 |---|---|---|
 | `cache` | module — on-disk cache helpers and `TTLDiskCache` | `from parsimony import cache` |
-| `discover` | module — plugin/provider discovery | `from parsimony import discover` |
+| `discover` | module — plugin/provider discovery: what's **installed** | `from parsimony import discover` |
+| `registry` | module — official registry of **installable** `parsimony-<name>` packages | `from parsimony import registry` |
 
-See [Caching](../caching.md) and [Discovering installed providers](../plugins/discovery.md).
+See [Caching](../caching.md) and [Discovering installed providers](../plugins/discovery.md) —
+the latter also covers how `discover` (installed) and `registry` (installable) differ and compose.
 
 !!! note "These are the only top-level names"
-    `from parsimony import <name>` works **only** for the 37 names above. Anything else raises
+    `from parsimony import <name>` works **only** for the 33 names above. Anything else raises
     `AttributeError`. Import every other symbol from its submodule, using the paths in the next
     section.
 

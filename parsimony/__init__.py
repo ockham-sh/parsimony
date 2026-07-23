@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 
 from parsimony import cache as cache  # re-export so ``from parsimony import cache`` works
 from parsimony import discover as discover  # re-export so ``from parsimony import discover`` works
+from parsimony import registry as registry  # re-export so ``from parsimony import registry`` works
 
 # Static re-exports for type checkers and linters (CodeQL py/undefined-export,
 # mypy, pyright). At runtime the names below are resolved by ``__getattr__``
@@ -99,6 +100,7 @@ __all__ = [
     "UnauthorizedError",
     "cache",
     "discover",
+    "registry",
     "Catalog",
     "Entity",
     "CatalogMatch",

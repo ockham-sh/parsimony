@@ -46,13 +46,34 @@ result.to_llm()              # a bounded, schema-aware text preview to drop into
   empty bundle. `discover.load("fred")` is strict (raises `LookupError` if not installed);
   `discover.iter_providers()` lists installed packages without importing them.
 
-Each task runs three discovery moves before the fetch: **route** to a connector, **inspect** it,
-**find** the id.
+Each task runs four discovery moves before the fetch: **bootstrap** the framework, **route** to a
+connector, **inspect** it, **find** the id.
 
-## 1. Route — what's installed here
+## 0. Bootstrap — make sure the framework itself is present
+
+Confirm `parsimony-core` is importable in the active environment before anything else:
+
+```python
+import importlib.util
+if importlib.util.find_spec("parsimony") is None:
+    ...  # not installed — install it below before continuing
+```
+
+If it is missing, install it into the **active** environment — the same interpreter or virtualenv
+the task is already running in, not a new one — with whichever of `python -m pip install
+parsimony-core` or `uv pip install parsimony-core` matches how the project manages dependencies.
+Never add `--break-system-packages` to force past a refusal. If the install fails with a PEP 668
+"externally-managed-environment" guard, or with a permissions error, **stop and tell the user**
+that the environment needs a virtualenv (or an explicit override they choose to run themselves)
+rather than forcing the install. Re-import to confirm before moving on.
+
+## 1. Route — installed → registry → author
 
 Which connectors exist depends on what is pip-installed in **this** environment, so read it live
-instead of assuming a list:
+instead of assuming a list. This step has three escalating moves — try each in order and stop at
+the first that covers the source.
+
+### 1a. Installed and project-local
 
 ```python
 connectors = discover.load_all()
@@ -69,15 +90,52 @@ alone does not. Most providers separate **discovery from retrieval**: one connec
 lists what exists, another fetches once you know the id. **Which is which is in the description,
 not the name** — read the description, don't pattern-match the verb. The shape varies (one search
 + one fetch; resolve-an-id-then-fetch; a two-stage search; several kinds of search), so let the
-descriptions tell you. Search-then-fetch is the *workflow* to keep in mind, not a naming rule. If none of the installed
-connectors covers the provider you need — the user may already have several, just not this one —
-the catalog of installable connectors (the exact `parsimony-<name>` package per provider) is
-**parsimony-connectors** (https://github.com/ockham-sh/parsimony-connectors); read its connector
-list, then tell the user which `parsimony-<name>` to `pip install`.
+descriptions tell you. Search-then-fetch is the *workflow* to keep in mind, not a naming rule.
 
-If no published connector covers the source at all, author a project-local connector: read
-[the authoring guide](references/authoring.md) for the contract and the conventions. Author and test the connector first, then run the analysis through it.
-The routing order is: installed → installable → author.
+### 1b. Registry — an existing package not yet installed here
+
+If none of the installed or local connectors covers the provider you need — the environment may
+simply not have it yet — query the official registry of installable `parsimony-<name>` packages
+programmatically instead of guessing a name or reading a repo by hand:
+
+```python
+from parsimony.registry import list_available, RegistryError
+
+try:
+    registry = list_available()
+except RegistryError as exc:
+    ...  # neither the live registry nor the bundled snapshot loaded — see the exception message
+
+for c in registry.connectors:
+    print(c.package, c.provider, c.entry_point, c.connector_count, c.keyless)
+```
+
+(`parsimony list --available` on the command line does the same thing for a quick human check.)
+`list_available()` always tries the canonical `https://parsimony.dev/connectors.json` endpoint
+first and falls back to a read-only snapshot bundled in this release if that fetch fails;
+`registry.source` (`"remote"` or `"bundled"`) says which one you got, and a warning is logged when
+it's the bundled one. Surface that fallback status rather than staying silent about it.
+
+Match on `provider` (and `entry_point`) the same way you'd read a connector's description — by the
+institution or source it names, not just the short code. Once you've picked a match:
+
+1. Install it into the active environment the same safe way as bootstrap above (`python -m pip
+   install <package>` or `uv pip install <package>`; never `--break-system-packages`; stop and ask
+   the user on a PEP 668 or permissions failure).
+2. If the package is not `keyless`, resolving a credential also needs the user — ask for the key
+   named in the connector's `secrets=` (surfaced once you inspect it in step 2) rather than
+   guessing an env var.
+3. Reload and verify: re-run `discover.load_all()` (or `discover.load(entry_point)`) and confirm
+   the new provider now appears before calling any of its connectors.
+
+Otherwise ask the user only when the install or a credential genuinely needs their input — not to
+confirm a choice the registry data already answers.
+
+### 1c. Author — no registry entry covers the source
+
+Only when no installed, local, *or* registry entry covers the source at all, author a
+project-local connector: read [the authoring guide](references/authoring.md) for the contract and
+the conventions. Author and test the connector first, then run the analysis through it.
 
 ## 2. Inspect a connector before you call it
 
@@ -173,7 +231,9 @@ result = fred(series_id="UNRATE")
 
 ---
 
-In short: **route** with `discover.load_all().describe()`, **inspect** the chosen connector with
+In short: **bootstrap** `parsimony-core` if it's missing, **route** with
+`discover.load_all().describe()` — falling back to `parsimony.registry.list_available()` and a
+safe install when nothing installed covers it — **inspect** the chosen connector with
 `connectors["x"].describe()`, **search** the catalog for the opaque id, then **fetch**. And when
-no connector — installed or installable — covers the source, **author** a local one
+no connector — installed, local, or in the registry — covers the source, **author** a local one
 ([authoring guide](references/authoring.md)).

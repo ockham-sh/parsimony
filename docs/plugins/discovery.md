@@ -195,10 +195,44 @@ The [`parsimony list`](../cli.md) command is a thin consumer of this same API: i
 providers for a table view and can validate them against the
 [conformance checks](conformance.md).
 
+## Installed versus installable
+
+`parsimony.discover` and `parsimony.registry` answer two different questions, and neither
+substitutes for the other:
+
+| | `parsimony.discover` | `parsimony.registry` |
+|---|---|---|
+| Question | What's already installed in **this** environment? | What official `parsimony-<name>` package **could** I install to cover a source? |
+| Reads | `parsimony.providers` entry points via `importlib.metadata` | The versioned manifest at `https://parsimony.dev/connectors.json`, falling back to a read-only snapshot bundled in the `parsimony-core` wheel on any failure |
+| Returns | `Provider` records — `iter_providers()`, `load()`, `load_all()` | `ConnectorRegistry` — `list_available()` |
+| CLI | `parsimony list` | `parsimony list --available` |
+
+Check what's installed first; only query the registry — and only then consider installing a
+new package — for a source that discovery doesn't already cover:
+
+```python
+from parsimony import discover, registry
+
+installed = {p.name for p in discover.iter_providers()}
+if "sdmx" not in installed:
+    available = registry.list_available()  # ConnectorRegistry(generated_at, connectors, source)
+    match = next((c for c in available.connectors if c.entry_point == "sdmx"), None)
+    # ... `pip install match.package`, then re-run discover.iter_providers() to confirm
+```
+
+`registry.list_available()` never installs anything itself — it only reports what exists.
+Installing (`pip install <package>` / `uv pip install <package>`) and re-discovering
+(`discover.load()` / `discover.load_all()`) afterward are the caller's responsibility; see the
+[agent skill's routing order](https://github.com/ockham-sh/parsimony/tree/main/skills/parsimony)
+(installed/local → registry → author) for a worked end-to-end example, or
+[the registry API](../reference/api.md) for the full `list_available()` contract, including
+the bundled-fallback behavior and `ConnectorRegistry.source`.
+
 ## See also
 
 - [Plugins and providers](index.md) — the entry-point group, the `CONNECTORS` contract, and the provider model overview.
 - [Authoring a provider plugin](authoring.md) — build and register your own `parsimony-<name>` distribution.
 - [Conformance testing](conformance.md) — validate a provider module against the five plugin checks.
 - [Calling, binding, and composing](../connectors/calling-binding-composing.md) — work with the `Connectors` collections that discovery returns.
-- [Command-line interface](../cli.md) — `parsimony list` lists and validates installed providers.
+- [Command-line interface](../cli.md) — `parsimony list` lists and validates installed providers; `parsimony list --available` queries the registry.
+- [Public API & import map](../reference/api.md) — `parsimony.registry.list_available()`, the typed API behind the registry.

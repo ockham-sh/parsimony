@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_at": "2026-07-23",
   "connectors": [
     {
@@ -7,154 +7,174 @@
       "provider": "Alpha Vantage",
       "entry_point": "alpha_vantage",
       "connector_count": 29,
-      "keyless": false
+      "requires": [
+        "ALPHA_VANTAGE_API_KEY"
+      ]
     },
     {
       "package": "parsimony-bde",
       "provider": "Banco de Espa\u00f1a",
       "entry_point": "bde",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-bdf",
       "provider": "Banque de France",
       "entry_point": "bdf",
       "connector_count": 3,
-      "keyless": false
+      "requires": [
+        "BDF_API_KEY"
+      ]
     },
     {
       "package": "parsimony-bdp",
       "provider": "Banco de Portugal",
       "entry_point": "bdp",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-bls",
       "provider": "U.S. Bureau of Labor Statistics",
       "entry_point": "bls",
       "connector_count": 5,
-      "keyless": false
+      "requires": []
     },
     {
       "package": "parsimony-boc",
       "provider": "Bank of Canada",
       "entry_point": "boc",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-boj",
       "provider": "Bank of Japan",
       "entry_point": "boj",
       "connector_count": 4,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-coingecko",
       "provider": "CoinGecko",
       "entry_point": "coingecko",
       "connector_count": 11,
-      "keyless": false
+      "requires": [
+        "COINGECKO_API_KEY"
+      ]
     },
     {
       "package": "parsimony-destatis",
       "provider": "Destatis (German federal statistics)",
       "entry_point": "destatis",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-eia",
       "provider": "U.S. Energy Information Administration",
       "entry_point": "eia",
       "connector_count": 5,
-      "keyless": false
+      "requires": [
+        "EIA_API_KEY"
+      ]
     },
     {
       "package": "parsimony-eodhd",
       "provider": "EODHD",
       "entry_point": "eodhd",
       "connector_count": 17,
-      "keyless": false
+      "requires": [
+        "EODHD_API_KEY"
+      ]
     },
     {
       "package": "parsimony-finnhub",
       "provider": "Finnhub",
       "entry_point": "finnhub",
       "connector_count": 12,
-      "keyless": false
+      "requires": [
+        "FINNHUB_API_KEY"
+      ]
     },
     {
       "package": "parsimony-fmp",
       "provider": "Financial Modeling Prep",
       "entry_point": "fmp",
       "connector_count": 19,
-      "keyless": false
+      "requires": [
+        "FMP_API_KEY"
+      ]
     },
     {
       "package": "parsimony-fred",
       "provider": "FRED (Federal Reserve Economic Data)",
       "entry_point": "fred",
       "connector_count": 2,
-      "keyless": false
+      "requires": [
+        "FRED_API_KEY"
+      ]
     },
     {
       "package": "parsimony-polymarket",
       "provider": "Polymarket",
       "entry_point": "polymarket",
       "connector_count": 4,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-rba",
       "provider": "Reserve Bank of Australia",
       "entry_point": "rba",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-riksbank",
       "provider": "Sveriges Riksbank (SWEA, SWESTR, Monetary Policy, Turnover, Holdings)",
       "entry_point": "riksbank",
       "connector_count": 7,
-      "keyless": false
+      "requires": []
     },
     {
       "package": "parsimony-sdmx",
       "provider": "SDMX protocol (ECB, Eurostat, IMF, World Bank)",
       "entry_point": "sdmx",
       "connector_count": 4,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-sec-edgar",
       "provider": "SEC EDGAR",
       "entry_point": "sec_edgar",
       "connector_count": 12,
-      "keyless": true
+      "requires": [
+        "SEC_EDGAR_USER_AGENT"
+      ]
     },
     {
       "package": "parsimony-snb",
       "provider": "Swiss National Bank (SNB)",
       "entry_point": "snb",
       "connector_count": 3,
-      "keyless": true
+      "requires": []
     },
     {
       "package": "parsimony-tiingo",
       "provider": "Tiingo",
       "entry_point": "tiingo",
       "connector_count": 13,
-      "keyless": false
+      "requires": [
+        "TIINGO_API_KEY"
+      ]
     },
     {
       "package": "parsimony-treasury",
       "provider": "U.S. Treasury (Fiscal Data + Office of Debt Management rate feeds)",
       "entry_point": "treasury",
       "connector_count": 4,
-      "keyless": true
+      "requires": []
     }
   ]
 }

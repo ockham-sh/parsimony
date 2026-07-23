@@ -35,23 +35,6 @@ _VALID_ROWS = [
         "provider": "SDMX protocol (ECB, Eurostat, IMF, World Bank)",
         "entry_point": "sdmx",
         "connector_count": 4,
-        "keyless": True,
-    },
-    {
-        "package": "parsimony-fred",
-        "provider": "FRED (Federal Reserve Economic Data)",
-        "entry_point": "fred",
-        "connector_count": 2,
-        "keyless": False,
-    },
-]
-
-_VALID_ROWS_V2 = [
-    {
-        "package": "parsimony-sdmx",
-        "provider": "SDMX protocol (ECB, Eurostat, IMF, World Bank)",
-        "entry_point": "sdmx",
-        "connector_count": 4,
         "requires": [],
     },
     {
@@ -85,19 +68,6 @@ def test_list_available_remote_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert fred.provider == "FRED (Federal Reserve Economic Data)"
     assert fred.entry_point == "fred"
     assert fred.connector_count == 2
-    assert fred.keyless is False
-    assert fred.requires == ()  # v1 rows never carry requires
-
-
-def test_list_available_remote_success_schema_v2(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        httpx, "get", lambda url, timeout: _ok_response(_manifest_json(_VALID_ROWS_V2, schema_version=2))
-    )
-
-    result = registry.list_available()
-
-    assert result.source == "remote"
-    fred = next(c for c in result.connectors if c.package == "parsimony-fred")
     assert fred.requires == ("FRED_API_KEY",)
     assert fred.keyless is False  # derived: not requires
     sdmx = next(c for c in result.connectors if c.package == "parsimony-sdmx")
@@ -205,7 +175,7 @@ def test_list_available_falls_back_on_schema_mismatch(monkeypatch: pytest.Monkey
 
 
 def test_list_available_falls_back_on_unsupported_schema_version(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(_VALID_ROWS, schema_version=3)))
+    monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(_VALID_ROWS, schema_version=2)))
     monkeypatch.setattr(
         registry,
         "_load_bundled_manifest",
@@ -279,7 +249,7 @@ def test_list_available_raises_registry_error_when_bundled_snapshot_is_corrupt(
 
 
 def test_list_available_rejects_row_missing_required_field(monkeypatch: pytest.MonkeyPatch) -> None:
-    bad_rows = [{"package": "parsimony-x", "provider": "X", "entry_point": "x"}]  # missing connector_count/keyless
+    bad_rows = [{"package": "parsimony-x", "provider": "X", "entry_point": "x"}]  # missing connector_count/requires
     monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(bad_rows)))
     monkeypatch.setattr(
         registry,
@@ -293,37 +263,9 @@ def test_list_available_rejects_row_missing_required_field(monkeypatch: pytest.M
     assert result.source == "bundled"
 
 
-def test_list_available_rejects_v1_row_missing_keyless(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_list_available_rejects_row_missing_requires(monkeypatch: pytest.MonkeyPatch) -> None:
     bad_rows = [{"package": "parsimony-x", "provider": "X", "entry_point": "x", "connector_count": 1}]
     monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(bad_rows)))
-    monkeypatch.setattr(
-        registry,
-        "_load_bundled_manifest",
-        lambda: registry._Manifest.model_validate_json(_manifest_json(_VALID_ROWS)),
-    )
-
-    result = registry.list_available()
-
-    assert result.source == "bundled"
-
-
-def test_list_available_rejects_v2_row_missing_requires(monkeypatch: pytest.MonkeyPatch) -> None:
-    bad_rows = [{"package": "parsimony-x", "provider": "X", "entry_point": "x", "connector_count": 1}]
-    monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(bad_rows, schema_version=2)))
-    monkeypatch.setattr(
-        registry,
-        "_load_bundled_manifest",
-        lambda: registry._Manifest.model_validate_json(_manifest_json(_VALID_ROWS)),
-    )
-
-    result = registry.list_available()
-
-    assert result.source == "bundled"
-
-
-def test_list_available_rejects_v2_row_carrying_keyless(monkeypatch: pytest.MonkeyPatch) -> None:
-    bad_rows = [dict(_VALID_ROWS_V2[1], keyless=False)]  # keyless is off the wire in v2
-    monkeypatch.setattr(httpx, "get", lambda url, timeout: _ok_response(_manifest_json(bad_rows, schema_version=2)))
     monkeypatch.setattr(
         registry,
         "_load_bundled_manifest",
@@ -349,7 +291,7 @@ def test_bundled_manifest_is_valid() -> None:
     """
     manifest = registry._load_bundled_manifest()
 
-    assert manifest.schema_version in registry._MANIFEST_SCHEMA_VERSIONS
+    assert manifest.schema_version == registry._MANIFEST_SCHEMA_VERSION
     assert manifest.connectors
     packages = [c.package for c in manifest.connectors]
     assert len(packages) == len(set(packages)), "duplicate package in bundled manifest"

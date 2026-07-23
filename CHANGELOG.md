@@ -15,11 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `os.environ`. Orthogonal to `secrets=` (redaction). When non-empty,
   `describe()` renders a `Requires: FRED_API_KEY` line after Parameters and the
   `to_llm()` header carries a `(needs FRED_API_KEY)` token.
-- The registry accepts manifest `schema_version` 1 **and** 2. v2 rows carry
-  `requires: list[str]` and drop `keyless` from the wire;
-  `InstallableConnector` gains `requires: tuple[str, ...]` and keeps `keyless`
-  as a stored field (v1: trusted from the wire, `requires=()`; v2: derived as
-  `not requires`). Anything else still fails loudly, now naming `[1, 2]`.
+- The registry manifest (`schema_version: 1`) rows carry `requires: list[str]`
+  (the env vars a package's connectors need); `keyless` is not on the wire —
+  `InstallableConnector` derives it as `not requires`. Any other
+  `schema_version` still fails loudly.
 - `CatalogMatch.matched` — `"lexical" | "semantic" | "both"`: which component
   surfaced the row's evidence (`None` on filter-only matches). The trap
   signal: an all-`"semantic"` result page means nothing lexically real

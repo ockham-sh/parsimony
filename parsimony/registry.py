@@ -57,14 +57,16 @@ __all__ = [
 _logger = logging.getLogger("parsimony.registry")
 
 CANONICAL_MANIFEST_URL = "https://parsimony.dev/connectors.json"
-_MANIFEST_SCHEMA_VERSIONS = (1, 2)
+_MANIFEST_SCHEMA_VERSION = 1
 _DEFAULT_FETCH_TIMEOUT_SECONDS = 5.0
 
 
 # ---------------------------------------------------------------------------
 # Wire contract (private) — the shared shape coordinated with
 # ockham-sh/parsimony-connectors#83 and ockham-sh/landing-page#12. Do not
-# rename these fields without updating both.
+# rename these fields without updating both. ``requires`` is the env-var
+# names a connector needs; ``keyless`` is not on the wire at all —
+# :class:`InstallableConnector` derives it as ``not requires``.
 # ---------------------------------------------------------------------------
 
 
@@ -73,8 +75,7 @@ class _ManifestConnector(BaseModel):
     provider: str
     entry_point: str
     connector_count: int
-    keyless: bool | None = None  # v1 only
-    requires: list[str] | None = None  # v2 only
+    requires: list[str]
 
 
 class _Manifest(BaseModel):
@@ -129,15 +130,14 @@ class RegistryError(Exception):
 
 
 def _rows_from_manifest(manifest: _Manifest) -> tuple[InstallableConnector, ...]:
-    v2 = manifest.schema_version == 2
     return tuple(
         InstallableConnector(
             package=c.package,
             provider=c.provider,
             entry_point=c.entry_point,
             connector_count=c.connector_count,
-            requires=tuple(c.requires) if v2 and c.requires else (),
-            keyless=not c.requires if v2 else bool(c.keyless),
+            requires=tuple(c.requires),
+            keyless=not c.requires,
         )
         for c in sorted(manifest.connectors, key=lambda c: c.package)
     )
@@ -146,22 +146,17 @@ def _rows_from_manifest(manifest: _Manifest) -> tuple[InstallableConnector, ...]
 def _validate_manifest(raw: bytes) -> _Manifest:
     """Parse and schema-check *raw* manifest bytes.
 
-    Rejects a ``schema_version`` this release does not understand — a v3
-    manifest with a renamed/removed field should fail loudly here rather
-    than silently produce nonsense rows. v1 rows carry ``keyless``; v2 rows
-    carry ``requires`` and drop ``keyless`` from the wire.
+    Rejects a ``schema_version`` this release does not understand, and any
+    row missing a well-typed ``requires`` (via the pydantic model above) —
+    a manifest with a renamed/removed field should fail loudly here rather
+    than silently produce nonsense rows.
     """
     manifest = _Manifest.model_validate_json(raw)
-    if manifest.schema_version not in _MANIFEST_SCHEMA_VERSIONS:
+    if manifest.schema_version != _MANIFEST_SCHEMA_VERSION:
         raise ValueError(
             f"unsupported manifest schema_version {manifest.schema_version!r}; this parsimony-core "
-            f"release understands schema_version {list(_MANIFEST_SCHEMA_VERSIONS)}. Upgrade parsimony-core."
+            f"release understands schema_version {_MANIFEST_SCHEMA_VERSION}. Upgrade parsimony-core."
         )
-    for c in manifest.connectors:
-        if manifest.schema_version == 1 and c.keyless is None:
-            raise ValueError(f"manifest row {c.package!r}: schema_version 1 requires 'keyless'")
-        if manifest.schema_version == 2 and (c.requires is None or c.keyless is not None):
-            raise ValueError(f"manifest row {c.package!r}: schema_version 2 requires 'requires' and drops 'keyless'")
     return manifest
 
 

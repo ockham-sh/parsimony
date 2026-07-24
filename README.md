@@ -147,6 +147,14 @@ print(hits.raw)
 
 Some plugins use published catalogs from [Hugging Face](https://huggingface.co/parsimony-dev) to make sources such as Eurostat, ECB, and IMF searchable. See [Catalog](docs/catalog/index.md) for indexes and saved catalogs.
 
+Published catalogs are cached locally after the first download. If one looks stale or corrupt, inspect what's cached and clear just that provider's repo rather than the whole cache:
+
+```bash
+parsimony cache info --repos                       # cached catalogs, by Hugging Face repo + size
+parsimony cache clear --repo parsimony-dev/sdmx --yes   # drop just that provider's catalogs
+```
+
+`--yes` skips the confirmation prompt — pass it in scripts or agent loops; omit it for an attached terminal, where `clear` asks to confirm before deleting. See [Caching](docs/caching.md) and the [CLI reference](docs/cli.md) for the full `cache` command surface.
 
 ## Documentation
 

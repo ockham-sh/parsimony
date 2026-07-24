@@ -190,9 +190,13 @@ catalog has been republished (or a cached copy is corrupt), bust it from the she
 the next search re-downloads it. Clearing is targeted: list what's cached, then drop one repo:
 
 ```bash
-parsimony cache info --repos                       # cached catalogs, by Hugging Face repo + size
-parsimony cache clear --repo parsimony-dev/sdmx    # drop just that provider's catalogs
+parsimony cache info --repos                             # cached catalogs, by Hugging Face repo + size
+parsimony cache clear --repo parsimony-dev/sdmx --yes    # drop just that provider's catalogs
 ```
+
+`--yes` is required here: without it `clear` prompts for confirmation, and an agent's
+non-interactive shell has no terminal to answer it — `clear` detects that and fails fast with an
+error instead of blocking forever on an unanswerable prompt.
 
 To tell a slow step apart from a genuine stall rather than wait it out, turn on logging before the
 call. Each catalog fetch, model download, and model load logs a line when it starts and one when

@@ -162,7 +162,6 @@ print(f"safe_dump params: {safe['params']}")
 # The hint is recorded on the Connector and surfaces in:
 #   describe()   — human-readable output
 #   to_llm()     — LLM card shows [ns:ns_name]
-#   param_schema — JSON Schema used by MCP tool adapters
 #
 # Agents use this hint to know: "run the search connector for namespace
 # 'acme' first, then pass the resulting code as series_id here."
@@ -199,10 +198,6 @@ print(desc)
 card = acme_fetch_v2.to_llm()
 assert "[ns:acme]" in card
 print(f"\nLLM card:\n{card}")
-
-schema = dict(acme_fetch_v2.param_schema)
-assert schema["properties"]["series_id"]["type"] == "string"
-print(f"\nparam_schema: {schema}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 5 — Connectors collection
@@ -287,11 +282,12 @@ print(f"\nto_llm() excerpt (first 300 chars):\n{llm_text[:300]}…")
 #
 # indexes=None  → framework auto-creates BM25 indexes for code, title, and
 #                 every metadata key observed in the entries at build time.
-# default_field — which index to use for plain-text (broad) queries.
-#                 Without it, only structured "field: value" queries work.
+# Plain-text (broad) queries target the "title" index by convention — no
+# constructor argument needed. Any catalog with a "title" index supports
+# broad search automatically; other fields are reached with fields=[...].
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
-print("Stage 6 — Building a Catalog (BM25, default_field, structured queries)")
+print("Stage 6 — Building a Catalog (BM25, broad search, structured queries)")
 print("=" * 70)
 
 entries = [
@@ -309,7 +305,7 @@ entries = [
     Entity(namespace="acme", code="FOREX", title="USD/EUR Exchange Rate", metadata={"freq": "daily", "source": "mkt"}),
 ]
 
-# Explicit indexes gives full control; default_field enables plain-text search.
+# Explicit indexes gives full control; a "title" index enables plain-text search.
 cat = Catalog(
     "acme",
     indexes={
@@ -317,12 +313,11 @@ cat = Catalog(
         "code": BM25Index(),
         "freq": BM25Index(),
     },
-    default_field="title",
 )
 cat.set_entities(entries)
 cat.build()
 
-# Broad search — uses default_field="title"
+# Broad search — targets the "title" index by convention
 hits = cat.search("inflation rate", limit=5)
 assert hits and hits[0].code == "INFL"
 
@@ -345,7 +340,7 @@ print(f"get('acme', 'GDP'):       {e}")
 # save() writes an atomic snapshot to a directory:
 #   entries.parquet       — all Entity rows as Parquet
 #   indexes/<field>/      — serialised index (BM25 postings or FAISS vectors)
-#   meta.json             — schema, default_field, builder metadata
+#   meta.json             — schema, index fields, builder metadata
 # Catalog.load() reads it back; no rebuild needed.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
@@ -437,7 +432,7 @@ print("entities from enumerator:\n  " + "\n  ".join(f"{e.code}: {e.metadata}" fo
 
 # Build a catalog from the enumerator output.
 # indexes=None → auto-create BM25 indexes for code, title, and all metadata keys.
-cat2 = Catalog("acme2", default_field="title")
+cat2 = Catalog("acme2")
 cat2.set_entities(entities)
 cat2.build()
 
@@ -509,11 +504,12 @@ with tempfile.TemporaryDirectory() as tmp2:
         tags=["acme2", "tool"],
         description="Search the Acme2 catalog for economic series.",
         metadata_columns=["category", "update_freq"],
+        # coverage/score/matched are appended automatically — declare only the
+        # provider-specific columns here.
         output_columns=[
             Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
             Column(name="title", role=ColumnRole.TITLE),
             Column(name="category", role=ColumnRole.DATA),
-            Column(name="score", role=ColumnRole.DATA),
         ],
     )
     print(f"search connector: {acme_search_v2!r}")

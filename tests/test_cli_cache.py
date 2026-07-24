@@ -120,6 +120,7 @@ def test_cache_clear_prompt_aborts_on_no(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _seed(_pin_parsimony_cache_dir / "models" / "foo" / "x.bin")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt: "n")
 
     rc = main(["cache", "clear"])
@@ -135,6 +136,7 @@ def test_cache_clear_prompt_confirms_on_yes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     _seed(_pin_parsimony_cache_dir / "models" / "foo" / "x.bin")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt: "y")
 
     rc = main(["cache", "clear"])
@@ -149,12 +151,13 @@ def test_cache_clear_prompt_treats_eof_as_no(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Closed stdin (e.g. CI without a tty) must not destroy the cache."""
+    """Closed stdin on an otherwise-interactive terminal must not destroy the cache."""
 
     def _eof(_prompt: str) -> str:
         raise EOFError
 
     _seed(_pin_parsimony_cache_dir / "models" / "foo" / "x.bin")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: True)
     monkeypatch.setattr("builtins.input", _eof)
 
     rc = main(["cache", "clear"])
@@ -162,6 +165,74 @@ def test_cache_clear_prompt_treats_eof_as_no(
     assert rc == 0
     assert "Aborted." in out
     assert (_pin_parsimony_cache_dir / "models" / "foo" / "x.bin").exists()
+
+
+# ---------------------------------------------------------------------------
+# parsimony cache clear — non-interactive stdin without --yes fails fast
+# ---------------------------------------------------------------------------
+
+
+def test_cache_clear_non_interactive_without_yes_errors_and_preserves_cache(
+    _pin_parsimony_cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No tty and no --yes must fail fast with exit 2, never block on input().
+
+    Regression test for parsimony#95: previously this called ``input()``
+    unconditionally, which hangs forever (with zero output) on a closed or
+    non-terminal stdin instead of erroring.
+    """
+    _seed(_pin_parsimony_cache_dir / "models" / "foo" / "x.bin")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: False)
+
+    def _unreachable(_prompt: str) -> str:
+        raise AssertionError("input() must not be called when stdin is non-interactive")
+
+    monkeypatch.setattr("builtins.input", _unreachable)
+
+    rc = main(["cache", "clear"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--yes" in err
+    assert (_pin_parsimony_cache_dir / "models" / "foo" / "x.bin").exists()
+
+
+def test_cache_clear_non_interactive_with_yes_succeeds(
+    _pin_parsimony_cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--yes still works unattended even though stdin is non-interactive."""
+    _seed(_pin_parsimony_cache_dir / "models" / "foo" / "x.bin")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: False)
+
+    rc = main(["cache", "clear", "--yes"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Cleared" in out
+    assert not (_pin_parsimony_cache_dir / "models").exists()
+
+
+def test_cache_clear_repo_non_interactive_without_yes_errors(
+    _pin_parsimony_cache_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The --repo path shares the same non-interactive fail-fast guard."""
+    _seed(_pin_parsimony_cache_dir / "catalogs" / "datasets--parsimony-dev--sdmx" / "a.parquet")
+    monkeypatch.setattr("parsimony.cli._stdin_is_interactive", lambda: False)
+
+    def _unreachable(_prompt: str) -> str:
+        raise AssertionError("input() must not be called when stdin is non-interactive")
+
+    monkeypatch.setattr("builtins.input", _unreachable)
+
+    rc = main(["cache", "clear", "--repo", "parsimony-dev/sdmx"])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "--yes" in err
+    assert (_pin_parsimony_cache_dir / "catalogs" / "datasets--parsimony-dev--sdmx" / "a.parquet").exists()
 
 
 # ---------------------------------------------------------------------------

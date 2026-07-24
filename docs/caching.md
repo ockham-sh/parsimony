@@ -139,6 +139,24 @@ The shape is:
     and some CLI help text describe only catalogs, models, and connectors, but `staging` is a
     real, clearable subdir.
 
+### Per-repo catalog breakdown
+
+`catalog_repos()` breaks `$ROOT/catalogs` down by Hugging Face repo instead of reporting one
+aggregate size — read-only, largest first, and it never creates the `catalogs` dir:
+
+```python
+from parsimony import cache
+
+for entry in cache.catalog_repos():
+    print(entry["repo_id"], entry["files"], entry["size_bytes"])
+# parsimony-dev/sdmx 97 4404020
+# acme/fred          12 389120
+```
+
+Use this before clearing anything to see *which* provider's cached catalog snapshots dominate
+disk, then evict just that one with `clear_catalog_repo()` (below) instead of the whole
+`catalogs` subdir.
+
 ## Clearing the cache
 
 `clear(subdir=None)` removes a single named subdirectory, or all of them when called with no
@@ -153,10 +171,24 @@ cache.clear()           # wipe catalogs, models, connectors, and staging
 cache.clear("bogus")    # ValueError: unknown cache subdir 'bogus'; expected one of (...)
 ```
 
-!!! tip "Use the CLI for interactive clears"
-    `parsimony cache clear` prompts before deleting and shows how many files and bytes will go.
-    Pass `--yes` to skip the prompt in scripts, and `--subdir NAME` to target one subdir. See
-    the [CLI page](cli.md) for the exact flags and output.
+`clear_catalog_repo(repo_id)` is the targeted counterpart: it removes only the cached snapshots
+for one Hugging Face repo under `catalogs`, leaving every other provider's cache warm. Returns
+`True` when something was cached and removed, `False` when there was nothing to clear:
+
+```python
+from parsimony import cache
+
+cache.clear_catalog_repo("parsimony-dev/sdmx")   # wipe just that provider's catalogs
+```
+
+!!! tip "Prefer a targeted clear, and use the CLI for interactive/scripted clears"
+    Reach for `clear_catalog_repo()` / `parsimony cache clear --repo ORG/NAME` before the
+    broader `clear("catalogs")` / `--subdir catalogs` — it drops exactly the provider you meant
+    to refresh instead of every provider's cached catalogs. `parsimony cache clear` prompts
+    before deleting and shows how many files and bytes will go; pass `--yes` to skip the prompt
+    for scripted or agentic use — it is **required** whenever stdin is not a terminal, since a
+    prompt there can never be answered (`clear` fails fast with exit `2` rather than blocking
+    on it). See the [CLI page](cli.md#parsimony-cache-clear) for the exact flags and output.
 
 ## Security hardening
 

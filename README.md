@@ -34,9 +34,9 @@ Or, without Node, run the same CLI via uv:
 uvx npx-skills add ockham-sh/parsimony
 ```
 
-Then ask your agent for the data you need:
+Then ask your agent:
 
-> Find Eurostat's harmonised index of consumer prices for the euro area, fetch the annual rate from 2020 onward, and show the source and parameters used.
+> Build a notebook comparing unemployment and inflation in the US and the euro area since 2015.
 
 Behind the scenes, the agent uses the Parsimony framework in your own Python environment to navigate and fetch data, or build custom connectors.
 

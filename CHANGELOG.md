@@ -36,6 +36,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   evidence kind per value (it was already computed for fusion), so value-level
   consumers can emit the same trio.
 
+### Fixed
+
+- **`parsimony cache clear` no longer hangs on non-interactive stdin.** Without
+  `--yes`, it used to call `input()` unconditionally; on a closed or
+  non-terminal stdin (a script, a CI step, an agent's backgrounded shell) that
+  prompt could never be answered, so the process blocked forever with no
+  visible output. `clear` (both the `--subdir` and the new `--repo` path) now
+  checks whether stdin is a terminal before prompting: if it isn't, it prints
+  an actionable error to stderr and exits `2` instead of waiting. `--yes`
+  still bypasses the prompt entirely, exactly as before. Fixes #95.
+- `examples/catalog_walkthrough.py` runs again on current `parsimony-core`.
+  It called the removed `Catalog(default_field=...)` kwarg (dropped below),
+  the removed `Connector.param_schema` property (dropped in #90 with MCP), and
+  passed a `score` output column that now collides with the ranking trio
+  `make_local_search_connector` appends automatically — all three now fixed,
+  and the walkthrough has a regression test (`tests/test_examples.py`) that
+  runs it to completion so a future breaking change fails CI instead of
+  shipping silently broken. Fixes #93.
+- Documented the `--repo ORG/NAME` targeted-clear flag and the `cache info
+  --repos` breakdown in `README.md` and `docs/cli.md` — previously only
+  `--subdir`/`--yes` were documented outside `--help`, so a reader following
+  the docs alone had no way to know a per-repo clear existed and would reach
+  for `--subdir catalogs`, wiping every provider's cached catalogs instead of
+  just the one they meant to refresh. Fixes #66.
+
 ### Changed
 
 - **BREAKING — `Connectors.bind_env()` and `Connectors.unbound` are removed.**

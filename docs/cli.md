@@ -260,6 +260,23 @@ staging     -      -       /home/user/.cache/parsimony/staging
 root: /home/user/.cache/parsimony
 ```
 
+Pass `--repos` to break the `catalogs` subdir down by Hugging Face repo (largest first) —
+useful for finding which provider's cached catalog snapshots dominate disk before clearing one:
+
+```text
+$ parsimony cache info --repos
+...
+CATALOG REPO         FILES  SIZE
+--------------------  -----  ------
+parsimony-dev/sdmx    97     4.2 MB
+acme/fred             12     380 KB
+
+2 repo(s) cached.
+```
+
+`--repos` adds a `catalog_repos` key to the `--json` payload (a list of `{repo_id, dirname,
+path, size_bytes, files}`, largest first); it does not change what `cache info` alone reports.
+
 Pass `--json` for the raw dict — useful for scripting. Each subdir entry carries `path`,
 `size_bytes` (raw bytes), `files`, and `exists`:
 
@@ -303,17 +320,24 @@ $ parsimony cache info --json
 
 ### `parsimony cache clear`
 
-Remove a single subdirectory with `--subdir NAME`, or every subdirectory when `--subdir` is
-omitted.
+Remove a single subdirectory with `--subdir NAME`, every subdirectory when `--subdir` is
+omitted, or just one Hugging Face catalog repo with `--repo ORG/NAME`.
 
 ```text
-usage: parsimony cache clear [-h] [--subdir NAME] [--yes]
+usage: parsimony cache clear [-h] [--subdir NAME | --repo ORG/NAME] [--yes]
 
 options:
-  -h, --help     show this help message and exit
-  --subdir NAME  Clear only this subdir (catalogs, models, connectors).
-  --yes          Skip the confirmation prompt.
+  -h, --help       show this help message and exit
+  --subdir NAME    Clear only this subdir (catalogs, models, connectors, staging).
+  --repo ORG/NAME  Clear only the cached catalogs for this Hugging Face repo
+                    (e.g. parsimony-dev/sdmx).
+  --yes            Skip the confirmation prompt.
 ```
+
+`--subdir` and `--repo` are mutually exclusive — combining them is a `2`-exit argparse error.
+Prefer `--repo` when you only need to evict one provider's catalog snapshots: it targets exactly
+the cached repo (found with `cache info --repos`) and leaves every other provider's cache warm,
+where `--subdir catalogs` wipes all of them.
 
 By default `clear` is interactive — it computes the file count and total size of the targets,
 then prompts before deleting. Only `y` or `yes` (case-insensitive, surrounding whitespace
@@ -325,18 +349,26 @@ Remove all subdirs (1 file(s), 2.0 KB)? [y/N] n
 Aborted.
 ```
 
-If the targets are already empty, `clear` short-circuits without prompting:
+If the targets are already empty (or, for `--repo`, nothing is cached for that repo), `clear`
+short-circuits without prompting:
 
 ```text
 $ parsimony cache clear --subdir catalogs --yes
 Nothing to clear (subdir 'catalogs' are empty).
+
+$ parsimony cache clear --repo never/cached --yes
+Nothing to clear (no cached catalogs for repo 'never/cached').
 ```
 
-Pass `--yes` to skip the prompt for unattended use:
+Pass `--yes` to skip the prompt for unattended use — **required** whenever `clear` runs
+somewhere with no attached terminal (a script, a CI step, an agent loop):
 
 ```text
 $ parsimony cache clear --subdir models --yes
 Cleared subdir 'models' (1 file(s), 2.0 KB).
+
+$ parsimony cache clear --repo parsimony-dev/sdmx --yes
+Cleared catalogs for repo 'parsimony-dev/sdmx' (97 file(s), 4.2 MB).
 ```
 
 An unknown subdir name is rejected: the command prints an error to stderr (with the valid
@@ -347,12 +379,15 @@ $ parsimony cache clear --subdir bogus
 error: unknown cache subdir 'bogus'; expected one of ['catalogs', 'connectors', 'models', 'staging']
 ```
 
-!!! tip "Closed stdin is treated as a decline"
-    When stdin is not a terminal — a non-interactive shell, a CI step, a redirected
-    `/dev/null` — the confirmation prompt receives an `EOFError`, which `clear` treats as
-    "no". The cache is preserved and the command exits `0`. This means `parsimony cache clear`
-    without `--yes` can never destroy your cache by accident in an automated context; pass
-    `--yes` deliberately when you do want an unattended wipe.
+!!! warning "Non-interactive stdin without `--yes` fails fast, it does not prompt"
+    `clear` checks whether stdin is a terminal *before* it would call `input()`. When it is not
+    — a non-interactive shell, a CI step, a redirected `/dev/null`, an agent's backgrounded
+    invocation — and `--yes` was not passed, `clear` never prompts: it prints
+    `error: refusing to prompt for confirmation on non-interactive stdin; pass --yes to clear
+    <label> unattended.` to stderr and exits `2`, leaving the cache untouched. This is
+    deliberately loud rather than silent: a prompt with no attached terminal cannot ever be
+    answered, so blocking on `input()` there is indistinguishable from a hang. Pass `--yes`
+    whenever you intend an unattended clear.
 
 ## Exit codes
 
@@ -360,7 +395,7 @@ error: unknown cache subdir 'bogus'; expected one of ['catalogs', 'connectors', 
 |------|------|
 | `0`  | Any successful command, `--help`, a metadata-only or clean `--strict` list, a successful `--available` list (remote or bundled), an aborted or empty `cache clear`. |
 | `1`  | `parsimony list --strict` when at least one plugin's conformance is `fail`; `parsimony list --available` when neither the live registry nor the bundled snapshot could be loaded. |
-| `2`  | Argparse errors — missing or invalid subcommand, missing cache action, `--strict`/`--available` passed together — and `cache clear --subdir` with an unknown subdir name. |
+| `2`  | Argparse errors — missing or invalid subcommand, missing cache action, `--strict`/`--available` passed together, `--subdir`/`--repo` passed together — `cache clear --subdir` with an unknown subdir name — and `cache clear` on non-interactive stdin without `--yes`. |
 
 ```text
 $ parsimony

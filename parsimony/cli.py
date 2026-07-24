@@ -433,6 +433,48 @@ def _render_cache_info(report: dict[str, Any], stream: TextIO) -> None:
                 print("  ".join("-" * w for w in rwidths), file=stream)
 
 
+def _stdin_is_interactive() -> bool:
+    """Whether a confirmation prompt has any chance of being answered.
+
+    A separate, monkeypatchable seam (rather than inlining ``sys.stdin.isatty()``
+    at each call site) so tests can force both branches without a real tty.
+    """
+    return sys.stdin.isatty()
+
+
+def _confirm_destructive(label: str, *, files: int, size_bytes: int, assume_yes: bool) -> int | None:
+    """Gate a destructive cache-clear action behind confirmation.
+
+    Returns ``None`` when the caller should proceed with the clear. Returns an
+    exit code when the caller should stop instead:
+
+    * ``0`` — the user was prompted and declined (or closed stdin, treated the
+      same as declining).
+    * ``2`` — stdin is not a terminal and ``--yes`` was not passed, so no
+      prompt could ever be answered. Failing loud here — rather than calling
+      ``input()`` and blocking forever with no visible output — is what keeps
+      a non-interactive or agentic invocation from hanging silently.
+    """
+    if assume_yes:
+        return None
+    if not _stdin_is_interactive():
+        print(
+            f"error: refusing to prompt for confirmation on non-interactive stdin; "
+            f"pass --yes to clear {label} unattended.",
+            file=sys.stderr,
+        )
+        return 2
+    prompt = f"Remove {label} ({files} file(s), {_human_size(size_bytes)})? [y/N] "
+    try:
+        answer = input(prompt).strip().lower()
+    except EOFError:
+        answer = ""
+    if answer not in ("y", "yes"):
+        print("Aborted.")
+        return 0
+    return None
+
+
 def _run_cache_clear(*, subdir: str | None, repo: str | None, assume_yes: bool) -> int:
     if repo is not None:
         return _run_cache_clear_repo(repo=repo, assume_yes=assume_yes)
@@ -454,15 +496,9 @@ def _run_cache_clear(*, subdir: str | None, repo: str | None, assume_yes: bool) 
         print(f"Nothing to clear ({label} are empty).")
         return 0
 
-    if not assume_yes:
-        prompt = f"Remove {label} ({total_files} file(s), {_human_size(total_bytes)})? [y/N] "
-        try:
-            answer = input(prompt).strip().lower()
-        except EOFError:
-            answer = ""
-        if answer not in ("y", "yes"):
-            print("Aborted.")
-            return 0
+    early_exit = _confirm_destructive(label, files=total_files, size_bytes=total_bytes, assume_yes=assume_yes)
+    if early_exit is not None:
+        return early_exit
 
     cache.clear(subdir=subdir)
     print(f"Cleared {label} ({total_files} file(s), {_human_size(total_bytes)}).")
@@ -482,15 +518,11 @@ def _run_cache_clear_repo(*, repo: str, assume_yes: bool) -> int:
         return 0
 
     label = f"catalogs for repo {entry['repo_id']!r}"
-    if not assume_yes:
-        prompt = f"Remove {label} ({entry['files']} file(s), {_human_size(entry['size_bytes'])})? [y/N] "
-        try:
-            answer = input(prompt).strip().lower()
-        except EOFError:
-            answer = ""
-        if answer not in ("y", "yes"):
-            print("Aborted.")
-            return 0
+    early_exit = _confirm_destructive(
+        label, files=entry["files"], size_bytes=entry["size_bytes"], assume_yes=assume_yes
+    )
+    if early_exit is not None:
+        return early_exit
 
     cache.clear_catalog_repo(repo)
     print(f"Cleared {label} ({entry['files']} file(s), {_human_size(entry['size_bytes'])}).")

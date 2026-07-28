@@ -75,25 +75,25 @@ build an `Entity` directly or normalize a value by hand.
 
 `CatalogMatch` is the resolved search result returned by `Catalog.search`. It mirrors
 the three string fields of `Entity` — with the same three validators — keeps the open
-`metadata` dict, and adds the ranking evidence: a required `score`, plus `coverage`
-and `matched`.
+`metadata` dict, and adds the ranking evidence: `score` plus optional `search_detail`. There
+is no third, more authoritative channel.
 
 | Field | Type | Notes |
 |---|---|---|
 | `namespace` | `str` | Re-normalized via `normalize_namespace`. |
 | `code` | `str` | Re-normalized via `normalize_entity_code`. |
 | `title` | `str` | Trimmed, non-empty. |
-| `score` | `float` | Final relevance score. Required. Relative to this query's best hit — never absolute, never comparable across queries or catalogs. |
-| `coverage` | `float` | Defaults to `0.0`. Fraction of the query's tokens consumed by the union of the row's fully-consumed field values (`1.0` = the query is literally this row's values). |
-| `matched` | `"lexical" \| "semantic" \| "both" \| None` | Defaults to `None`. Which component surfaced the row's evidence; `None` for a filter-only match. |
+| `score` | `float \| None` | Ranked relevance in `(0, 1]` relative to this query's best hit; `None` when the read was filter-only (nothing ranked). Never comparable across queries or catalogs. |
+| `search_detail` | `SearchDetail \| None` | Defaults to `None`. Typed ranking evidence; `None` for a filter-only match. |
 | `metadata` | `dict[str, Any]` | Defaults to `{}`. Like `Entity`, `extra="forbid"`. |
 
-See [Ranking and fusion](ranking-and-fusion.md) for what `coverage`, `score`, and
-`matched` mean in practice and how they're computed.
+Ranked rows order by `(score desc, namespace, code)`. See
+[Ranking and fusion](ranking-and-fusion.md) for what `score` and `search_detail` mean in
+practice, how they're computed, and where ranking that isn't relevance belongs.
 
 You rarely build a `CatalogMatch` yourself — the catalog does it during ranking — but
 the adapter is public. `catalog_match_from_entity` lives in `parsimony.catalog.models`
-(not re-exported at the catalog top level), and `score`/`coverage`/`matched` are all
+(not re-exported at the catalog top level), and `score`/`search_detail` are both
 keyword-only.
 
 ```python
@@ -101,10 +101,10 @@ from parsimony.catalog import Entity, CatalogMatch
 from parsimony.catalog.models import catalog_match_from_entity
 
 e = Entity(namespace="fred", code="UNRATE", title="Unemployment", metadata={"freq": "M"})
-m = catalog_match_from_entity(e, score=0.87, coverage=1.0, matched="lexical")
+m = catalog_match_from_entity(e, score=0.87)
 assert isinstance(m, CatalogMatch)
 assert (m.namespace, m.code, m.title, m.score) == ("fred", "UNRATE", "Unemployment", 0.87)
-assert (m.coverage, m.matched) == (1.0, "lexical")
+assert m.search_detail is None  # helper does not invent evidence
 assert m.metadata is not e.metadata  # shallow copy via dict(entity.metadata)
 ```
 
@@ -181,30 +181,44 @@ assert entity_key("fred", "  UNRATE ") == ("fred", "UNRATE")
 
 ## What an index reads: field extraction
 
-Indexes do not read raw Python objects off an entity — they read normalized lists of
-strings. Three helpers in `parsimony.entity` define that contract. `field_values` and
-`field_text` are also re-exported from `parsimony.catalog`; `field_value` is only on
-`parsimony.entity`.
+Indexes do not read raw Python objects off an entity — they read **scalar** text.
+Three helpers in `parsimony.entity` define that contract. `field_values` and
+`field_text` are also re-exported from `parsimony.catalog`; `field_value` and
+`require_scalar_text` are on `parsimony.entity`.
 
 | Helper | Returns | Use |
 |---|---|---|
 | `field_value(entity, field)` | the raw value (`Any`) or `None` | low-level single-field accessor |
-| `field_values(entity, field)` | `list[str]` of trimmed, non-empty values | the multi-value text an index builds on |
-| `field_text(entity, field)` | the `field_values` list joined by single spaces | a single searchable string |
+| `require_scalar_text(value, *, field=...)` | trimmed text or `None`; rejects nested types | the searchable/filterable boundary |
+| `field_values(entity, field)` | `[]` or a one-element `[text]` list | what an index builds on |
+| `field_text(entity, field)` | the same text (or `""`) | a single searchable string |
 
 All three resolve `field` the same way: `namespace`, `code`, and `title` are
 first-class; any other name is a `metadata.get(field)` lookup (so a missing key
 yields `None`).
 
-`field_values` then coerces by type:
+**Searchable and filterable columns are scalar.** Nested metadata (`list` / `dict` /
+`set`) remains legal on `Entity.metadata` for display and storage, but indexing or
+filtering such a field raises `ValueError` / `InvalidParameterError` with the field
+name and observed type. Operators that need search over nested data must expose an
+intentional derived scalar (for example `tags_text="energy prices"`) or normalize the
+relation into another catalog.
+
+`require_scalar_text` accepts:
 
 | Value type | Result |
 |---|---|
-| `None` (missing key) | `[]` |
-| `str` | `[trimmed]`, or `[]` if blank after trimming |
-| `list` / `tuple` / `set` | stringified, trimmed items; `None`/blank dropped |
-| `dict` | `["key: value", ...]` (literal `": "` separator); items with `None`/blank values dropped |
-| any other scalar | `[str(value).strip()]`, or `[]` if blank |
+| `None` (missing key) | `None` → `field_values` returns `[]` |
+| `str` | trimmed text, or `None` if blank |
+| `bool` | `"true"` / `"false"` |
+| `int` / finite `float` | `str(value)` |
+| `list` / `tuple` / `set` / `dict` | rejected |
+| non-finite float | rejected |
+
+Bools are scalar so they remain **filterable** (`filter={"active": True}`) and can be
+named in an explicit `indexes=` map. The [default index policy](search.md#the-default-index-policy)
+does **not** auto-create a BM25 index for bool metadata — a flag is a facet, not a
+ranking surface.
 
 ```python
 from parsimony.catalog import Entity, field_values, field_text
@@ -213,20 +227,14 @@ e = Entity(
     namespace="fred",
     code="UNRATE",
     title="Unemployment Rate",
-    metadata={"frequency": "M", "tags": ["labor", "rates"], "attrs": {"unit": "pct", "scale": 1}},
+    metadata={"frequency": "M", "tags": ["labor", "rates"]},  # tags: display-only
 )
 
 assert field_values(e, "title") == ["Unemployment Rate"]
 assert field_values(e, "frequency") == ["M"]
-assert field_values(e, "tags") == ["labor", "rates"]
-assert field_values(e, "missing") == []          # absent metadata key
-assert field_values(e, "attrs") == ["unit: pct", "scale: 1"]
-assert field_text(e, "tags") == "labor rates"
+assert field_values(e, "missing") == []
+# field_values(e, "tags")  # raises ValueError: must be scalar
 ```
-
-!!! note "Set order is non-deterministic"
-    A `set` metadata value is iterated in arbitrary order, so the strings come back
-    unsorted. If you need a stable order, store a `list`.
 
 ## Turning a DataFrame into entities
 
@@ -319,6 +327,6 @@ then build and search. See [building and searching](search.md).
 ## See also
 
 - [The Catalog](index.md) — the lifecycle that consumes entities and returns matches.
-- [Building and searching](search.md) — `set_entities`, `build`, and the query DSL that returns `CatalogMatch` results.
+- [Building and searching](search.md) — `set_entities`, `build`, and the query methods that return `CatalogMatch` results.
 - [Results and output schemas](../connectors/results.md) — `OutputSpec`, `Column`, `ColumnRole`, and `Result.entities`/`Result.data`, the projection that produces entities and observations from a tabular `Result`.
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — enumerators emit the DataFrames that become catalog entities.

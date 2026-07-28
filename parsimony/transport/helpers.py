@@ -34,8 +34,9 @@ def require_key(arg: str, *, env_var: str, provider: str) -> str:
 
     Connector packages use this for the common ``api_key or os.environ[...]``
     pattern without duplicating the fail-fast logic in every provider.
+    Blank and whitespace-only values count as missing.
     """
-    key = arg or os.environ.get(env_var, "")
+    key = (arg or os.environ.get(env_var, "")).strip()
     if not key:
         raise UnauthorizedError(provider, env_var=env_var)
     return key

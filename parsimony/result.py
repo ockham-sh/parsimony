@@ -76,7 +76,11 @@ class Column(BaseModel):
     """
 
     name: str
-    role: ColumnRole = ColumnRole.DATA
+    #: Domain role for entity/data projection. ``None`` marks an uncategorized
+    #: framework column (present in the frame and :class:`OutputSpec`, excluded
+    #: from :attr:`Result.entities` / :attr:`Result.data`). Ordinary connector
+    #: columns default to :attr:`ColumnRole.DATA`.
+    role: ColumnRole | None = ColumnRole.DATA
     description: str | None = None
     #: Catalog namespace for a KEY column's entity codes. Not meaningful on
     #: any other role — Parsimony enforces no metadata-namespace behavior.
@@ -105,12 +109,18 @@ class Column(BaseModel):
         ``with_description=False`` and stay terse; the pre-call connector card
         passes ``with_description=True`` so an agent learns what a column means
         before it calls the connector, not after.
+
+        Uncategorized columns (``role=None``) emit no role token.
         """
-        role = self.role.value.upper()
-        ns = f" ns:{self.namespace}" if self.namespace else ""
-        annotation = f"({role}{ns})"
+        if self.role is None:
+            annotation = ""
+        else:
+            role = self.role.value.upper()
+            ns = f" ns:{self.namespace}" if self.namespace else ""
+            annotation = f"({role}{ns})"
         if with_description and self.description and self.render_description_in_card:
-            annotation += f"  —  {self.description}"
+            suffix = f"  —  {self.description}"
+            annotation = f"{annotation}{suffix}" if annotation else suffix.lstrip()
         return annotation
 
 
@@ -237,6 +247,24 @@ def _frame_csv(frame: pd.DataFrame) -> str:
     return csv_text.strip()
 
 
+def _preview_row_sample(frame: pd.DataFrame, *, max_rows: int) -> tuple[pd.DataFrame, str]:
+    """Choose a bounded row sample and a label for the ``to_llm`` row block.
+
+    When the frame fits in *max_rows*, return it whole. Otherwise return a
+    head+tail sample (``max_rows < 2`` falls back to head only) and an honest
+    label. The caller inserts an ellipsis between head and tail CSV blocks.
+    """
+    n_rows = len(frame)
+    if n_rows <= max_rows:
+        return frame, f"Rows ({n_rows}):"
+    if max_rows < 2:
+        return frame.head(max_rows), f"Rows (showing {max_rows} of {n_rows}):"
+    head_n = max_rows // 2
+    tail_n = max_rows - head_n
+    sample = pd.concat([frame.head(head_n), frame.tail(tail_n)], ignore_index=True)
+    return sample, f"Rows (showing first {head_n} and last {tail_n} of {n_rows}):"
+
+
 def governed_view(frame: pd.DataFrame, columns: Sequence[Column]) -> tuple[pd.DataFrame, int, list[str]]:
     """Single source of truth for tabular column governance + schema annotation.
 
@@ -266,7 +294,11 @@ def governed_view(frame: pd.DataFrame, columns: Sequence[Column]) -> tuple[pd.Da
             hidden_count += 1
             continue
         keep_positions.append(pos)
-        annot = f" {col.llm_annotation()}" if col is not None else ""
+        if col is not None:
+            token = col.llm_annotation()
+            annot = f" {token}" if token else ""
+        else:
+            annot = ""
         lines.append(f"- {name}: {dtype}{annot}")
     return frame.iloc[:, keep_positions], hidden_count, lines
 
@@ -603,11 +635,13 @@ class Result(BaseModel):
 
         Tabular payloads render an honest header (the *real* row/column
         counts), a governed per-column schema (``exclude_from_llm_view``
-        columns dropped), and the first ``max_rows`` rows — never a head/tail
-        sample masquerading as the whole. Opaque payloads render a structural
-        preview (type + shape), size O(structure + ``max_chars``). ``max_rows``
-        is unused for opaque payloads and ``max_chars`` for tabular ones; both
-        are accepted for a single uniform signature.
+        columns dropped), and up to ``max_rows`` sample rows — the full frame
+        when it fits, otherwise the first and last rows with an explicit gap so
+        recent observations are visible without dumping the middle. Opaque
+        payloads render a structural preview (type + shape), size O(structure
+        + ``max_chars``). ``max_rows`` is unused for opaque payloads and
+        ``max_chars`` for tabular ones; both are accepted for a single uniform
+        signature.
         """
         if not self.is_tabular:
             return _preview_value(self.raw, max_chars=max_chars)
@@ -620,10 +654,19 @@ class Result(BaseModel):
         lines.append("Columns:")
         lines.extend(schema_lines)
         n_rows = len(frame)
-        shown = min(max_rows, n_rows)
-        label = f"Rows (showing {shown} of {n_rows}):" if shown < n_rows else f"Rows ({n_rows}):"
+        sample, label = _preview_row_sample(visible_frame, max_rows=max_rows)
         lines.append(label)
-        lines.append(_frame_csv(visible_frame.head(shown)))
+        if n_rows > max_rows and max_rows >= 2:
+            head_n = max_rows // 2
+            head_csv = _frame_csv(sample.iloc[:head_n])
+            tail_csv = _frame_csv(sample.iloc[head_n:])
+            # Drop the header line from the tail block so the CSV stays one table.
+            tail_body = "\n".join(tail_csv.splitlines()[1:])
+            lines.append(head_csv)
+            lines.append("…")
+            lines.append(tail_body)
+        else:
+            lines.append(_frame_csv(sample))
         return "\n".join(lines)
 
     # -- serialization (tabular only) ------------------------------------
@@ -658,7 +701,12 @@ class Result(BaseModel):
         if cols_raw:
             columns = []
             for c in cols_raw:
-                role = c.get("role") or c.get("kind") or ColumnRole.DATA
+                if "role" in c:
+                    role = c["role"]
+                elif "kind" in c:
+                    role = c["kind"]
+                else:
+                    role = ColumnRole.DATA
                 columns.append(
                     Column.model_validate(
                         {

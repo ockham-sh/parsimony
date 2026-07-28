@@ -33,8 +33,22 @@ def test_default_policy_is_bm25_only() -> None:
     cat = auto_catalog(_frame())
     assert cat.indexes  # not empty
     assert all(isinstance(idx, BM25Index) for idx in cat.indexes.values())
-    # Default policy covers code, title, and every column.
+    # Default policy covers code, title, and every non-bool column.
     assert {"code", "title", "country", "metric", "value"} <= set(cat.indexes)
+
+
+def test_bool_columns_are_filterable_not_indexed() -> None:
+    df = pd.DataFrame(
+        [
+            {"country": "Spain", "active": True},
+            {"country": "France", "active": False},
+        ]
+    )
+    cat = auto_catalog(df)
+    assert "country" in cat.indexes
+    assert "active" not in cat.indexes
+    assert {m.code for m in cat.search(filter={"active": True})} == {"0"}
+    assert {m.code for m in cat.search(filter={"active": False})} == {"1"}
 
 
 def test_broad_search_scores_row_text() -> None:
@@ -44,7 +58,12 @@ def test_broad_search_scores_row_text() -> None:
     assert codes == {"0", "1"}  # the two unemployment rows
 
 
-def test_structured_column_value_search() -> None:
+def test_literal_colon_in_query_is_punctuation_not_a_grammar() -> None:
+    """A colon inside ``query`` is BM25 text, not a ``column: value`` scope.
+
+    Both Spain rows carry the token ``Spain`` (and the column name ``country`` is
+    indexed too); the old DSL would have treated this as a structured clause.
+    """
     cat = auto_catalog(_frame())
     matches = cat.search("country: spain", limit=10)
     assert {m.code for m in matches} == {"0", "2"}  # both Spain rows

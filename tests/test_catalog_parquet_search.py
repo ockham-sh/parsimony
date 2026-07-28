@@ -10,7 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from parsimony.catalog import BM25Index, Catalog, Entity
+from parsimony.catalog import BM25Index, Catalog, Entity, F
 from parsimony.catalog.backends import ParquetRowBackend
 from parsimony.catalog.contracts import CatalogBackendConfig
 from parsimony.catalog.models import UnknownIndexedFieldError
@@ -100,6 +100,7 @@ def test_parquet_filter_only() -> None:
         catalog = _build_parquet_catalog(Path(tmp))
         matches = catalog.search(filter={"FREQ_code": ["M"]}, limit=10)
         assert {match.code for match in matches} == {"A"}
+        assert all(match.score is None and match.search_detail is None for match in matches)
 
 
 def test_parquet_filter_accepts_logical_code_alias() -> None:
@@ -112,7 +113,7 @@ def test_parquet_filter_accepts_logical_code_alias() -> None:
 def test_parquet_filter_rejects_unknown_column() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         catalog = _build_parquet_catalog(Path(tmp))
-        with pytest.raises(InvalidParameterError, match="Unknown parquet filter column"):
+        with pytest.raises(InvalidParameterError, match="Unknown filter column"):
             catalog.search(filter={"missing": ["A"]}, limit=10)
 
 
@@ -128,7 +129,7 @@ def test_parquet_iter_rows_streams_scanner_batches() -> None:
         spy = _DatasetSpy(backend._dataset)  # noqa: SLF001
         backend._dataset = spy  # type: ignore[assignment]  # noqa: SLF001
 
-        streamed = list(backend.iter_rows(filter_spec={"FREQ_code": ["M"]}, columns=["key", "FREQ_code"]))
+        streamed = list(backend.iter_rows(expression=F("FREQ_code").eq("M"), columns=["key", "FREQ_code"]))
 
         assert spy.scanner_calls == 1
         assert streamed == [{"key": "A", "FREQ_code": "M"}]
@@ -139,7 +140,7 @@ def test_parquet_field_search_with_filter() -> None:
         catalog = _build_parquet_catalog(Path(tmp))
         matches = catalog.search(
             query="Germany",
-            fields="REF_AREA_label",
+            field="REF_AREA_label",
             filter={"FREQ_code": ["M"]},
             limit=10,
         )

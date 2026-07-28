@@ -184,7 +184,7 @@ def test_file_roundtrip_preserves_indexed_search(tmp_path: Path) -> None:
     catalog.save(f"file://{tmp_path}/snapshot")
 
     loaded = Catalog.load(f"file://{tmp_path}/snapshot")
-    hits = loaded.search("alpha", fields=["description"], limit=1)
+    hits = loaded.search("alpha", field="description", limit=1)
 
     assert hits[0].code == "B"
 

@@ -623,15 +623,16 @@ def test_preview_small_frame_shows_all_rows() -> None:
     assert "Rows (2):" in out
 
 
-def test_preview_large_frame_first_page_no_tail() -> None:
+def test_preview_large_frame_head_and_tail() -> None:
     df = pd.DataFrame({"i": list(range(100))})
     out = Result(raw=df).to_llm(max_rows=4)
-    assert "Rows (showing 4 of 100):" in out
-    # Honest first page: the first rows are shown, the tail is NOT smuggled
-    # in as a head/tail sample masquerading as the whole.
-    assert out.rstrip().endswith("3")
-    assert "99" not in out
-    assert "50" not in out
+    assert "Rows (showing first 2 and last 2 of 100):" in out
+    assert "\n0\n1\n" in out or out.splitlines()[-5:]  # head values present
+    assert "0" in out and "1" in out
+    assert "98" in out and "99" in out
+    assert "…" in out
+    # Middle of the series is not dumped.
+    assert "\n50\n" not in out
 
 
 def test_preview_truncates_wide_cells() -> None:
@@ -644,7 +645,9 @@ def test_preview_truncates_wide_cells() -> None:
 def test_preview_max_rows_param() -> None:
     df = pd.DataFrame({"i": list(range(100))})
     out = Result(raw=df).to_llm(max_rows=2)
-    assert "Rows (showing 2 of 100):" in out
+    assert "Rows (showing first 1 and last 1 of 100):" in out
+    assert "0" in out and "99" in out
+    assert "…" in out
 
 
 def test_preview_empty_frame() -> None:

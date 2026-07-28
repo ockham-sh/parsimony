@@ -145,7 +145,8 @@ def test_field_values_scalar_and_missing() -> None:
     assert field_values(entry, "missing") == []
 
 
-def test_field_values_list_set_and_dict() -> None:
+def test_field_values_list_set_and_dict_are_rejected() -> None:
+    """Nested metadata is legal on Entity but not as a searchable field."""
     entry = Entity(
         namespace="fred",
         code="X",
@@ -156,6 +157,21 @@ def test_field_values_list_set_and_dict() -> None:
             "attrs": {"unit": "pct", "scale": 1},
         },
     )
-    assert field_values(entry, "tags") == ["a", "b"]
-    assert sorted(field_values(entry, "regions")) == ["EU", "US"]
-    assert field_values(entry, "attrs") == ["unit: pct", "scale: 1"]
+    with pytest.raises(ValueError, match="must be scalar"):
+        field_values(entry, "tags")
+    with pytest.raises(ValueError, match="must be scalar"):
+        field_values(entry, "regions")
+    with pytest.raises(ValueError, match="must be scalar"):
+        field_values(entry, "attrs")
+
+
+def test_field_values_accepts_numeric_and_bool_scalars() -> None:
+    entry = Entity(
+        namespace="fred",
+        code="X",
+        title="Title",
+        metadata={"n": 7, "flag": True, "rate": 1.5},
+    )
+    assert field_values(entry, "n") == ["7"]
+    assert field_values(entry, "flag") == ["true"]
+    assert field_values(entry, "rate") == ["1.5"]

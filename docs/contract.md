@@ -97,12 +97,17 @@ Not all `_search` connectors work the same way:
 
 - **Provider-native search** (e.g. `fred_search`) calls the upstream API directly; no
   catalog is required.
-- **Catalog-backed search** (e.g. `riksbank_search`, `sdmx_search`) loads a published
+- **Catalog-backed search** (e.g. `riksbank_search`, `sdmx_series_search`) loads a published
   hybrid-search `Catalog` snapshot (typically from Hugging Face). These require
   `parsimony-core[catalog]` at runtime and fail clearly when the snapshot is missing or
   has an unsupported `schema_version`.
 
-Document which pattern your connector uses in its README.
+On both paths, `query=` is **literal text** — there is no `FIELD: value` / `&&` grammar.
+Anything that must be enforced exactly goes in `filter=` (exact AND on result columns;
+a list of values is OR within one field). Catalog-backed connectors expose `filter=`
+via the shared factory; native search may only take `query=` (FRED) or provider-specific
+narrowing params. Document which pattern your connector uses in its README, and name the
+search KEY column the agent must paste into the fetch parameter.
 
 ## Catalogs (maintainer workflow)
 

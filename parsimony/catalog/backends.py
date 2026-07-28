@@ -29,9 +29,9 @@ from typing import Any
 
 import pyarrow.dataset as ds
 
-from parsimony.catalog.contracts import CatalogBackendConfig, FilterSpec
-from parsimony.entity import Entity, field_value
-from parsimony.errors import InvalidParameterError
+from parsimony.catalog.contracts import CatalogBackendConfig
+from parsimony.catalog.filters import Filter
+from parsimony.entity import Entity
 
 DEFAULT_BATCH_SIZE = 10_000
 
@@ -40,8 +40,8 @@ class ParquetRowBackend:
     """Row store over a flat parquet file that is never itself indexed.
 
     Answers the second step of a value-indexed search: given the member values
-    matched in the indexes, ``iter_rows(any_of=...)`` streams the rows composed
-    with any of them, pushing the disjunction down into the parquet scan.
+    matched in the indexes, ``iter_rows(expression=...)`` streams the rows
+    composed with any of them, pushing the predicate down into the parquet scan.
     """
 
     def __init__(self, parquet_path: Path) -> None:
@@ -60,19 +60,17 @@ class ParquetRowBackend:
     def iter_rows(
         self,
         *,
-        filter_spec: FilterSpec | None = None,
+        expression: Filter | None = None,
         columns: Sequence[str] | None = None,
-        any_of: Mapping[str, Sequence[str]] | None = None,
     ) -> Iterator[dict[str, Any]]:
-        expr = _build_parquet_filter(filter_spec, schema_names=self._schema_names)
-        or_expr = _build_any_of_filter(any_of, schema_names=self._schema_names)
-        if any_of and or_expr is None:
-            # Every candidate column is absent from this parquet: no row can match.
-            return
-        if or_expr is not None:
-            expr = or_expr if expr is None else expr & or_expr
+        """Stream rows matching the pushed-down predicate, in one scan.
+
+        *expression* is the whole filter contract — one tree, compiled once to
+        Arrow, so however many equality, membership, AND and OR terms the caller
+        composed, the rows are read exactly once.
+        """
         scanner = self._dataset.scanner(
-            filter=expr,
+            filter=None if expression is None else expression.to_arrow(self._schema_names),
             columns=list(columns) if columns else None,
             batch_size=DEFAULT_BATCH_SIZE,
         )
@@ -80,53 +78,21 @@ class ParquetRowBackend:
             yield from batch.to_pylist()
 
 
-def _build_any_of_filter(
-    any_of: Mapping[str, Sequence[str]] | None,
-    *,
-    schema_names: set[str],
-) -> ds.Expression | None:
-    """OR filter: a row qualifies when ANY listed column holds one of its values."""
-    if not any_of:
-        return None
-    exprs: list[ds.Expression] = []
-    for col, values in any_of.items():
-        if col not in schema_names or not values:
-            continue
-        exprs.append(ds.field(col).isin([str(v) for v in values]))
-    if not exprs:
-        return None
-    combined = exprs[0]
-    for expr in exprs[1:]:
-        combined = combined | expr
-    return combined
+def row_identity(row: Mapping[str, Any], *, config: CatalogBackendConfig) -> tuple[str, str]:
+    """The ``(namespace, code)`` identity of a backend row, without materializing it.
 
-
-def _build_parquet_filter(
-    filter_spec: FilterSpec | None,
-    *,
-    schema_names: set[str],
-) -> ds.Expression | None:
-    if not filter_spec:
-        return None
-    exprs: list[ds.Expression] = []
-    for col, values in filter_spec.items():
-        if col not in schema_names:
-            raise InvalidParameterError("catalog", f"Unknown parquet filter column {col!r}")
-        if not values:
-            continue
-        exprs.append(ds.field(col).isin([str(v) for v in values]))
-    if not exprs:
-        return None
-    combined = exprs[0]
-    for expr in exprs[1:]:
-        combined = combined & expr
-    return combined
+    Ranking needs identity for every candidate row but a validated
+    :class:`~parsimony.entity.Entity` only for the winners, so this is the one
+    implementation both paths share.
+    """
+    namespace = str(row.get("namespace", config.namespace or "default"))
+    code = str(row.get(config.code_column, row.get("code", ""))).strip()
+    return namespace, code
 
 
 def entity_from_row(row: dict[str, Any], *, config: CatalogBackendConfig) -> Entity:
     """Materialize one :class:`~parsimony.entity.Entity` from a backend row."""
-    namespace = str(row.get("namespace", config.namespace or "default"))
-    code = str(row.get(config.code_column, row.get("code", ""))).strip()
+    namespace, code = row_identity(row, config=config)
     title = str(row.get(config.title_column, row.get("title", code))).strip() or code
     reserved = {
         "namespace",
@@ -144,18 +110,32 @@ def entity_from_row(row: dict[str, Any], *, config: CatalogBackendConfig) -> Ent
     return Entity(namespace=namespace, code=code, title=title, metadata=metadata)
 
 
-def entity_matches_filter(entity: Entity, filter_spec: FilterSpec) -> bool:
-    for col, allowed in filter_spec.items():
-        if not allowed:
-            continue
-        val = field_value(entity, col)
-        if val is None or str(val) not in {str(v) for v in allowed}:
-            return False
-    return True
+def entity_row(entity: Entity) -> dict[str, Any]:
+    """Flatten one entity into a row mapping a :class:`Filter` can evaluate.
+
+    Entity fields win over same-named metadata keys, matching
+    :func:`parsimony.entity.field_value`. Nested metadata values remain nested
+    for display; structured filters require scalar cells.
+    """
+    row: dict[str, Any] = dict(entity.metadata)
+    row["namespace"] = entity.namespace
+    row["code"] = entity.code
+    row["title"] = entity.title
+    return row
+
+
+def entity_field_names(entities: Sequence[Entity]) -> frozenset[str]:
+    """Every field name addressable on *entities* (identity fields + metadata keys)."""
+    names = {"namespace", "code", "title"}
+    for entity in entities:
+        names.update(entity.metadata.keys())
+    return frozenset(names)
 
 
 __all__ = [
     "ParquetRowBackend",
+    "entity_field_names",
     "entity_from_row",
-    "entity_matches_filter",
+    "entity_row",
+    "row_identity",
 ]

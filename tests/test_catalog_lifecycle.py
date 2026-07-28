@@ -154,7 +154,7 @@ def test_sparse_metadata_indexes_ignore_missing_or_empty_values() -> None:
     )
 
     catalog.build()
-    hits = catalog.search("alpha", fields=["description"], limit=5)
+    hits = catalog.search("alpha", field="description", limit=5)
 
     assert [hit.code for hit in hits] == ["A"]
 
@@ -164,6 +164,6 @@ def test_empty_sparse_index_builds_and_returns_no_ranking() -> None:
     catalog.set_entities([Entity(namespace="series", code="A", title="alpha")])
 
     catalog.build()
-    hits = catalog.search("alpha", fields=["description"], limit=5)
+    hits = catalog.search("alpha", field="description", limit=5)
 
     assert list(hits) == []

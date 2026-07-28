@@ -211,7 +211,8 @@ you compose loaded bundles with `+` exactly like any other collection.
 
 Where connectors *fetch*, the [`Catalog`](../catalog/index.md) helps you *discover*. A catalog
 is a portable, in-memory index over normalized [`Entity`](../catalog/entities.md) records,
-with pluggable per-field [indexes](../catalog/indexes.md) and structured plus broad search.
+with pluggable per-field [indexes](../catalog/indexes.md): a literal-text query ranks rows,
+and a filter constrains them exactly.
 (See [Why entities](../index.md#why-entities) for the reasoning behind that shape.) Its
 lifecycle is a fixed sequence:
 

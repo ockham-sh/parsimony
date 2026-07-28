@@ -182,4 +182,6 @@ def test_bm25_index_accepts_values_that_tokenize_empty(tmp_path: Path) -> None:
     catalog.save(f"file://{tmp_path / 'bundle'}")
     loaded = Catalog.load(f"file://{tmp_path / 'bundle'}")
 
-    assert loaded.search("label: -", limit=5)[0].code == "A"
+    # A value with no tokens produces no fuzzy score, so exactness is the only way
+    # to reach it: it must survive the round trip and stay findable by its own text.
+    assert loaded.search("-", field="label", limit=5)[0].code == "A"

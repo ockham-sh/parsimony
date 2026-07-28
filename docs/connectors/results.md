@@ -204,10 +204,10 @@ catalog.set_entities(result.entities.values())
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `name` | `str` | required | matched against DataFrame columns by exact label; `"*"` is the wildcard |
-| `role` | `ColumnRole` | `DATA` | |
+| `role` | `ColumnRole \| None` | `DATA` | `None` = uncategorized framework column (in the frame / OutputSpec, not in `entities`/`data`) |
 | `description` | `str \| None` | `None` | free annotation |
 | `namespace` | `str \| None` | `None` | allowed **only** on `KEY` columns; required for entity projection, not for declaration |
-| `exclude_from_llm_view` | `bool` | `False` | forbidden on `DATA` and `TITLE` columns |
+| `exclude_from_llm_view` | `bool` | `False` | forbidden on `DATA` and `TITLE`; allowed when `role is None` |
 
 An after-validator applies (raises `ValueError`, surfaced as `ValidationError`):
 
@@ -219,9 +219,11 @@ from parsimony.result import Column, ColumnRole
 
 col = Column(name="freq", role=ColumnRole.METADATA)
 print(col.role)  # ColumnRole.METADATA
+# Ranking columns use role=None (uncategorized), not a domain role:
+score = Column(name="score", role=None)
 ```
 
-`llm_annotation()` renders the governed `(ROLE)` / `(ROLE ns:<namespace>)` token used by every LLM-facing schema view (connector cards, `to_llm()`, downstream fetch logs) — the single source of truth for that formatting.
+`llm_annotation()` renders the governed `(ROLE)` / `(ROLE ns:<namespace>)` token used by every LLM-facing schema view (connector cards, `to_llm()`, downstream fetch logs) — the single source of truth for that formatting. Uncategorized columns (`role=None`) emit no role token.
 
 ## ColumnRole
 
@@ -234,7 +236,7 @@ print(col.role)  # ColumnRole.METADATA
 | `ColumnRole.TITLE` | `"title"` | a human-readable label |
 | `ColumnRole.METADATA` | `"metadata"` | descriptive attributes (frequency, units, …) |
 
-These roles drive [entity projection](#entity-projection) and are what a [data store](../catalog/data-store.md)'s `@loader` output validates against.
+These roles drive [entity projection](#entity-projection) and are what a [data store](../catalog/data-store.md)'s `@loader` output validates against. Framework ranking columns (`score`, `search_detail`) use `Column.role=None` instead — present in the frame and OutputSpec, excluded from `entities`/`data`, and not a fifth `ColumnRole`.
 
 !!! tip "No dtype coercion, ever"
     `OutputSpec`/`Column` declare semantics only — they never coerce a column's dtype, rename it, or otherwise touch the returned DataFrame. If a connector needs `date` parsed to `datetime64` or a numeric field coerced from a provider's string encoding, it does that explicitly in the connector body (e.g. `df["date"] = pd.to_datetime(df["date"])`) before returning. This keeps `OutputSpec` a pure, inspectable declaration and keeps all data transformation visible in one place: the connector's own code.
@@ -255,7 +257,7 @@ A tabular result honors `max_rows`; an opaque one honors `max_chars`. Each ignor
 
 ### Tabular preview
 
-Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) + namespace**), and the first `max_rows` rows as CSV — never a head/tail sample masquerading as the whole. Columns flagged [`exclude_from_llm_view`](#column) are dropped from **both** the schema block and the rows.
+Renders a shape line, a per-column schema block (**dtype + [role](#columnrole) + namespace**), and up to `max_rows` sample rows as CSV. When the frame fits in `max_rows`, the whole frame is shown. When it is longer, the preview is a **head + tail** sample (half of `max_rows` each side) with an explicit `…` gap — so recent observations stay visible without dumping the middle. The row label states that honestly (`Rows (showing first H and last T of N):`). Columns flagged [`exclude_from_llm_view`](#column) are dropped from **both** the schema block and the rows.
 
 ```python
 import pandas as pd
@@ -277,7 +279,7 @@ print(result.to_llm())
 # 2020-01-02 00:00:00,2.0
 ```
 
-With no `output_spec` the schema lines carry dtype only (no role annotation). For a frame longer than `max_rows` the header counts stay honest (the *real* row total) and the row label becomes `Rows (showing N of M):`, showing only the first `N` rows; wide cell values are truncated.
+With no `output_spec` the schema lines carry dtype only (no role annotation). For a frame longer than `max_rows` the header counts stay honest (the *real* row total) and the row label names the head/tail split; wide cell values are truncated.
 
 ### Opaque preview
 

@@ -14,6 +14,7 @@ import pytest
 from parsimony.catalog import BM25Index, Catalog, Entity
 from parsimony.catalog.search import ENUMERATION_LIMIT, RANKED_LIMIT, make_local_search_connector
 from parsimony.errors import EmptyDataError, InvalidParameterError
+from parsimony.result import Column, ColumnRole, OutputSpec
 
 
 def _build_catalog() -> Catalog:
@@ -37,6 +38,15 @@ def _build_catalog() -> Catalog:
     return catalog
 
 
+_DEMO_SEARCH_OUTPUT = OutputSpec(
+    columns=[
+        Column(name="code", role=ColumnRole.KEY, namespace="demo"),
+        Column(name="title", role=ColumnRole.TITLE),
+        Column(name="area", role=ColumnRole.METADATA),
+    ]
+)
+
+
 @pytest.fixture
 def demo_search(monkeypatch, tmp_path):
     """A factory connector over a small in-memory catalog, cache isolated to tmp_path."""
@@ -48,7 +58,7 @@ def demo_search(monkeypatch, tmp_path):
         tags=["demo"],
         description="Search the demo catalog.",
         build_catalog=_build_catalog,
-        metadata_columns=["area"],
+        output=_DEMO_SEARCH_OUTPUT,
     )
 
 
@@ -101,13 +111,16 @@ def test_no_match_raises_empty(demo_search) -> None:
 def test_description_evidence_is_searched(demo_search) -> None:
     """The factory surface is title + description: query words that appear only in a
     row's description surface it on lexical evidence."""
+    from parsimony.catalog import SearchDetail
+
     df = demo_search(query="jobless benchmark", limit=5).frame
     assert df.iloc[0]["code"] == "UNEMP_DE"
-    assert df.iloc[0]["matched"] == "lexical"
+    detail = SearchDetail.model_validate_json(df.iloc[0]["search_detail"])
+    assert {c.kind for f in detail.fields for c in f.components} == {"bm25"}
 
 
-def test_search_fields_declaration(monkeypatch, tmp_path) -> None:
-    """A connector can declare a non-default surface; the declaration is honored and stated."""
+def test_non_default_surface_declaration(monkeypatch, tmp_path) -> None:
+    """A connector can declare a narrower surface; the declaration is honored and stated."""
     monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(tmp_path))
     desc_only = make_local_search_connector(
         provider="demo2",
@@ -116,7 +129,7 @@ def test_search_fields_declaration(monkeypatch, tmp_path) -> None:
         tags=["demo"],
         description="Search the demo catalog.",
         build_catalog=_build_catalog,
-        search_fields=["description"],
+        ranking_fields={"description": 1.0},
     )
     df = desc_only(query="jobless benchmark", limit=5).frame
     assert df.iloc[0]["code"] == "UNEMP_DE"
@@ -126,14 +139,70 @@ def test_search_fields_declaration(monkeypatch, tmp_path) -> None:
     assert "description field." in desc_only.description
 
 
-def test_ranking_trio_columns(demo_search) -> None:
-    """Every factory page ends with the same trio; a fully-consumed title is a visible 1.0 pin."""
+@pytest.fixture
+def weighted_search(monkeypatch, tmp_path):
+    """The opt-in weighted recipe: connector-declared fields and weights."""
+    monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(tmp_path))
+    return make_local_search_connector(
+        provider="demo3",
+        default_url="file:///unused",
+        catalog_url_env_var="DEMO3_CATALOG_URL",
+        tags=["demo"],
+        description="Search the demo catalog.",
+        build_catalog=_build_catalog,
+        output=_DEMO_SEARCH_OUTPUT,
+        ranking_fields={"title": 1.0, "description": 0.5},
+    )
+
+
+def test_weighted_recipe_reports_score_and_search_detail_only(weighted_search) -> None:
+    """Weighted ranking states its policy in the weights, so it reports no extra fact."""
+    df = weighted_search(query="hicp germany", limit=5).frame
+    assert list(df.columns)[-2:] == ["score", "search_detail"]
+    assert "coverage" not in df.columns
+    assert df.iloc[0]["code"] == "CP0000_DE"
+
+
+def test_weighted_recipe_declares_its_surface_in_the_output_spec(weighted_search) -> None:
+    assert [column.name for column in weighted_search.output_spec.columns[-2:]] == ["score", "search_detail"]
+    assert "title, description fields." in weighted_search.description
+
+
+def test_weighted_recipe_accepts_membership_filters(weighted_search) -> None:
+    df = weighted_search(query="germany", filter={"area": ["DE", "FR"]}, limit=10).frame
+    assert set(df["code"]) <= {"CP0000_DE", "UNEMP_DE", "CP0000_FR"}
+    assert "CP0000_DE" in set(df["code"])
+
+
+def test_weighted_recipe_filter_only_read_still_enumerates(weighted_search) -> None:
+    df = weighted_search(filter={"area": "DE"}, limit=ENUMERATION_LIMIT).frame
+    assert set(df["code"]) == {"CP0000_DE", "UNEMP_DE"}
+    assert list(df.columns)[-2:] == ["score", "search_detail"]
+
+
+def test_every_factory_page_ends_with_the_same_ranking_pair(demo_search) -> None:
+    """One ranking schema across every provider — and no third column to explain.
+
+    A filter-only read ranks nothing, so ``search_detail`` is null there rather than
+    carrying fabricated evidence.
+    """
+    from parsimony.catalog import SearchDetail
+
     ranked = demo_search(query="hicp germany", limit=5).frame
-    assert list(ranked.columns)[-3:] == ["coverage", "score", "matched"]
-    # "HICP Germany" is fully consumed by the query: a verified fact, pinned first —
-    # and the coverage column shows why it outranks any higher-score row.
+    assert list(ranked.columns)[-2:] == ["score", "search_detail"]
     assert ranked.iloc[0]["code"] == "CP0000_DE"
-    assert ranked.iloc[0]["coverage"] == 1.0
-    assert set(ranked["matched"]) == {"lexical"}  # BM25-only demo catalog
+    detail = SearchDetail.model_validate_json(ranked.iloc[0]["search_detail"])
+    assert {c.kind for f in detail.fields for c in f.components} == {"bm25"}
+
     enumerated = demo_search(filter={"area": "DE"}, limit=ENUMERATION_LIMIT).frame
-    assert enumerated["matched"].isna().all()
+    assert list(enumerated.columns)[-2:] == ["score", "search_detail"]
+    assert enumerated["search_detail"].isna().all()
+    assert enumerated["score"].isna().all()
+
+
+def test_output_spec_metadata_columns_are_projected(demo_search) -> None:
+    """METADATA roles on the output spec are the projection source (anti-drift)."""
+    df = demo_search(query="Germany", limit=5).frame
+    assert "area" in df.columns
+    assert set(df.loc[df["code"] == "CP0000_DE", "area"]) == {"DE"}
+    assert any(c.name == "area" for c in demo_search.output_spec.columns)

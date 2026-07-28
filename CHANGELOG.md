@@ -19,22 +19,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   (the env vars a package's connectors need); `keyless` is not on the wire —
   `InstallableConnector` derives it as `not requires`. Any other
   `schema_version` still fails loudly.
-- `CatalogMatch.matched` — `"lexical" | "semantic" | "both"`: which component
-  surfaced the row's evidence (`None` on filter-only matches). The trap
-  signal: an all-`"semantic"` result page means nothing lexically real
-  matched — rephrase the query rather than trust the order.
-  `search_index_values` returns the same evidence kind per value.
-- Every catalog-backed search connector now ends with the same ranking trio —
-  `coverage`, `score`, `matched` — defined once as `RANKING_COLUMNS`
-  (`COVERAGE_COLUMN` / `SCORE_COLUMN` / `MATCHED_COLUMN` in
-  `parsimony.catalog.search`) and appended automatically to every
-  `make_local_search_connector` output spec; hand-rolled search connectors
-  reuse the same constants. Identical meanings on every provider; what varies
-  per surface is only the distribution of values (graded coverage on facet
-  surfaces, mostly-0.0-with-exact-pins on prose catalogs).
-- `CatalogValueMatch.matched` — `Catalog.search_values` now reports the
-  evidence kind per value (it was already computed for fusion), so value-level
-  consumers can emit the same trio.
+- Typed ranking evidence on catalog matches: `SearchDetail` /
+  `FieldSearchDetail` / `ComponentSearchDetail` on `CatalogMatch` and
+  `CatalogValueMatch` (`search_detail`; `None` on filter-only reads). Captures
+  per-field values/weights/relevances and per-component native raw scores +
+  competition ranks — not a correctness signal. Ranked rows remain a shortlist;
+  commit from provider metadata.
+- Every catalog-backed search connector now ends with the same ranking pair —
+  `score`, `search_detail` — defined once as `RANKING_COLUMNS` (`SCORE_COLUMN` /
+  `SEARCH_DETAIL_COLUMN` in `parsimony.catalog.search`) and appended automatically
+  to every `make_local_search_connector` output spec; hand-rolled search
+  connectors reuse the same constants. Both columns use `Column.role=None`
+  (uncategorized framework output); `search_detail` is canonical JSON with
+  `exclude_from_llm_view=True`. Identical meanings on every provider; what
+  varies per surface is only the distribution of values.
+- `Catalog.iter_rows(*, filter=None, columns=None)` — streams a filtered slice
+  as plain dict rows (no result-model validation), addressing fields by logical
+  name in both the filter and the projection.
+- A composable filter contract in `parsimony.catalog.filters`: `Filter`, `F`,
+  `all_of`, `any_of`, `as_filter`, plus a serializable expression form. One
+  tree compiles to a single `pyarrow.dataset.Expression` for parquet pushdown
+  and evaluates identically over in-memory rows, so the two catalog layouts
+  agree by construction. The mapping shorthand (`{"col": "v"}` /
+  `{"col": ["v1", "v2"]}`) is unchanged. `Filter` and `F` are top-level exports.
 
 ### Fixed
 
@@ -49,7 +56,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - `examples/catalog_walkthrough.py` runs again on current `parsimony-core`.
   It called the removed `Catalog(default_field=...)` kwarg (dropped below),
   the removed `Connector.param_schema` property (dropped in #90 with MCP), and
-  passed a `score` output column that now collides with the ranking trio
+  passed a `score` output column that now collides with the ranking pair
   `make_local_search_connector` appends automatically — all three now fixed,
   and the walkthrough has a regression test (`tests/test_examples.py`) that
   runs it to completion so a future breaking change fails CI instead of
@@ -63,6 +70,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **`Result.to_llm()` samples head + tail on long frames.** When a tabular
+  result exceeds `max_rows`, the preview shows the first and last half of the
+  budget with an explicit `…` gap (and an honest row label), so recent
+  observations stay visible without dumping the middle. Frames that fit still
+  render in full.
+- **`require_key` treats blank/whitespace values as missing.** Both the call
+  argument and the env fallback are `.strip()`'d before the empty check.
+- **Ranking evidence is typed `search_detail`, not `matched`.** The categorical
+  `"lexical" | "semantic" | "both"` label is removed with no compatibility shim.
+  `Column.role` may be `None` for uncategorized framework columns (excluded from
+  `Result.entities` / `Result.data`); ranking columns use that instead of
+  pretending to be `DATA`.
+- **Default index policy skips bool metadata.** BM25 indexes are still created
+  for `code`, `title`, and text/number metadata keys; bool flags stay on the
+  entity for `filter=` only (ranking `"true"`/`"false"` is noise). Explicit
+  `indexes=` can still name a bool field if an operator truly wants it ranked.
+  Nested metadata was already skipped.
+- **BREAKING — `make_local_search_connector` takes `output: OutputSpec | None`.**
+  Removed `output_columns=` and `metadata_columns=`. Declare provider columns
+  (KEY / TITLE / METADATA) on that spec; the factory appends `RANKING_COLUMNS`
+  and projects `ColumnRole.METADATA` names from each match's metadata bag onto
+  the hit table. Hand-rolled search connectors use `search_hits_dataframe`.
 - **BREAKING — `Connectors.bind_env()` and `Connectors.unbound` are removed.**
   Both were inert stubs since 0.5.0 (return `self` / `()`), with zero callers.
 - `Connectors.env_vars()` now returns the union of the env-var names its
@@ -118,31 +147,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   layout checks test backend presence directly. No behavior change; closes
   out the #84 razor review.
 
-- **BREAKING — factory search connectors declare the discovery surface.**
-  `make_local_search_connector` ranked queries search the connector's declared
-  surface — a new `search_fields=` parameter, defaulting to the entity recipe
-  `ENTITY_SEARCH_FIELDS = ("title", "description")`, intersected with the
-  loaded catalog's indexes — as literal text, and each connector's description
-  states its declared surface. Consequences: the `FIELD: value` DSL no longer applies to
-  factory-built connectors (exact reads use `filter=`); description evidence
-  now ranks lexically (the description index was previously built and shipped
-  but never searched on this path); and the two-field surface takes the
-  lexical-first facet regime instead of single-field RRF, so a short generic
-  title can no longer out-rank a row whose description carries the query's
-  words.
+- **BREAKING — factory search connectors declare the ranking surface as
+  weights.** `make_local_search_connector` takes `ranking_fields=`, a
+  `{field: positive weight}` mapping defaulting to the entity recipe
+  `ENTITY_RANKING_FIELDS = {"title": 1.0, "description": 1.0}` and intersected
+  with the loaded catalog's indexes; each connector's description states its
+  declared surface. Ranking policy is declared rather than inferred from how
+  many fields happened to be passed. Queries are literal text — there is no
+  query grammar on this path; exact reads use `filter=`.
 
 - **BREAKING — catalog search is one native path; the fusion library is
-  gone.** Hybrid fields combine their components by surface arity: on a
-  multi-field facet surface, lexical-first with semantic void-fill (the
-  vector ranks a field only when BM25 fully abstains); on a single-field
-  surface, tie-aware unweighted Reciprocal Rank Fusion (k=60) over the BM25
-  and vector-top-k rankings. Row ordering: multi-field surfaces keep
-  `(coverage desc, score desc)`; single-field surfaces rank
-  `(coverage == 1.0, score desc)` — an exactly-consumed value still pins
-  rank 1, but partial containment no longer orders (on one long-text field
-  it proxied title brevity, not relevance). `HybridIndex` no longer takes
-  `fusion=`; snapshots write a frozen legacy `fusion` key that `load()`
-  ignores, so old snapshots load unchanged and no republish is needed.
+  gone.** A hybrid field always fuses BM25 positives with the vector's
+  top-*k* under tie-aware unweighted Reciprocal Rank Fusion (k=60) — one
+  regime, regardless of what the caller composes on top, because a field being
+  scored knows nothing about how many other fields it is about to be weighted
+  against. `HybridIndex` no longer takes `fusion=`; snapshots write a frozen
+  legacy `fusion` key that `load()` ignores, so old snapshots load unchanged
+  and no republish is needed.
 - **BREAKING — index policy is role-based.** `adaptive_field_index` and the
   `HYBRID_UNIQUE_VALUE_LIMIT` / `HYBRID_BM25_WEIGHT` / `HYBRID_VECTOR_WEIGHT`
   constants are removed; `discovery_indexes` picks index kind by field role
@@ -180,39 +201,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
   `result.data` directly.
 - **BREAKING — `Result.df` alias is removed.** Use `Result.frame` (raises
   `TypeError` if the payload is not tabular).
-- **BREAKING — `Catalog.search` replaces `field=` with `fields=`.** One
-  parameter declares the scoring surface: a single indexed field name
-  (`fields="title"`, exactly the old `field=` behavior) or several to fuse
-  (`fields=["title", "ITEM_label", ...]` — fuzzy score is the row's best
-  per-field score over the already-built indexes), so a caller can declare a
-  bare-query surface such as title + dimension labels without rebuilding
-  catalogs. Requires `query=`, which is then literal text — never parsed as
-  the ``FIELD: value`` DSL. `search_values` keeps its single `field` argument
-  (#69).
-- **BREAKING — search results rank by (coverage, score); the exact-match
-  sentinel is gone.** `CatalogMatch` and `CatalogValueMatch` gain
-  `coverage: float`: the fraction of the query's tokens consumed by the union
-  of the row's fully-consumed field values (a field value counts only when all
-  its tokens appear in the query; case-insensitive string equality covers
-  values that tokenize to nothing). An exact value hit is coverage 1.0 and
-  ranks first WITHOUT suppressing fuzzy near-misses ("Annual rate of change"
-  vs "Annual average rate of change" stay adjacent), value-level term
-  repetition ("Current account, Current transfers") gates to 0.0 instead of
-  outranking the consumed value, and a verbose query decomposes across a
-  multi-field surface ("current account … euro area … quarterly" → ITEM +
-  REF_AREA + FREQ). `EXACT_MATCH_SCORE = 1_000_000.0` no longer exists, and no
-  magic magnitude ever reaches a caller: `score` is the sum over searched fields of the row's
-  normalized per-field relevance (each field votes 0..1 of its own best
-  match), computed for every candidate row in one backend pass — agreeing
-  evidence across fields accumulates, no single field's raw magnitude
-  dominates, and a deserving row can never be lost to per-field pool
-  truncation. Chosen empirically over raw-max/min-max/RRF/DisMax fusion and
-  over hard auto-filtering on a 37-case, 17-class query-taxonomy battery
-  (MRR 0.81 vs 0.45 for the previous title-only search) (#69).
+- **BREAKING — the query-string DSL is removed.** `parse_query`,
+  `StructuredQuery`, and the `parsimony/catalog/query.py` module are deleted.
+  `query=` is now always literal text: a colon or an `&&` inside it is
+  punctuation to be matched, not a field scope or a boolean operator, so
+  spellings like `"code: UNRATE"` or `"title: par yield && FREQ: M"` no longer
+  mean anything special. Anything a caller wants enforced goes in `filter=`,
+  which excludes non-matching rows outright; `query=` only orders what
+  survives. A grammar embedded in a free-text parameter has to guess whether
+  the caller meant punctuation or syntax, and it guesses wrong on real titles
+  ("GDP: annual rate").
+- **BREAKING — `Catalog.search` is single-field; multi-field ranking moves to
+  `multi_field_search`.** `search(query=None, limit=50, *, field=None,
+  filter=None, top_k_values=50)` scores one index (default: the catalog's
+  `title` field) and no longer accepts `fields=`.
+  `multi_field_search(query, *, fields={name: positive_weight}, filter=None,
+  limit=20, candidate_values=50)` is the weighted composition: the caller
+  declares a positive weight per field and Level-2 RRF fuses the per-field row
+  rankings (already top-normalized so the best hit is `1.0`). Candidates are
+  pooled at the *distinct value* level and the candidate rows are scanned
+  exactly once, so a truncated value table is never a truncated row set.
+- **BREAKING — row-level `coverage` is removed; rows order by `(score desc,
+  namespace, code)`.** `CatalogMatch.coverage` is gone, and with it every
+  coverage tier: no row pins above a higher-scoring row any more, and ordering
+  is fully deterministic with no tier the caller did not ask for. A
+  kernel-computed "fact" column has to be domain-neutral to be computable at
+  all, and a domain-neutral fact ends up proxying something incidental (value
+  brevity, token counts) while presenting itself as authoritative. Ranking
+  policy beyond relevance now belongs to the caller, who is the only one who
+  knows what its fields mean — a connector with such a fact filters or tiers on
+  it itself.
+- **BREAKING — `CatalogValueMatch.coverage: float` becomes
+  `CatalogValueMatch.exact: bool`.** Exactness is case-folded,
+  whitespace-trimmed string *equality* of the query and the value — nothing
+  softer, no token containment, no grading. Values order by
+  `(exact desc, score desc)`. Within a field an exact value normalizes to
+  `1.0` rather than being divided by a fuzzy maximum it may not even have, so a
+  tokenless value (a bare code, a `"-"`) that earns no BM25 score at all cannot
+  be dropped. `EXACT_MATCH_SCORE = 1_000_000.0` no longer exists; no magic
+  magnitude ever reaches a caller.
+- **BREAKING — arity-dependent scoring is gone.** There is no `lexical_only`
+  regime selected by how many fields were searched; `search_index_values` drops
+  the flag. Every hybrid field fuses under the same RRF, so a field's behavior
+  can be reasoned about field by field instead of shifting underneath the
+  caller as the surface grows.
 - **BREAKING — `DisMaxIndex` is removed.** It had no consumers: its per-field
   sub-indexes were byte-identical to standalone indexes (no blended term
   statistics, no precomputation), it forced a uniform component kind, and it
-  could not ride the parquet path. Query-time `fields=` is the one multi-field
+  could not ride the parquet path. `multi_field_search` is the one multi-field
   mechanism; the `dis_max` kind is no longer valid in catalog metadata (#69).
 
 - **BREAKING — transport error mapping now decides from the status code, not a
@@ -292,12 +328,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Removed
 
 - **BREAKING — `Catalog(default_field=...)` and `BroadSearchConfigError`.**
-  Broad (no-`fields=`) search targets the `title` index by convention — every
+  A query that names no field targets the `title` index by convention — every
   production caller passed `default_field="title"`, the exact value the
   fallback already resolved. Nothing validates a broad field at construction
-  or build any more; a plain-text query on a catalog with no title index
-  still raises `BroadSearchUnavailableError` at query time, and any other
-  surface is declared per call with `fields=`. The persisted `default_field`
+  or build any more; a query on a catalog with no title index still raises
+  `BroadSearchUnavailableError` at query time, and any other surface is
+  declared per call (`field=`, or `fields=` on `multi_field_search`). The persisted `default_field`
   snapshot key remains parsed and digest-checked (written as `null` by new
   saves), ignored at runtime.
 - `parsimony/ranking.py` and the package exports `RRF`, `Ranker`, `Ranking`,

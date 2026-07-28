@@ -154,24 +154,67 @@ an argument name — or guessing an id you don't actually have.
 
 Series ids are opaque (`UNRATE`; SDMX keys like `D.USD.EUR.SP00.A`). When you don't know the
 exact id, **search before fetching**. Call the provider's search connector with a text query,
-then read the returned result to pick the id:
+then read the returned result to pick the id. When the ask already names a concrete handle
+(ticker, CIK, known series code, …) and `.describe()` shows a resolve/lookup connector,
+prefer that over inventing a catalog search.
 
 ```python
-hits = connectors["sdmx_datasets_search"](query="euro area unemployment rate", limit=5)
-print(hits.to_llm())         # bounded preview: the result's columns + first rows
+hits = connectors["sdmx_datasets_search"](
+    query="euro area unemployment rate",
+    agency="ECB",  # required — one agency catalog per call (ECB, ESTAT, IMF_DATA, WB_WDI)
+    limit=5,
+)
+print(hits.to_llm())         # bounded preview: columns + sample rows (head+tail when long)
 ids = hits.raw               # the full result frame; columns vary by connector — read them, don't assume
 ```
 
-Every ranked catalog search ends with the same three columns — read them before trusting row
-order, not after: `coverage` is the fraction of the query's tokens a row's indexed values
-literally satisfy (all-or-nothing per value) — `1.0` is a verified fact, not a guess, and explains
-a row ranked above a higher `score`; `score` is similarity relative to *this query's* best hit, not
-comparable across queries or catalogs; `matched` says whether that evidence was `lexical`,
-`semantic`, or `both` — an all-`semantic` page means nothing you typed was found verbatim anywhere,
-so rephrase rather than trust the order. A search call returns a relevance-ranked top-N, not the
-whole catalog; to read a slice exhaustively instead, drop `query=` and pass `filter=` (an exact AND
-on the result columns, e.g. `{"code": "..."}`) with a higher `limit` — that enumerates from the
-same cached catalog, no re-crawl.
+**`query=` is literal text, always.** There is no query grammar: a colon, a comma, or an `&&`
+inside `query=` is punctuation to be matched, not a field scope or a boolean operator. Writing
+`query="code: UNRATE"` searches for the words *code* and *UNRATE*; it does not scope anything.
+
+**Anything you need enforced goes in `filter=`, not in the query.** `filter=` is an exact AND
+constraint on the result columns that *excludes* non-matching rows; `query=` only *orders* what
+survives it. A list of values means "any of these" for that column, and separate keys AND
+together:
+
+```python
+hits = connectors["sdmx_series_search"](
+    agency="ECB", dataset_id="ICP",
+    query="overall index",                                    # orders — literal text
+    filter={"FREQ_code": "M", "REF_AREA_code": ["U2", "DE"]},  # enforced — excludes everything else
+    limit=10,
+)
+```
+
+Which columns a `filter=` accepts is per connector, and not every search connector takes one —
+some express the same narrowing as a dedicated parameter instead (`sdmx_datasets_search`
+requires `agency=` because each agency is its own catalog). `.describe()` is what tells you;
+that is why step 2 comes before this one.
+
+**When you know what a value means but not how the data spells it, resolve it first.** Don't push
+the guess into the query text and hope the ranker prioritizes it. Search broadly, read the actual
+value off the returned rows, then filter exactly on it and rank within that slice. **Multi-facet series picks (shortlist → pin):** (1) find the right catalog/flow with the provider's datasets/surveys search when there is one; (2) run **one** exploratory series search with `query=` and treat it as a shortlist; (3) for any facet that is ambiguous in that shortlist (unit/suffix, parent vs child, sex/age, net vs stock), resolve the code via whatever `.describe()` exposes — a dimension/value search connector, survey `dimensions`, or labels already on the shortlist rows — then (4) re-search with `filter=` pinning those codes and commit only from the filtered slice. If the ask names essentially one identity (a single series name, currency, or concept) and a shortlist row’s labels already match it, you may commit without resolving other dimensions. Resolve **only contested** facets (usually 1–3), not every column — extra resolves cost calls without helping once the filtered slice already matches the ask.
+**Near-duplicate shortlist rows share a title family and differ by one facet.** When several high-ranked rows look interchangeable on a skim, find what actually distinguishes them in the returned columns or labels, resolve that facet, and pin before commit. Ranking alone does not pick among siblings.
+
+Against a
+`Catalog` object directly (`parsimony.auto_catalog`, or a catalog a connector hands you) the
+resolution primitive is `catalog.search_values(query, field)`, which ranks one field's distinct
+values by `(exact, score)` and tells you which is an exact hit; `catalog.search(..., field="...")`
+then scores one named index, and `catalog.iter_rows(filter=...)` streams a filtered slice without
+ranking at all.
+
+Every ranked catalog search ends with the same two columns — read them before trusting row order,
+not after. Treat the top-ranked row as a candidate, not a commitment: keep searching or pin with exact constraints until the returned labels cover each requirement stated in the ask.  `score` is similarity relative to *this query's* best hit, never comparable across
+queries or catalogs, and it encodes relevance and nothing else — rows are ordered by it alone, so
+if something matters more to you than relevance, filter on it or sort the rows yourself.
+Ranked rows are a shortlist — commit from provider metadata (titles, codes, filters), never
+from ranking evidence alone. `search_detail` is optional debugging JSON for why a row ranked
+where it did (component absence means not in that top-k, not "no relationship"). On a
+filter-only read `score` and `search_detail` are null — there was nothing to rank.
+
+A search call with `query=` returns a relevance-ranked top-N, not the whole catalog. To read a
+slice exhaustively instead, drop `query=` and pass `filter=` alone with a higher `limit` — that
+enumerates from the same cached catalog, no re-crawl.
 
 A fetch parameter shown with a `namespace=` hint in `.describe()` means its legal values come
 from that catalog namespace — search there first.

@@ -38,11 +38,11 @@ def test_broad_search_without_title_index_raises() -> None:
         {"code": BM25Index()},
         [Entity(namespace="ns", code="A", title="alpha", metadata={})],
     )
-    with pytest.raises(BroadSearchUnavailableError, match="fields="):
+    with pytest.raises(BroadSearchUnavailableError, match="field="):
         catalog.search("plain text", limit=5)
 
 
-def test_explicit_fields_search_needs_no_title_index() -> None:
+def test_explicit_field_search_needs_no_title_index() -> None:
     catalog = _built(
         {"code": BM25Index(), "region": BM25Index()},
         [
@@ -50,7 +50,7 @@ def test_explicit_fields_search_needs_no_title_index() -> None:
             Entity(namespace="ns", code="B", title="beta", metadata={"region": "france"}),
         ],
     )
-    hits = catalog.search("germany", fields=["region"], limit=5)
+    hits = catalog.search("germany", field="region", limit=5)
     assert [h.code for h in hits] == ["A"]
 
 

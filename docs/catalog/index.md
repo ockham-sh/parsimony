@@ -1,9 +1,9 @@
 # The Catalog
 
 A `Catalog` is Parsimony's discovery layer: a portable, in-memory index over normalized
-[`Entity`](entities.md) records. You load entities into it, build per-field indexes, then run
-structured or plain-text searches that return ranked matches. The same catalog can be saved to
-a local directory or a Hugging Face dataset and loaded back, fully built and searchable.
+[`Entity`](entities.md) records. You load entities into it, build per-field indexes, then rank
+rows by a text query, filter them exactly, or both. The same catalog can be saved to a local
+directory or a Hugging Face dataset and loaded back, fully built and searchable.
 
 A catalog is the natural sink for an [enumerator](../connectors/loaders-and-enumerators.md): an
 enumerator discovers entities (series, tickers, datasets), and a catalog makes them searchable.
@@ -101,22 +101,25 @@ Catalog(name: str, *, indexes: dict[str, CatalogIndex] | None = None)
 | `name` | Catalog identity. Normalized to lowercase snake_case via `normalize_namespace` — uppercase or hyphenated names raise `ValueError` (e.g. `"My Catalog"` is rejected; pass `"my_catalog"`). |
 | `indexes` | A map of *search-surface name* → [`CatalogIndex`](indexes.md). `None` enables the default index policy (see below). |
 
-Broad (plain-text) search targets the `"title"` index by convention: it is searched when
-the catalog has one, otherwise broad search is unavailable. Any other search surface is
-declared per call with `fields=`.
+A query that names no field targets the `"title"` index by convention: it is searched when
+the catalog has one, otherwise the call raises `BroadSearchUnavailableError` and names the
+fields that are indexed. Score one named index with `Catalog.search(..., field="...")`. Rank
+across several weighted fields with `Catalog.multi_field_search(..., fields={name: weight})`
+— `search` no longer accepts `fields=`.
 
-The keys of `indexes` are logical search-surface names — they are the field names you use in the
-query DSL (`FIELD: value`) and the names reported by errors. A key matches an `Entity` field;
-each index is scoped to exactly one field.
+The keys of `indexes` are logical search-surface names — they are the field names you pass to
+`field=` / `multi_field_search`'s `fields=` / `filter=` and the names reported by errors. A key
+matches an `Entity` field; each index is scoped to exactly one field.
 
 ## Index policy: default versus explicit
 
 There are two ways to configure indexes.
 
 **Default index policy** (`indexes=None`). The catalog starts with a placeholder and, at
-`build()`, materializes a `BM25Index` for `code`, `title`, and every metadata key observed across
-the loaded entities. This is the zero-configuration path — you get a searchable catalog over every
-field without naming any index.
+`build()`, materializes a `BM25Index` for `code`, `title`, and every text/number metadata key
+observed across the loaded entities. Nested values and bool flags are skipped (bools remain
+filterable facets, not ranking surfaces). This is the zero-configuration path — you get a
+searchable catalog over the text fields without naming any index.
 
 ```python
 from parsimony.catalog import Catalog, Entity
@@ -135,28 +138,34 @@ default policy. Use this when you want a vector or hybrid backend on a specific 
 restrict search to a known set of surfaces. The available index types — `BM25Index`,
 `VectorIndex`, `HybridIndex` — are covered in [Indexes](indexes.md).
 
-## Structured versus broad search at a glance
+## Query and filter at a glance
 
-`search(query, limit)` inspects the query string and picks one of two modes.
-
-A query is **structured** when it begins with a `FIELD:` token (it matches `^\s*\w+\s*:`).
-Core `Catalog.search` accepts one soft-scored structured clause; comma-separated values within
-that clause are OR-merged. Use `filter=` for exact AND constraints. Every referenced field must
-have an index, or the parse raises `UnknownIndexedFieldError`.
+`search` takes two independent inputs, and the split between them is the central idea of the
+API. `query` is **literal text** that *orders* results — never a grammar, so a colon or an
+`&&` inside it is just punctuation being matched. `filter` is an exact constraint that
+*excludes* rows outright. Pass either, or both.
 
 ```python
-matches = catalog.search("title: alpha", filter={"region": ["eu", "us"]}, limit=5)
+matches = catalog.search("alpha growth", limit=5)                      # rank by text
+matches = catalog.search(filter={"region": ["eu", "us"]}, limit=100)   # enumerate a slice
+matches = catalog.search("alpha", filter={"region": "eu"}, limit=5)    # rank within a slice
 ```
 
-Any query that does not start with a `FIELD:` token is a **broad** query, scored against the
-`"title"` index. If the catalog has no `"title"` index, `search()` raises `BroadSearchUnavailableError`.
+If it matters, filter on it: a constraint written into the query text is only a hint the
+ranker may outweigh, while the same constraint as a filter cannot be traded away for
+relevance. When you know what a value means but not how the data spells it,
+`catalog.search_values("Germany", "geo")` resolves it first so you can filter exactly.
+
+To score several fields at once, declare a weight for each — the caller owns that policy:
 
 ```python
-matches = catalog.search("alpha growth", limit=5)
+matches = catalog.multi_field_search(
+    "german growth", fields={"title": 3.0, "description": 1.0}, limit=5,
+)
 ```
 
-The full DSL, result shape, and the search-time exceptions are documented in
-[Building and searching](search.md).
+The full signatures, the filter forms, the value-resolution primitive, and the search-time
+exceptions are documented in [Building and searching](search.md).
 
 ## Saving and loading snapshots
 
@@ -202,12 +211,12 @@ This section breaks the catalog down into focused pages:
 
 - **[Entities](entities.md)** — the `Entity` record model, normalization rules, and how
   DataFrames become entities.
-- **[Building and searching](search.md)** — the full `Catalog` API, the query DSL,
+- **[Building and searching](search.md)** — the full `Catalog` API, the filter contract,
   `CatalogMatch`, and the search-time exceptions.
 - **[Indexes](indexes.md)** — the `CatalogIndex` protocol, the BM25, vector, and hybrid
   backends, and the role-based discovery index policy.
-- **[Ranking and fusion](ranking-and-fusion.md)** — the two fixed fusion regimes a hybrid
-  field combines its components with, and how rows are ranked from the result.
+- **[Ranking and fusion](ranking-and-fusion.md)** — how `score` is computed, the fixed RRF
+  fusion inside a hybrid field, and where ranking that isn't relevance belongs.
 - **[Embedders](embedders.md)** — the `EmbeddingProvider` implementations used by vector and
   hybrid indexes.
 - **[Snapshots and persistence](snapshots.md)** — saving, loading, snapshot layout, integrity,
@@ -218,7 +227,7 @@ This section breaks the catalog down into focused pages:
 ## See also
 
 - [Entities](entities.md) — the record model a catalog indexes.
-- [Building and searching](search.md) — the search API and query DSL in depth.
+- [Building and searching](search.md) — the search API and the filter contract in depth.
 - [Indexes](indexes.md) — choosing and configuring index backends.
 - [Loaders and enumerators](../connectors/loaders-and-enumerators.md) — how an enumerator feeds a
   catalog.

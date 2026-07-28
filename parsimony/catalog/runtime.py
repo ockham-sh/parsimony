@@ -48,8 +48,8 @@ def _json_safe(value: object, _depth: int = 0) -> object:
 
     numpy scalars unwrap via ``.item()``; nested lists/dicts recurse up to
     ``_MAX_JSON_DEPTH`` (beyond which the structure falls back to ``str``);
-    anything else falls back to ``str`` so structured ``column: value`` search
-    still has text to match against.
+    anything else falls back to ``str`` so BM25 / ``filter=`` still have text to
+    match against.
     """
     if not isinstance(value, (str, bytes)) and hasattr(value, "item"):
         with contextlib.suppress(ValueError, AttributeError):
@@ -77,9 +77,12 @@ def auto_catalog(df: pd.DataFrame, *, name: str = "output") -> Catalog:
     For finding rows in data you already hold — *not* for building a catalog to
     keep. One :class:`~parsimony.entity.Entity` per row: ``code`` is the row's
     positional index (so ``df.iloc[int(match.code)]`` recovers the full row),
-    ``title`` is the whitespace-joined non-null cell text (broad search), and
-    ``metadata`` maps each column to its cell value (structured ``column: value``
-    search). Every field is BM25-indexed under the catalog's default index policy.
+    ``title`` is the whitespace-joined non-null cell text (broad ``query=``
+    ranking), and ``metadata`` maps each column to its cell value (exact
+    ``filter=`` on those column names). Indexed fields follow the catalog's
+    default index policy (BM25 on ``code``, ``title``, and every non-bool scalar
+    metadata key — here, each DataFrame column except bool facets, which stay
+    available to ``filter=`` only).
 
     The returned catalog is already built — call
     :meth:`~parsimony.catalog.Catalog.search` directly and repeatedly; each query
@@ -87,9 +90,9 @@ def auto_catalog(df: pd.DataFrame, *, name: str = "output") -> Catalog:
     guards a hand-assembled catalog cannot be tripped.
 
     Columns named ``code``, ``title``, or ``namespace`` collide with the reserved
-    :class:`Entity` fields: their values are still stored in ``metadata``, but a
-    structured ``code:`` / ``title:`` / ``namespace:`` query resolves to the
-    Entity's own field (the row position / joined row text), not the column.
+    :class:`Entity` fields: their values are still stored in ``metadata``, but
+    ``field="code"`` / ``field="title"`` / a ``filter`` on those names address the
+    Entity's own fields (row position / joined row text), not the source column.
     Duplicate column names are rejected — they cannot be distinct metadata keys.
 
     Search is BM25 only — which works on a bare ``pip install parsimony-core`` (no

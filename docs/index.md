@@ -31,7 +31,7 @@ Parsimony is built around two complementary ideas.
 - **Catalog** — a [`Catalog`](catalog/index.md) is a portable, in-memory, searchable index
   over normalized [`Entity`](catalog/entities.md) records. It supports
   [pluggable per-field indexes](catalog/indexes.md) (BM25, FAISS vectors, hybrid fusion),
-  [structured and broad search](catalog/search.md), and
+  [relevance ranking and exact filtering](catalog/search.md), and
   [snapshot persistence](catalog/snapshots.md) to local paths or Hugging Face datasets.
 
 !!! note "Connectors ship as separate plugins"

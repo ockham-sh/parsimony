@@ -13,7 +13,7 @@ from parsimony.catalog import (
     HybridIndex,
     VectorIndex,
 )
-from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors, search_index_values
+from parsimony.catalog.indexes import IndexBuildContext, QueryContext, search_index_values
 from parsimony.embedder import EmbedderInfo
 
 
@@ -83,17 +83,16 @@ def test_hybrid_index_value_scoring_surfaces_lexical_and_vector_agreement() -> N
     """A single-field hybrid fuses BM25 and vector: the value both agree on wins.
 
     Query "Germany GDP" matches "GDP of Germany" on both tokens (BM25) and as
-    the vector's nearest neighbour, so it ranks first and its ``matched`` is
-    "both".
+    the vector's nearest neighbour, so it ranks first with both component traces.
     """
     hybrid = _build_hybrid(_entries())
-    query_vectors = embed_query_vectors("Germany GDP", [hybrid])
-    scored = search_index_values(hybrid, "Germany GDP", limit=5, query_vectors=query_vectors)
+    scored = search_index_values(hybrid, QueryContext(query="Germany GDP"), limit=5)
 
     assert scored
-    top_text, _, _, top_matched = scored[0]
-    assert top_text == "GDP of Germany"
-    assert top_matched == "both"
+    top = scored[0]
+    assert top.text == "GDP of Germany"
+    assert {c.kind for c in top.components} == {"bm25", "vector"}
+    assert top.relevance == pytest.approx(1.0)
 
 
 def test_hybrid_index_save_and_load_roundtrip() -> None:
@@ -108,7 +107,6 @@ def test_hybrid_index_save_and_load_roundtrip() -> None:
         _rebind_stub_embedder(loaded)
         assert set(loaded._components) == {"bm25", "vector"}
 
-        query_vectors = embed_query_vectors("Germany GDP", [loaded])
-        scored = search_index_values(loaded, "Germany GDP", limit=5, query_vectors=query_vectors)
+        scored = search_index_values(loaded, QueryContext(query="Germany GDP"), limit=5)
         assert scored
-        assert scored[0][0] == "GDP of Germany"
+        assert scored[0].text == "GDP of Germany"

@@ -56,3 +56,6 @@ site/
 
 # Scout workflow scaffolding (docs/README generation rig + subsystem maps)
 .scout/
+
+# Skill-sim agent run artifacts (transcripts, partial scores)
+evals/skill_sims/

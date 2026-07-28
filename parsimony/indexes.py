@@ -23,7 +23,8 @@ import math
 import os
 import re
 import time
-from typing import TYPE_CHECKING
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 
@@ -31,6 +32,15 @@ if TYPE_CHECKING:
     import faiss
 
 logger = logging.getLogger(__name__)
+
+#: Reciprocal Rank Fusion constant (the industry-standard k=60). Large relative
+#: to a typical candidate table, so adjacent ranks differ slightly and agreement
+#: across sources outweighs a one-position lead within any single source.
+RRF_K = 60
+
+#: Fusion item identity (a value id, a value text, ...) and ranking source name.
+K = TypeVar("K")
+S = TypeVar("S")
 
 HNSW_THRESHOLD = 4096
 HNSW_M = 16
@@ -161,11 +171,98 @@ def write_faiss(index: faiss.Index | None, path: str, *, dim: int) -> None:
     faiss.write_index(index, path)
 
 
+def competition_ranks(scores: Mapping[K, float]) -> dict[K, int]:
+    """1-based competition ranks over *scores* (tied scores share a rank).
+
+    Stable on input order among ties. Non-finite scores are rejected.
+    """
+    ranks: dict[K, int] = {}
+    rank = 0
+    previous: float | None = None
+    for position, (item, score) in enumerate(sorted(scores.items(), key=lambda pair: -pair[1]), start=1):
+        if not math.isfinite(score):
+            raise ValueError(f"competition_ranks requires finite scores; got {item!r} as {score!r}")
+        if score != previous:
+            rank = position
+            previous = score
+        ranks[item] = rank
+    return ranks
+
+
+def rrf(
+    rankings: Mapping[S, Mapping[K, float]],
+    *,
+    weights: Mapping[S, float] | None = None,
+    k: int = RRF_K,
+) -> dict[K, float]:
+    """Weighted Reciprocal Rank Fusion over one or more rankings.
+
+    Each source's own scores decide only an *order*; an item at competition rank
+    ``r`` contributes ``weight / (k + r)``. Magnitudes never cross a source
+    boundary, which is the whole point: BM25 is unbounded, cosine similarity sits
+    near ``[-1, 1]``, and one field's best hit says nothing about another's, so
+    only positions are comparable. Contributions sum, so an item several sources
+    agree on outranks one that a single source loves.
+
+    Ranks are *competition* ranks: tied scores share a rank, so a lexical plateau
+    contributes identically for every tied item and the other sources break the
+    tie. With a single source this degrades to a plain reciprocal-rank transform.
+
+    The fused map is always **top-normalized**: the best item scores ``1.0`` and
+    every other score sits in ``(0, 1]``. That contract is part of this fusion
+    method — callers must not re-normalize. An empty input yields ``{}``.
+
+    Absent items simply score nothing from that source. Iteration order of the
+    result follows first-seen source order, and ties within a source keep their
+    input order, so identical inputs always produce identical output.
+    """
+    fused, _source_ranks = rrf_traced(rankings, weights=weights, k=k)
+    return fused
+
+
+def rrf_traced(
+    rankings: Mapping[S, Mapping[K, float]],
+    *,
+    weights: Mapping[S, float] | None = None,
+    k: int = RRF_K,
+) -> tuple[dict[K, float], dict[S, dict[K, int]]]:
+    """Like :func:`rrf`, also returning per-source competition ranks.
+
+    The rank maps share one implementation with the fused scores so evidence
+    cannot diverge from the ranking that produced them. Sources that contribute
+    no scores are omitted from the second return value.
+    """
+    if k < 1:
+        raise ValueError(f"RRF k must be at least 1, got {k!r}")
+    fused: dict[K, float] = {}
+    source_ranks: dict[S, dict[K, int]] = {}
+    for source, scores in rankings.items():
+        weight = 1.0 if weights is None else float(weights[source])
+        if not math.isfinite(weight) or weight <= 0.0:
+            raise ValueError(f"RRF weight for {source!r} must be a positive finite number, got {weight!r}")
+        if not scores:
+            continue
+        ranks = competition_ranks(scores)
+        source_ranks[source] = ranks
+        for item, rank in ranks.items():
+            fused[item] = fused.get(item, 0.0) + weight / (k + rank)
+    if not fused:
+        return {}, source_ranks
+    best = max(fused.values())
+    if best <= 0.0:
+        return {}, source_ranks
+    return {item: score / best for item, score in fused.items()}, source_ranks
+
+
 __all__ = [
     "HNSW_THRESHOLD",
     "IVF_THRESHOLD",
+    "RRF_K",
     "build_faiss",
+    "competition_ranks",
     "read_faiss",
+    "rrf",
+    "rrf_traced",
     "tokenize",
     "write_faiss",
 ]

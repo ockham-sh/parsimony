@@ -1,315 +1,281 @@
 # Ranking and fusion
 
-Every match a `Catalog` returns carries two kinds of evidence and a label: `coverage`, a
-**fact**; `score`, a **guess**; and `matched`, which engine produced the evidence. This
-page starts with that model and a handful of worked examples, then works down into the
-mechanics that compute the three numbers.
+Every match a `Catalog` returns carries a fused `score` and optional `search_detail`
+evidence. There is no categorical `matched` label and no third, more authoritative
+channel. This page explains how `score` is computed — hierarchical Reciprocal Rank
+Fusion (RRF) at two levels — and how to read `search_detail` without mistaking it for
+correctness.
 
 One fact underlies all of it: a `Catalog` scores a field's **distinct** indexed values,
-not one score per row — see [value deduplication](indexes.md#value-deduplication-and-row-postings)
-— and every row that carries a scored value inherits that evidence through the field's
-postings. Everything below is in terms of *values* (the docs also call them **cells**: one
-indexed field value, e.g. one row's `title` or one row's `region`), with row-level
-`coverage`/`score`/`matched` built from them.
+not one score per row — see [value deduplication](indexes.md#value-deduplication) —
+then builds a candidate row set from those values (`FieldIn` + one scan) and ranks rows by
+the relevance of the value they carry. Everything below is in terms of *values*, with row
+scores built from them.
 
-## The two channels
+## The contract
 
 | | Kind | Answers | Computed from |
 |---|---|---|---|
-| `coverage` | fact | How much of the query is exactly satisfied by this row's values? | Token containment only |
-| `score` | guess | How similar does the row look overall? | Lexical BM25 + semantic vector |
-| `matched` | label | Which engine produced the evidence — `"lexical"`, `"semantic"`, or `"both"`? | Which component(s) contributed |
+| `score` | estimate or absent | How relevant does this row look for this query? | Weighted RRF over per-field row rankings (`rrf` top-normalizes; best = `1.0`). `None` on filter-only reads. |
+| `search_detail` | evidence or absent | Why did this row rank here? | Per-field value, weight, relevance, fused rank, and per-component native raw score + competition rank; `None` when unranked |
 
-`coverage` is verifiable: it only ever credits a row for query tokens some field value
-of that row provably contains, nothing more. `score` is a similarity estimate — useful,
-but never provably correct. `matched` doesn't score anything; it just says which of the
-two engines is behind the evidence you're looking at, so a `None` (filter-only, no
-query), `"lexical"` (token overlap), `"semantic"` (vector proximity), or `"both"` tells
-you where to trust and where to double-check.
+`score` is a guess and the model says so. Every *ranked* public score sits in `(0, 1]` with this
+query's best retained hit at `1.0` — that top-normalization is part of
+[`rrf`](../reference/api.md) itself, not a search-layer afterthought. It is never
+probability, never calibrated similarity, and never comparable across queries or
+catalogs. A filter-only read leaves `score` and `search_detail` null — there was nothing to rank.
 
-`CatalogValueMatch`, the result type from [`Catalog.search_values`](search.md), carries
-the same trio per value — `coverage`, `score`, and `matched` — so value-level consumers
-report evidence exactly like row search does.
+`search_detail` does not score anything; it preserves the evidence behind the number
+you're reading. Native BM25 magnitudes and vector cosines are **not** comparable across
+kinds. Absence of a component means the value was not retained in that component's top-k
+for this query (given `candidate_limit`), not that there is no relationship.
 
-**The one-sentence contract: verified facts outrank guesses; guesses stay visible,
-labeled as guesses.** Nothing with a `coverage` you can trust more than a `coverage` you
-can't is ever ranked below it, and nothing with only a `score` is ever hidden — it just
-ranks by how good a guess it is.
+Three consequences follow, and they are the whole ranking contract:
 
-## Coverage, step by step
+- **`filter` is what you want enforced; `query` only orders what survives.** A constraint
+  expressed as query text is a hint the ranker is free to outweigh; the same constraint as
+  a [`filter`](search.md#filters) excludes non-matching rows outright. If it matters, filter
+  on it.
+- **Rows order by `(score desc, namespace, code)`** — deterministic, with no tier the
+  caller did not ask for. Two rows with equal scores always come back in the same order,
+  so a result page is reproducible and diffable.
+- **Commit from provider metadata, not ranking evidence.** Ranked rows are a shortlist.
+  Titles, codes, dimension labels, and filters decide; `search_detail` is optional
+  debugging when explaining *why* a row ranked where it did.
+- **Ranking policy above relevance belongs to the caller.** Only the caller knows what its
+  fields mean, so if a domain has a fact worth ranking above relevance, that connector
+  tiers on it itself rather than every provider carrying a generic column for it. See
+  [Tiering above relevance](#tiering-above-relevance).
 
-Coverage is computed in three steps:
+## Score, step by step
 
-1. **Tokenize the query.** `"annual rate of change"` → `{annual, rate, of, change}`.
-2. **Consume cells.** A cell (one indexed field value) is *consumed* only if **every**
-   token the cell contains also appears in the query — all-or-nothing per cell. A cell
-   that claims anything the query didn't ask for is a different concept, not a weaker
-   match, so it isn't partially credited.
-3. **Union and divide.** A row's `coverage` is the fraction of the *query's* tokens
-   covered by the union of that row's consumed cells, across whichever fields the
-   search touched.
+`Catalog.multi_field_search` is the whole ranking algorithm, and `Catalog.search` is the
+one-field case of it. Four steps:
 
-Consumption is binary per cell (a cell either qualifies or it doesn't); `coverage` itself
-is graded per query, because a row can consume several cells and each contributes
-whichever of its own tokens the query asked for.
+1. **Score each field's distinct values.** For every declared field, the index returns
+   index-native scores — BM25, vector neighbours, or their Level-1 RRF fusion inside a
+   hybrid field (see [Fusion inside a hybrid field](#fusion-inside-a-hybrid-field)) —
+   plus component traces (kind, raw score, competition rank).
+2. **Standardize the field ranking.** `search_index_values` pins exact matches first, then
+   calls `rrf` so the best value is `1.0`. Raw magnitudes die here for the public
+   relevance number; component raw scores stay in the evidence. Exact reinjection that
+   fuzzy retrieval missed carries empty `components`.
+   `Catalog.search_values` exposes the same relevance plus value-level `search_detail`.
+3. **Pool candidates and scan once.** Take the disjunction of "any row carrying any of
+   those scored values", AND it with the caller's `filter`, and scan the matching rows
+   exactly once — recording, per field, each row's value hit (text, weight, relevance,
+   components).
+4. **Fuse across fields (Level-2 RRF).** Each field is a ranking of those rows; `rrf`
+   fuses them with the field weights and top-normalizes again so the best row reports
+   `1.0`. Each contributing field keeps its fused competition rank in `search_detail`.
 
-The five examples below are all run against a live catalog to pin down the exact
-numbers; each query tokenizes to lowercase words.
+This is **hierarchical RRF**, not accidental double-normalization. Level 1 fuses lexical
+and semantic evidence over the same values into one field ranking. Level 2 fuses independent
+field rankings into one row ranking — consuming only each field's order, so a hybrid field
+does not get twice the vote merely because it has two internal components. Both levels use
+the same `rrf` / `rrf_traced` primitive, including its top-normalize contract.
 
-### False friend
+### Weighted fusion across fields
 
-Query `"annual rate of change"` over a `title` field:
-
-| Row title | Consumed? | `coverage` | `score` | Rank |
-|---|---|---|---|---|
-| "Annual rate of change" | yes — every cell token is in the query | `1.0` | `1.0` | pinned, #1 |
-| "Annual average rate of change" | no — `average` is not in the query | `0.0` | `1.0` | visible, #2 |
-
-Both rows land on the same `score` here (BM25 favors the longer title's extra term
-overlap just as much as the shorter one's exact match), but only the first row's title
-is *entirely* contained in the query. The second is a different, more specific concept
-("average rate of change" vs. "rate of change") and is graded accordingly — still
-returned, still visible, just not pinned above the literal match.
-
-### Term repetition
-
-Query `"current account"` over a `title` field:
-
-| Row title | Consumed? | `coverage` | `score` | Rank |
-|---|---|---|---|---|
-| "Current account" | yes | `1.0` | `0.667` | pinned, #1 |
-| "Current account, Current transfers" | no — `transfers` is extra | `0.0` | `1.0` | visible, #2 |
-
-The repeated tokens in the second title actually earn it the *higher* BM25 score. It
-still can't outbid the first row's coverage pin — score alone never beats a verified
-fact.
-
-### Facet AND across fields (the main payoff)
-
-Query `"quarterly services germany"` scored across three metadata fields at once:
+Four rows over three metadata facets, each weighted equally:
 
 ```python
-matches = catalog.search(
-    "quarterly services germany", fields=["freq", "item", "geo"], limit=10,
+matches = catalog.multi_field_search(
+    "quarterly services germany",
+    fields={"freq": 1.0, "item": 1.0, "geo": 1.0},
+    limit=4,
 )
 ```
 
-| Row | `freq` | `item` | `geo` | Cells consumed | `coverage` | `score` |
-|---|---|---|---|---|---|---|
-| A | Quarterly | Services | Germany | 3 of 3 | `1.0` | `3.0` |
-| B | Quarterly | Services | France | 2 of 3 | `0.667` | `2.0` |
-| C | Quarterly | Goods | Italy | 1 of 3 | `0.333` | `1.0` |
+| Row | `freq` | `item` | `geo` | Fields hit | `score` (after Level-2 `rrf`) |
+|---|---|---|---|---|---|
+| A | Quarterly | Services | Germany | 3 of 3 | `1.0` |
+| B | Quarterly | Services | France | 2 of 3 | `≈ 0.67` |
+| C | Quarterly | Goods | Italy | 1 of 3 | `≈ 0.33` |
+| D | Annual | Goods | Germany | 1 of 3 | `≈ 0.33` |
 
-This is coverage doing its real job: an AND across independently-scored facets. Row A
-fully satisfies all three query terms and ranks first; B satisfies two of three and
-ranks second regardless of how close its raw `score` gets to A's — a row that consumes
-more of the query outranks one that merely looks similar.
+When every hit is exact (or otherwise tied at the top of its field), Level-2 `rrf`
+is driven by how many fields the row appears in (scaled by weights); the fused best
+is `1.0`. C and D tie and are ordered by `(namespace, code)`.
 
-### Title degeneration (why partial coverage doesn't rank on a single field)
+A field weight means **the contribution of this field's ranking to row order**. Because RRF
+discards within-field magnitude, it does *not* mean "scale this field's BM25/cosine scores."
+`fields={"title": 3.0, "description": 1.0}` says a title hit is worth three description
+hits. Every weight must be a positive, finite number.
 
-Query `"unemployment rate monthly"` over a `title` field:
+### Value-level exactness
 
-| Row title | Consumed? | `coverage` | `score` | Rank |
-|---|---|---|---|---|
-| "Unemployment rate (%) - monthly data" | no — extra tokens | `0.0` | `1.0` | #1 (score order) |
-| "Unemployment rate" | yes, but only 2 of 3 query tokens | `0.667` | `0.667` | #2 (score order) |
+Within one field, the value the query literally names is that field's best possible match
+by definition, so it reports relevance `1.0`. Exact means case-folded, whitespace-trimmed
+string **equality** — nothing softer. No token containment, no grading of how nearly a
+value matched.
 
-Neither row hits `coverage == 1.0`, so neither pins — both rank by `score` alone, and
-the longer title wins because it actually shares more terms with the query. If a
-single-field surface ranked by raw `coverage` instead, the short title's higher fraction
-(`0.667` vs. `0.0`) would put it first — rewarding brevity, not relevance, since a short
-value "contains" more of a long query than a long value does by construction. That's why
-[row ranking](#row-ranking-coverage-tiers-by-surface-arity) on a single field only lets a
-full `1.0` pin outrank the fuzzy order; every other `coverage` value is reported but does
-not participate in ordering.
+Query `"M"` against a `freq` field holding `"M"` and `"M-2"`:
 
-### The known limit
+| `freq` value | Exact? | Relevance |
+|---|---|---|
+| `M` | yes | `1.0` |
+| `M-2` | no | `< 1.0` |
 
-Query `"annual index germany"` — three facet words, no word naming the actual concept —
-scored across the same three fields:
+A tokenless exact value (a bare `"-"`, a short code with no BM25 tokens) still reports
+`1.0`: exactness is reinjected even when fuzzy retrieval scored nothing
+(`components` empty in that case).
 
-| Row | `freq` | `item` | `geo` | Cells consumed | `coverage` | `score` |
-|---|---|---|---|---|---|---|
-| "Administrative index series" (wrong concept) | Annual | Index | Germany | 3 of 3 | `1.0` | `3.0` |
-| "Consumer price index" (intended) | Annual | Consumer price index | Germany | 2 of 3 | `0.667` | `3.0` |
-
-The wrong-concept row's `item` value is the bare word "Index," which is fully contained
-in the query; the intended row's `item` value, "Consumer price index," carries two extra
-tokens (`consumer`, `price`) the query never asked for, so it isn't consumed. Both rows
-tie on `score`, but the wrong-concept row's full coverage pins it above the row an
-analyst actually wants. See [Known limits](#known-limits) below — this is a documented,
-accepted tradeoff, not a bug.
-
-## Score
-
-`score` sums, over the searched fields, each field's **normalized** contribution: the
-row's best-matching value in that field, divided by that field's own top score for this
-query. Every field therefore contributes `0.0`–`1.0`, so agreeing evidence across fields
-accumulates and no single field's raw magnitude — BM25 and cosine similarity live on
-entirely different scales — can dominate the row's total.
-
-The corollary: `score` is relative to *this query's* best hit. It is never an absolute
-relevance measure and is never comparable across different queries or different
-catalogs — `0.6` on one search says nothing about `0.6` on another.
-
-## Row ranking: coverage tiers by surface arity
-
-Value-level fusion produces one score per distinct field value; `Catalog.search` then
-grades every row that carries a scored or fully-consumed value into a `(coverage, score,
-matched)` triple and orders rows by how many fields the search touched — a **facet
-surface** (`fields=[a, b, ...]`, several fields) or a **title surface** (broad search, a
-DSL clause, or `fields=["one_field"]`, exactly one field):
-
-- **Facet surface**: rows rank `(coverage desc, score desc)` throughout. `coverage`
-  counts provably-satisfied constraints — a row that fully consumes three of three query
-  facets outranks one that consumes two of three, regardless of raw `score`. This is the
-  facet-AND example above.
-- **Title surface**: there is no cross-field union to accumulate, so ranking on raw
-  `coverage` here would just proxy value *brevity* (a short title "contains" more of a
-  long query than a long title does, which says nothing about relevance — the title
-  degeneration example above). Only a full-consumption hit — `coverage == 1.0`, a
-  literal pin — outranks the fuzzy order; every other row ranks by `score` alone.
-  `coverage` is still reported on the match (the raw measurement); it just doesn't
-  participate in ordering below the `1.0` tier.
-
-This is a deliberate contract, not an anomaly: on a title surface a high-`score` row can
-rank below a `coverage=1.0` row with a lower score.
+`Catalog.search_values` surfaces the same fact as
+[`CatalogValueMatch.exact`](#resolving-a-value-before-you-rank).
 
 ## Reading a result page
 
-- **`coverage == 1.0`** — your query is literally satisfied by this row's values (an
-  exact or subset containment hit).
-- **`0 < coverage < 1`** — that fraction of your query's tokens is provably satisfied by
-  this row; the rest is unverified.
-- **`coverage == 0` and a high `score`** — the row *looks* similar but nothing in it is
-  provably a match. Check `matched`: `"semantic"` means the resemblance is entirely a
-  vector guess.
-- **A whole page of `matched == "semantic"`** — nothing lexically real matched anywhere
-  in the result set; the vector index is guessing at meaning with no literal anchor.
-  Rephrase the query rather than trust the ranking order as-is.
+- **A high `score`** — this row is the most relevant thing found *for this query*. It is
+  not a claim that the row is correct. Treat the page as a shortlist; commit from
+  titles, codes, and other provider metadata.
+- **`search_detail.fields[*].components`** — which index components retained this value
+  in their top-k, with native raw scores and competition ranks. Empty components mean
+  exact reinjection without a fuzzy hit, or that this field contributed only through
+  another path — never "no relationship" as a global claim.
+- **Missing a component kind** — the value fell outside that component's candidate
+  limit for this query. Raise `candidate_values` / `top_k` if you need deeper recall
+  evidence; do not infer unrelatedness.
+- **`search_detail is None`** — a filter-only read. There was nothing to rank (every row
+  satisfies the filter equally), so every match reports `score=None`.
 
-Row-level containment (`coverage > 0`) is always lexical evidence by construction — a
-token-subset test, not an embedding — so a row with positive `coverage` always carries
-at least `"lexical"` in its evidence, even when its positive `score` came only from the
-vector component.
+On discovery-connector pages, verbose evidence is projected as a `search_detail` column
+(canonical JSON of `SearchDetail`) with `role=None` and `exclude_from_llm_view=True`, so
+`to_llm()` keeps `score` but hides the nested traces. Rehydrate with
+`SearchDetail.model_validate_json(row["search_detail"])`. See
+[the discovery-connector surface](search.md#the-discovery-connector-surface).
 
-On discovery-connector pages the lexical evidence may live in the `description` field —
-searched, but deliberately not a result column — so `matched` cannot be reconstructed
-from the visible rows: it is the engine's receipt for text it read on the agent's
-behalf. See [the discovery-connector surface](search.md#the-discovery-connector-surface).
+## Resolving a value before you rank
 
-## Under the hood
-
-The sections below are the mechanics that produce the `coverage`/`score`/`matched`
-numbers above: how a hybrid field's BM25 and vector components combine at the value
-level (two regimes, picked automatically), the noise floor on the fuzzy-score table, and
-what a snapshot's legacy `fusion` key means today.
-
-!!! note "There is no configurable fusion"
-    The `parsimony.ranking` module — `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`,
-    `Ranking`/`RankingSet`, weights, custom `Ranker` implementations — has been
-    removed. Fusion is now two fixed, unweighted algorithms, chosen automatically by
-    how many fields a search touches. There is nothing to tune, subclass, or supply to
-    a `HybridIndex` constructor. See [Snapshots](#snapshots-fusion-is-native-not-stored)
-    below for what that means for old saved catalogs.
-
-### Two regimes, picked by surface arity
-
-A **surface** is the set of fields one `Catalog.search` call scores against: a single
-field (broad search against the `title` index, a resolved `FIELD: value` DSL clause, or
-`fields=["title"]`), or several (`fields=["title", "region"]`). A `HybridIndex`
-field's two components — a `BM25Index` and a `VectorIndex` — combine differently
-depending on which kind of surface it is being searched under. The regime is picked by
-the *call*, never by counting a field's distinct values; a field with ten values and a
-field with a million follow the exact same rule.
-
-#### Multi-field surfaces: lexical-first, semantic void-fill
-
-When `fields=[...]` names more than one field, every hybrid component in scope is
-lexical-first: BM25 ranks the field whenever it has any positive score at all. The
-vector component only steps in when lexical evidence **abstains entirely** for that
-field — the semantic bridge for query phrasing that shares no vocabulary with the
-indexed values (`"young people"` → `"less than 25 years"`), without letting the
-never-abstaining vector perturb an order lexical evidence has already decided.
+When you know what a value *means* but not how it is spelled in the data, resolve it
+instead of hoping the ranker guesses right. `Catalog.search_values` ranks a field's
+distinct values by `(exact desc, score desc)`; read the value off the result and then
+filter exactly on it:
 
 ```python
-matches = catalog.search("young people", fields=["title", "age_group"], limit=10)
+candidates = catalog.search_values("Germany", "geo", limit=5)
+print(candidates[0].value, candidates[0].exact)   # -> Germany True
+
+matches = catalog.search(
+    "unemployment", filter={"geo": candidates[0].value}, limit=10,
+)
 ```
 
-Here, if `title`'s BM25 finds any positive hit, `age_group`'s vector component is
-still free to void-fill *if `age_group`'s own BM25 comes back empty* — void-fill is
-decided per field, not once for the whole surface.
+This is the sequence to prefer over pushing `"germany"` into the query text and hoping. The
+filter *enforces* the country; the query only orders what survives it. If the field is
+declared in the catalog's `field_links`, each result also carries `linked_value` — the
+canonical code for that label — so the next step can filter on the code rather than the
+prose.
 
-#### Single-field surfaces: tie-aware Reciprocal Rank Fusion (RRF, k=60)
+## Fusion inside a hybrid field
 
-When a query scores exactly one field, that field carries all the recall alone, so
-both components get a vote: BM25's positive scores and the vector's top-*k* candidates
-fuse with unweighted Reciprocal Rank Fusion, `k=60`.
+A [`HybridIndex`](indexes.md#hybridindex) field holds two components — a `BM25Index` and a
+`VectorIndex` — and fuses them at the value level with tie-aware, unweighted **Reciprocal
+Rank Fusion** (`k=60`): BM25's positive scores against the vector's top-*k* candidates.
+Each retained component hit is recorded in `search_detail` with its native `raw_score` and
+competition `rank`.
 
 ```text
 fused(value) = Σ 1 / (60 + rank)   summed over every component that surfaced value
 ```
 
-`rank` is a **1-based competition rank over that component's own scores** — tied
-scores share a rank, so a plateau of equally-scored lexical hits contributes
-identically to every value in it, and the other component decides the order within
-the tie. A value surfaced by only one component gets no contribution from the other; a
-value both components agree on roughly doubles a single-component hit, so agreement
-stays visible even after the per-field score normalization above.
+`rank` is a **1-based competition rank over that component's own scores** — tied scores
+share a rank, so a plateau of equally-scored lexical hits contributes identically to every
+value in it, and the other component decides the order within the tie. A value surfaced by
+only one component gets no contribution from the other; a value both components agree on
+roughly doubles a single-component hit, so agreement stays visible in both the fused
+relevance and the dual component traces.
 
-There is no `weights=` or `k=` to configure. `k` is a fixed module constant
-(`RRF_K = 60` in `parsimony.catalog.indexes`), and both components contribute equally
-— RRF is rank-based, not score-based, so a component with naturally larger raw scores
-never dominates the other.
+There is nothing to configure: `k` is a fixed module constant (`RRF_K = 60` in
+`parsimony.indexes`), and both components contribute equally. RRF is rank-based
+rather than score-based precisely so a component with naturally larger raw scores cannot
+dominate the other. Component `raw_score` values in `search_detail` remain native and are
+not comparable across kinds.
 
-### `top_k_values`: a noise floor, not just a cost cap
+This is **one regime**, whatever the caller composes on top. A field is scored the same way
+whether it is searched alone or as one of six weighted fields, because a field being scored
+knows nothing about how many other fields the caller is about to combine it with — and a
+scoring mode that shifted underneath it could not be reasoned about field by field. Each
+field therefore carries its own semantic recall.
 
-Per field, only the top `top_k_values` scored values feed the fuzzy-score band
-(default `50`; the same value also bounds the vector candidate pool in both fusion
-regimes). This is deliberate: values past the cutoff would otherwise contribute weak
-positives — a stray token match three hundred candidates deep — that add noise
-without adding signal.
+!!! note "There is no configurable fusion"
+    The `parsimony.ranking` module — `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`,
+    `Ranking`/`RankingSet`, weights, custom `Ranker` implementations — has been removed.
+    Fusion is one fixed, unweighted algorithm. There is nothing to tune, subclass, or supply
+    to a `HybridIndex` constructor. See [Snapshots](#snapshots-fusion-is-native-not-stored)
+    below for what that means for old saved catalogs.
 
-Fully-consumed values are gated separately from the score table and always count
-toward `coverage`, no matter where they would have fallen in the fuzzy ranking.
-Truncation can only cost you fuzzy recall on distant, low-confidence values; it never
-drops an exact or subset-consumed match.
+## The candidate-value cap: a noise floor, not just a cost cap
 
-### Snapshots: fusion is native, not stored
+Per field, only the top scored values feed the fuzzy band — `top_k_values` on
+`Catalog.search`, `candidate_values` on `Catalog.multi_field_search`, both defaulting to
+`50`. The same bound caps the vector candidate pool inside a hybrid field and is recorded
+on each match as `search_detail.candidate_limit`. This is deliberate: values past the
+cutoff would otherwise contribute weak positives — a stray token match three hundred
+candidates deep — that add noise without adding signal.
 
-A `HybridIndex` snapshot's `meta.json` still writes a `fusion` key — frozen so
-pre-0.0.2 readers that expect one keep parsing successfully — but it is inert:
-`HybridIndex.load()` ignores it entirely. Fusion is computed natively at query time
-from the two regimes above, not from a serialized policy. A snapshot written by an
-older Parsimony version loads and searches unchanged; there is nothing to migrate.
+The cap applies to **distinct values, never to rows**, and that distinction is what makes it
+safe. Thousands of rows can share one scored value, so a bounded value table is not a
+bounded row set: candidates are pooled at the value level and the matching rows are scanned
+exactly once, in full. If the pool were built by taking a page of rows per field and
+joining, a row that matched on a field where it happened to fall off page two would lose
+that evidence.
+
+An exactly-named value is added back regardless of where it fell (empty `components` when
+fuzzy retrieval missed it), so the cap can never cost you the value the caller literally
+typed. Truncation costs only fuzzy recall on distant, low-confidence values. A missing
+component in `search_detail` means "not retained in this top-k," not "no relationship."
+
+## Tiering above relevance
+
+`score` deliberately encodes relevance and nothing else, and rows order by it alone. When a
+domain has a fact worth ranking above relevance — a series is still being updated, a dataset
+is the official release rather than a mirror — that ranking belongs to the caller, who is the
+only one who knows what the fact means. It is an ordinary sort over the returned matches:
+
+```python
+hits = catalog.search("unemployment", limit=50)
+tiered = sorted(hits, key=lambda m: (m.metadata.get("freq") != "M", -(m.score or 0.0)))
+```
+
+The alternative — a generic "fact" column on every result, computed by the kernel — was
+tried and removed. A kernel-computed fact has to be domain-neutral to be computable at all,
+and a domain-neutral fact is not the one any particular caller wanted: it ends up
+proxying something incidental (value brevity, token counts) while presenting itself as
+authoritative, and it pins rows above better matches for reasons the caller never asked
+for. Exactness at the *value* level survives because it is the one claim that needs no
+domain knowledge to state: the string is equal, or it is not.
+
+## Snapshots: fusion is native, not stored
+
+A `HybridIndex` snapshot's `meta.json` still writes a `fusion` key — frozen so pre-0.0.2
+readers that expect one keep parsing successfully — but it is inert: `HybridIndex.load()`
+ignores it entirely. Fusion is computed natively at query time, not from a serialized
+policy. A snapshot written by an older Parsimony version loads and searches unchanged;
+there is nothing to migrate.
 
 ## Known limits
 
+- **RRF is magnitude-blind.** Hybrid fusion is rank-based by design, which is exactly what
+  keeps one component's raw score scale from dominating the other. The tradeoff is that RRF
+  also throws away *how much* better one candidate is than the next: a landslide winner and
+  a candidate that barely edges out its neighbour contribute identically to the fused rank
+  as long as their relative order is the same. A concrete symptom: a short generic title
+  ("SWESTR Index") can out-rank the intended row ("SWESTR — Swedish Krona Short-Term Rate")
+  on BM25 length normalization alone, since RRF turns that sliver of an edge into a full
+  rank step. The mitigation is compositional — declare a second field with its own weight,
+  so one field's rank artefact is outvoted rather than decisive.
 - **Facet-only queries with no concept word.** A query built entirely from facet words —
-  `"annual index germany"`, with no word naming what's actually being searched for — can
-  be fully consumed by a row that happens to match on facets alone but is conceptually
-  wrong, which then out-ranks the intended row (the *Known limit* worked example above).
-  Coverage rewards provable containment; it has no way to know that "index" alone is too
-  generic a concept word to anchor the query. The mitigation is qualitative, not
-  structural: include at least one word that names the concept, not just its facets.
-- **RRF is magnitude-blind.** Single-field fusion (RRF, `k=60`) is rank-based by design —
-  see [the two regimes](#two-regimes-picked-by-surface-arity) — which is exactly what
-  keeps one component's raw score scale from dominating the other. The tradeoff is that
-  RRF also throws away *how much* better one candidate is than the next: a landslide
-  winner in one component and a candidate that barely edges out its neighbor contribute
-  identically to the fused rank as long as their relative order is the same. When two
-  single-field results have close `score`s, that closeness may understate or overstate
-  how differentiated the underlying evidence actually was. A concrete symptom: a short
-  generic title ("SWESTR Index") can out-rank the intended row ("SWESTR — Swedish Krona
-  Short-Term Rate") on BM25 length normalization alone, since RRF turns that sliver of
-  an edge into a full rank step. This is why the discovery-connector factory declares
-  `fields=["title", "description"]` — a two-field surface takes the lexical-first facet
-  regime instead — leaving RRF to deliberately-narrowed single-field surfaces (e.g.
-  SDMX dataset titles, where a flow's identity *is* its title).
+  `"annual index germany"`, with no word naming what is actually being searched for — scores
+  a row that matches on facets alone as highly as the intended one, because there is no term
+  left to separate them. `score` measures relevance to the words given; it cannot know that
+  "index" alone is too generic to anchor the query. The mitigation is qualitative: include
+  at least one word naming the concept, not just its facets — or move the facets into
+  `filter`, where they are enforced rather than scored, and leave the query for the concept.
 
 ## See also
 
 - [Indexes](indexes.md) — `BM25Index`, `VectorIndex`, `HybridIndex`, and the discovery index policy.
-- [Building and searching](search.md) — `Catalog.search`, `fields=`, and `CatalogMatch`.
+- [Building and searching](search.md) — `Catalog.search`, `multi_field_search`, filters, and `CatalogMatch`.
 - [Entities](entities.md) — the `CatalogMatch` model these scores populate.
 - [Snapshots and persistence](snapshots.md) — the legacy `fusion` key in a `HybridIndex` manifest.

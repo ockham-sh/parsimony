@@ -289,7 +289,7 @@ def describe_connector(c: Connector) -> str:
         cols = c.output_spec.columns
         name_w = max((len(col.name) for col in cols), default=0) + 2
         for col in cols:
-            role_str = col.role.value.upper()
+            role_str = "—" if col.role is None else col.role.value.upper()
             suffix = f"  namespace={col.namespace!r}" if col.namespace else ""
             lines.append(f"  {col.name:<{name_w}}{role_str:<10}{suffix}")
             if col.description:
@@ -314,11 +314,12 @@ def _returns_clause(output: OutputSpec) -> str:
     preserved (the card sits in the prompt-cached prefix, so output must stay
     deterministic). Returns an empty string when no column is visible.
     """
-    tokens = [
-        f"{col.name} {col.llm_annotation(with_description=True)}"
-        for col in output.columns
-        if not col.exclude_from_llm_view
-    ]
+    tokens: list[str] = []
+    for col in output.columns:
+        if col.exclude_from_llm_view:
+            continue
+        annotation = col.llm_annotation(with_description=True)
+        tokens.append(f"{col.name} {annotation}" if annotation else col.name)
     if not tokens:
         return ""
     return f" Returns: {', '.join(tokens)}."

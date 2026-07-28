@@ -27,6 +27,7 @@ from parsimony.transport.helpers import (
     fetch_text,
     make_api_key_client,
     make_http_client,
+    require_key,
 )
 
 Handler = Callable[[httpx.Request], httpx.Response]
@@ -41,6 +42,30 @@ def _http(handler: Handler, *, provider: str = "acme", retry: bool = False, **cl
         retry_policy=HttpRetryPolicy(max_attempts=3, base_delay_s=0.0, jitter_s=0.0) if retry else None,
         **client_kw,  # type: ignore[arg-type]
     )
+
+
+def test_require_key_returns_arg() -> None:
+    assert require_key("sekret", env_var="ACME_KEY", provider="acme") == "sekret"
+
+
+def test_require_key_falls_back_to_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACME_KEY", "from-env")
+    assert require_key("", env_var="ACME_KEY", provider="acme") == "from-env"
+
+
+def test_require_key_strips_whitespace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACME_KEY", "  padded  ")
+    assert require_key("", env_var="ACME_KEY", provider="acme") == "padded"
+    assert require_key("  arg  ", env_var="ACME_KEY", provider="acme") == "arg"
+
+
+def test_require_key_blank_and_whitespace_count_as_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ACME_KEY", "   ")
+    with pytest.raises(UnauthorizedError) as exc:
+        require_key("", env_var="ACME_KEY", provider="acme")
+    assert exc.value.env_var == "ACME_KEY"
+    with pytest.raises(UnauthorizedError):
+        require_key("  \t  ", env_var="ACME_KEY", provider="acme")
 
 
 def test_make_http_client_normalises_base_url() -> None:

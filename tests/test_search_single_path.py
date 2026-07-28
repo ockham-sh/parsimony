@@ -4,13 +4,13 @@ Covers the regimes the rewrite introduced:
 
 * Legacy snapshots keep loading — the frozen ``fusion`` key in hybrid meta is
   ignored, fusion is computed natively at query time.
-* Single-field surfaces: only full consumption (coverage 1.0) reorders; partial
-  containment is reported but does not rank.
-* Multi-field surfaces: lexical-first with semantic void-fill — BM25 rules a
-  field whenever it has any positive; the vector only fills a fully-abstaining
-  field.
-* ``matched`` records which component surfaced a row: "lexical", "semantic",
-  "both", or ``None`` for filter-only reads.
+* Ranking is score-only and deterministic: nothing is pinned above relevance
+  behind the caller's back, and equal scores fall back to identity.
+* One fusion regime per field, whatever the caller composes on top: BM25
+  positives and the vector's top-k fuse under RRF, so a field carries its own
+  semantic recall and does not change behaviour with the surface's arity.
+* ``search_detail`` preserves component/field evidence for inspection; filter-only
+  reads leave ``score`` and ``search_detail`` as ``None``.
 * Tie-aware unweighted RRF over per-component value scores.
 """
 
@@ -23,14 +23,14 @@ import pytest
 
 from parsimony.catalog import BM25Index, Catalog, Entity, VectorIndex
 from parsimony.catalog.indexes import (
-    RRF_K,
     HybridIndex,
     IndexBuildContext,
-    _rrf_value_scores,
-    embed_query_vectors,
+    QueryContext,
     search_index_values,
 )
+from parsimony.catalog.models import CatalogMatch
 from parsimony.embedder import EmbedderInfo
+from parsimony.indexes import RRF_K, rrf
 
 
 class _StubEmbedder:
@@ -50,6 +50,11 @@ class _StubEmbedder:
 
     def info(self) -> EmbedderInfo:
         return EmbedderInfo(model="stub", dim=self.DIM, normalize=True, package="test")
+
+
+def _component_kinds(match: CatalogMatch) -> set[str]:
+    assert match.search_detail is not None
+    return {c.kind for field in match.search_detail.fields for c in field.components}
 
 
 # ---------------------------------------------------------------------------
@@ -86,25 +91,24 @@ def test_hybrid_load_ignores_legacy_fusion_spec(tmp_path: Path) -> None:
             component._embedder = stub
             component._embedder_info = stub.info()
 
-    query_vectors = embed_query_vectors("Germany GDP", [loaded])
-    scored = search_index_values(loaded, "Germany GDP", limit=5, query_vectors=query_vectors)
+    scored = search_index_values(loaded, QueryContext(query="Germany GDP"), limit=5)
 
     assert scored, "value scoring must work after loading a legacy snapshot"
-    assert scored[0][0] == "GDP of Germany"
+    assert scored[0].text == "GDP of Germany"
 
 
 # ---------------------------------------------------------------------------
-# b. Single-field surface: only coverage 1.0 reorders; partial is reported only
+# b. Ranking is score-only: no hidden tier above relevance
 # ---------------------------------------------------------------------------
 
 
 def _single_field_catalog() -> Catalog:
     entries = [
-        # Full consumption of the query -> coverage 1.0, must pin rank 1.
+        # The query, exactly.
         Entity(namespace="demo", code="EXACT", title="gross domestic product annual", metadata={}),
-        # A leftover token ("extra") -> coverage 0, but a high fuzzy score.
+        # A leftover token ("extra") — a different concept, but a strong fuzzy score.
         Entity(namespace="demo", code="HIGH", title="gross domestic product extra", metadata={}),
-        # A short subset of the query -> partial coverage, low fuzzy score.
+        # A short subset of the query: overlaps, but explains little of it.
         Entity(namespace="demo", code="PARTIAL", title="annual", metadata={}),
     ]
     catalog = Catalog("demo", indexes={"title": BM25Index()})
@@ -113,25 +117,39 @@ def _single_field_catalog() -> Catalog:
     return catalog
 
 
-def test_single_field_partial_coverage_does_not_reorder() -> None:
+def test_ranking_is_score_only_with_no_hidden_tier() -> None:
+    """Relevance alone orders rows, and it is enough for the obvious case.
+
+    The row that *is* the query still wins here, on score. What must not happen is
+    a tier doing that work invisibly: partial overlap gets no promotion, so the
+    weakly-overlapping row stays below the strongly-scoring one, and every score
+    stays inside the normalized band a single weighted field can produce.
+    """
     catalog = _single_field_catalog()
-    matches = catalog.search("gross domestic product annual", fields="title", limit=10)
+    matches = catalog.search("gross domestic product annual", field="title", limit=10)
     order = [m.code for m in matches]
 
-    # Exact consumption pins rank 1 over a higher-scoring fuzzy row.
     assert order[0] == "EXACT"
-    assert matches[0].coverage == 1.0
-
-    # A partially-consumed but lower-scoring row must NOT outrank the higher
-    # fuzzy row: single-field ordering below coverage 1.0 is score-only.
     assert order.index("HIGH") < order.index("PARTIAL")
+    assert all(0.0 < m.score <= 1.0 for m in matches)
+    assert all(m.search_detail is not None for m in matches)
 
-    # Partial coverage is reported raw, not banded to zero and not to one.
-    partial = next(m for m in matches if m.code == "PARTIAL")
-    assert partial.coverage == 0.25
-    high = next(m for m in matches if m.code == "HIGH")
-    assert high.coverage == 0.0
-    assert high.score > partial.score
+
+def test_equal_scores_fall_back_to_identity_order() -> None:
+    """Ties break on (namespace, code), so a result page never shuffles run to run."""
+    catalog = Catalog("demo", indexes={"title": BM25Index()})
+    catalog.set_entities(
+        [
+            Entity(namespace="demo", code="B", title="identical text", metadata={}),
+            Entity(namespace="demo", code="A", title="identical text", metadata={}),
+        ]
+    )
+    catalog.build()
+
+    matches = catalog.search("identical text", field="title", limit=10)
+
+    assert [m.score for m in matches] == [matches[0].score] * 2
+    assert [m.code for m in matches] == ["A", "B"]
 
 
 # ---------------------------------------------------------------------------
@@ -166,38 +184,42 @@ def _void_fill_catalog() -> Catalog:
     return catalog
 
 
-def test_multi_field_void_fill_surfaces_semantic_neighbour() -> None:
-    """BM25 abstains on the label; the vector's neighbour still surfaces the row."""
+def test_hybrid_field_surfaces_a_semantic_neighbour_bm25_cannot_reach() -> None:
+    """The recall this regime exists for: "young people" -> "less than 25 years".
+
+    The label shares no token with the query, so BM25 finds nothing; the row is
+    reachable only because the vector component participates in every hybrid
+    field's scoring. ``search_detail`` records vector-only component evidence.
+    """
     catalog = _void_fill_catalog()
-    matches = catalog.search("young people", fields=["title", "label"], limit=10)
+    matches = catalog.multi_field_search("young people", fields={"title": 1.0, "label": 1.0}, limit=10)
     codes = [m.code for m in matches]
 
     assert "YOUTH" in codes
     youth = next(m for m in matches if m.code == "YOUTH")
-    assert youth.matched == "semantic"
+    assert _component_kinds(youth) == {"vector"}
 
 
-def test_multi_field_vector_does_not_perturb_lexical_ranking() -> None:
-    """When BM25 has a positive on the field, the vector must not reorder it.
+def test_lexical_and_semantic_candidates_both_surface_and_are_labelled() -> None:
+    """A vector-only neighbour is reported beside a lexical hit, never in place of it.
 
-    The stub embeds the query near the "wrong" label ("beta measure"), but BM25
-    ranks the token-matching label ("alpha metric"); the void-fill regime keeps
-    the vector out entirely, so BM25's preference wins and the vector's favourite
-    never surfaces via the label.
+    The stub embeds "alpha" near the *wrong* label ("beta measure") while BM25
+    matches the token-sharing one ("alpha metric"). Both rows come back, each
+    with component evidence for how it was found. Their tie is broken by identity,
+    so the page is stable.
     """
     catalog = _void_fill_catalog()
-    matches = catalog.search("alpha", fields=["title", "label"], limit=10)
-    codes = [m.code for m in matches]
+    matches = catalog.multi_field_search("alpha", fields={"title": 1.0, "label": 1.0}, limit=10)
 
-    assert "X" in codes
-    x = next(m for m in matches if m.code == "X")
-    assert x.matched == "lexical"
-    # The vector's favourite label never surfaced — BM25 held the field.
-    assert "Y" not in codes
+    by_code = {m.code: m for m in matches}
+    assert {"X", "Y"} <= set(by_code)
+    assert "bm25" in _component_kinds(by_code["X"])
+    assert _component_kinds(by_code["Y"]) == {"vector"}
+    assert [m.code for m in matches] == ["X", "Y"]
 
 
 # ---------------------------------------------------------------------------
-# d. matched semantics: lexical / both / None
+# d. search_detail: component evidence / None on filter-only
 # ---------------------------------------------------------------------------
 
 
@@ -208,17 +230,24 @@ def _both_entries() -> list[Entity]:
     ]
 
 
-def test_bm25_only_search_marks_every_match_lexical() -> None:
+def test_bm25_only_search_records_bm25_component_evidence() -> None:
     catalog = Catalog("demo", indexes={"title": BM25Index()})
     catalog.set_entities(_both_entries())
     catalog.build()
 
-    matches = catalog.search("gross domestic product", fields="title", limit=10)
+    matches = catalog.search("gross domestic product", field="title", limit=10)
     assert matches
-    assert all(m.matched == "lexical" for m in matches)
+    assert all(_component_kinds(m) == {"bm25"} for m in matches)
+    top = matches[0]
+    assert top.search_detail is not None
+    assert top.search_detail.candidate_limit >= 1
+    field = top.search_detail.fields[0]
+    assert field.field == "title"
+    assert field.components[0].raw_score > 0
+    assert field.components[0].rank >= 1
 
 
-def test_hybrid_single_field_agreement_marks_match_both() -> None:
+def test_hybrid_single_field_agreement_records_both_components() -> None:
     vectors = {"gross domestic product": [1.0, 0.0, 0.0], "consumer price index": [0.0, 1.0, 0.0]}
     catalog = Catalog(
         "demo",
@@ -227,19 +256,20 @@ def test_hybrid_single_field_agreement_marks_match_both() -> None:
     catalog.set_entities(_both_entries())
     catalog.build()
 
-    matches = catalog.search("gross domestic product", fields="title", limit=10)
+    matches = catalog.search("gross domestic product", field="title", limit=10)
     assert matches[0].code == "GDP"
-    assert matches[0].matched == "both"
+    assert _component_kinds(matches[0]) == {"bm25", "vector"}
 
 
-def test_filter_only_search_has_no_matched_evidence() -> None:
+def test_filter_only_search_has_no_search_detail() -> None:
     catalog = Catalog("demo", indexes={"title": BM25Index()})
     catalog.set_entities(_both_entries())
     catalog.build()
 
     matches = catalog.search(filter={"code": ["GDP"]}, limit=10)
     assert [m.code for m in matches] == ["GDP"]
-    assert matches[0].matched is None
+    assert matches[0].score is None
+    assert matches[0].search_detail is None
 
 
 # ---------------------------------------------------------------------------
@@ -250,15 +280,16 @@ def test_filter_only_search_has_no_matched_evidence() -> None:
 def test_rrf_ties_share_competition_rank_and_vector_breaks_them() -> None:
     # bm25 ties vids 1 and 2 at score 2.0 (competition rank 1); vid 3 at 1.0
     # takes rank 3 (not 2) because the tie occupies both leading positions.
-    bm25_only = _rrf_value_scores({"bm25": {1: 2.0, 2: 2.0, 3: 1.0}})
+    bm25_only = rrf({"bm25": {1: 2.0, 2: 2.0, 3: 1.0}})
     assert bm25_only[1] == bm25_only[2]
-    assert bm25_only[1] == pytest.approx(1.0 / (RRF_K + 1))
-    assert bm25_only[3] == pytest.approx(1.0 / (RRF_K + 3))
+    assert bm25_only[1] == pytest.approx(1.0)
+    assert bm25_only[3] == pytest.approx((1.0 / (RRF_K + 3)) / (1.0 / (RRF_K + 1)))
     assert bm25_only[3] < bm25_only[1]
 
     # Adding the vector component (which ranks vid 2 above vid 1) breaks the tie
     # in vid 2's favour overall, while vid 3 stays last.
-    fused = _rrf_value_scores({"bm25": {1: 2.0, 2: 2.0, 3: 1.0}, "vector": {2: 0.9, 1: 0.5}})
+    fused = rrf({"bm25": {1: 2.0, 2: 2.0, 3: 1.0}, "vector": {2: 0.9, 1: 0.5}})
     order = sorted(fused, key=lambda vid: -fused[vid])
     assert order == [2, 1, 3]
+    assert fused[2] == pytest.approx(1.0)
     assert fused[2] > fused[1] > fused[3]

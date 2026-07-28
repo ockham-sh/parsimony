@@ -1,13 +1,9 @@
-"""Catalog contracts: filter types and row-backend configuration."""
+"""Catalog contracts: row-backend configuration."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
-
-FilterSpec = Mapping[str, Sequence[str]]
-"""Exact filter: column or entity field name -> allowed values (AND-composed)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,5 +30,4 @@ class CatalogBackendConfig:
 
 __all__ = [
     "CatalogBackendConfig",
-    "FilterSpec",
 ]

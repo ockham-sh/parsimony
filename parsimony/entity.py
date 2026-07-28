@@ -102,25 +102,70 @@ def field_value(entity: Entity, field: str) -> Any:
     return entity.metadata.get(field)
 
 
-def field_values(entity: Entity, field: str) -> list[str]:
-    """Return searchable values for *field* on *entity* (one or more strings)."""
+def require_scalar_text(
+    value: Any,
+    *,
+    field: str,
+    identity: str | None = None,
+) -> str | None:
+    """Canonicalize a searchable/filterable cell to trimmed text, or ``None``.
 
-    value = field_value(entity, field)
+    Indexed, ranked, and structured-filter columns are scalar: ``None``,
+    ``str``, ``bool``, or a number. Nested values (list/tuple/set/dict) remain
+    legal in :attr:`Entity.metadata` for display and storage, but they are not
+    a searchable field — operators that need that surface must expose an
+    intentional derived scalar (for example ``tags_text="energy prices"``).
+
+    ``math.inf`` / ``NaN`` are rejected: they are not meaningful catalog text.
+    """
     if value is None:
-        return []
+        return None
+    if isinstance(value, (list, tuple, set, frozenset, dict)):
+        where = f" on {identity}" if identity else ""
+        raise ValueError(
+            f"Searchable field {field!r}{where} must be scalar "
+            f"(str/number/bool/null); got {type(value).__name__}. "
+            "Keep nested data in metadata for display, or expose a derived "
+            "scalar field for search."
+        )
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+            where = f" on {identity}" if identity else ""
+            raise ValueError(f"Searchable field {field!r}{where} has non-finite number {value!r}")
+        return str(value)
     if isinstance(value, str):
         text = value.strip()
-        return [text] if text else []
-    if isinstance(value, (list, tuple, set)):
-        return [str(item).strip() for item in value if item is not None and str(item).strip()]
-    if isinstance(value, dict):
-        return [f"{key}: {item}".strip() for key, item in value.items() if item is not None and str(item).strip()]
-    text = str(value).strip()
-    return [text] if text else []
+        return text if text else None
+    # Arrow / numpy scalars often expose .item(); tolerate that once.
+    if hasattr(value, "item") and not isinstance(value, (bytes, bytearray)):
+        try:
+            return require_scalar_text(value.item(), field=field, identity=identity)
+        except (ValueError, TypeError):
+            pass
+    where = f" on {identity}" if identity else ""
+    raise ValueError(
+        f"Searchable field {field!r}{where} must be scalar (str/number/bool/null); got {type(value).__name__}"
+    )
+
+
+def field_values(entity: Entity, field: str) -> list[str]:
+    """Return searchable scalar values for *field* on *entity* (zero or one string).
+
+    Nested metadata is rejected: searchable fields are scalar. See
+    :func:`require_scalar_text`.
+    """
+    text = require_scalar_text(
+        field_value(entity, field),
+        field=field,
+        identity=f"{entity.namespace}/{entity.code}",
+    )
+    return [text] if text is not None else []
 
 
 def field_text(entity: Entity, field: str) -> str:
-    """Return searchable text for *field* on *entity* (joined multi-values)."""
+    """Return searchable text for *field* on *entity*."""
 
     parts = field_values(entity, field)
     return " ".join(parts)
@@ -147,4 +192,5 @@ __all__ = [
     "field_values",
     "normalize_entity_code",
     "normalize_namespace",
+    "require_scalar_text",
 ]

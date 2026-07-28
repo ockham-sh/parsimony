@@ -1,7 +1,7 @@
 # Public API & import map
 
 This page is the canonical map of what to import from where. Parsimony exposes a small,
-curated **top-level** surface (`from parsimony import ...`) of 33 names, plus a larger set of
+curated **top-level** surface (`from parsimony import ...`) of 35 names, plus a larger set of
 symbols that live only in submodules. When a name is not in the top-level list below, import it
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
@@ -17,7 +17,7 @@ print(len(parsimony.__all__))  # number of top-level exports
 
 ## Top-level names
 
-These 33 names are re-exported from the package root and make up `parsimony.__all__`. They are
+These 35 names are re-exported from the package root and make up `parsimony.__all__`. They are
 grouped below by concern; the grouping is editorial — at runtime they are a flat namespace.
 
 ### Connectors
@@ -73,6 +73,8 @@ See [Errors](../connectors/errors.md). Note `CatalogNotFoundError` is **not** to
 | `BM25Index` | class — lexical (BM25) field index | `from parsimony import BM25Index` |
 | `VectorIndex` | class — dense-vector field index | `from parsimony import VectorIndex` |
 | `HybridIndex` | class — BM25 + vector fusion field index | `from parsimony import HybridIndex` |
+| `Filter` | class — backend-neutral row predicate accepted by every `filter=` | `from parsimony import Filter` |
+| `F` | class — field handle for building conditions (`F("geo").eq("DE")`) | `from parsimony import F` |
 | `auto_catalog` | function — wrap a DataFrame in an in-memory BM25 catalog (one entity per row) | `from parsimony import auto_catalog` |
 
 See [The Catalog](../catalog/index.md), [Indexes](../catalog/indexes.md), and
@@ -86,10 +88,11 @@ See [The Catalog](../catalog/index.md), [Indexes](../catalog/indexes.md), and
 
 !!! note "There is no top-level ranking/fusion API"
     Fusion is not a pluggable policy any more — `parsimony.ranking` (`Ranker`, `Ranking`,
-    `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`) has been removed. See
-    [Ranking and fusion](../catalog/ranking-and-fusion.md) for how `HybridIndex` and
-    `Catalog.search` fuse and rank results now — two fixed algorithms, nothing to import
-    or configure.
+    `RRF`, `ZScoreFusion`, `MinMaxScoreFusion`) has been removed. `HybridIndex` and
+    `Catalog.search` fuse with one fixed algorithm (RRF) plus the per-call field weights
+    the caller declares — nothing to configure. The pure RRF helpers live under
+    [`parsimony.indexes`](#parsimonyindexes); see
+    [Ranking and fusion](../catalog/ranking-and-fusion.md).
 
 ### Stores
 
@@ -112,7 +115,7 @@ See [Caching](../caching.md) and [Discovering installed providers](../plugins/di
 the latter also covers how `discover` (installed) and `registry` (installable) differ and compose.
 
 !!! note "These are the only top-level names"
-    `from parsimony import <name>` works **only** for the 33 names above. Anything else raises
+    `from parsimony import <name>` works **only** for the 35 names above. Anything else raises
     `AttributeError`. Import every other symbol from its submodule, using the paths in the next
     section.
 
@@ -138,10 +141,16 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 
 | Name | Kind |
 |---|---|
-| `StructuredQuery` | class — parsed structured query (`FIELD: v1, v2 && ...`) |
-| `parse_query` | function — parse a query string into broad/structured form |
-| `UnknownIndexedFieldError` | exception — structured clause names an unindexed field |
-| `BroadSearchUnavailableError` | exception — broad search with no `title` index |
+| `FilterLike` | type alias — anything accepted as a `filter=`: a `Filter`, the mapping shorthand, or the serializable expression form |
+| `FieldIn` / `FieldPrefix` / `FieldContains` / `FieldMatches` | classes — equality/membership, prefix, substring, and regex leaf filters |
+| `all_of` / `any_of` | functions — AND / OR several `Filter`s into one tree |
+| `as_filter` | function — normalize any accepted filter spelling into a `Filter` (or `None`) |
+| `SearchDetail` | model — typed ranking evidence on a match (`fields`, `candidate_limit`) |
+| `FieldSearchDetail` | model — one field's contribution inside `SearchDetail` |
+| `ComponentSearchDetail` | model — one index component's raw score + competition rank |
+| `CatalogValueMatch` | class — one ranked distinct value from `Catalog.search_values` |
+| `UnknownIndexedFieldError` | exception — `field=`, or a `fields=` key on `multi_field_search`, names an unindexed field |
+| `BroadSearchUnavailableError` | exception — a query omits `field=` and there is no `title` index |
 | `code_token` | function — normalize a string into a provider code token |
 | `entity_key` | function — canonical `(namespace, code)` key |
 | `normalize_namespace` | function — validate/normalize a namespace to snake_case |
@@ -150,8 +159,18 @@ All eight top-level error classes are also importable from `parsimony.errors`; o
 
 ```python
 from parsimony.catalog import (
-    StructuredQuery,
-    parse_query,
+    CatalogValueMatch,
+    ComponentSearchDetail,
+    FieldContains,
+    FieldIn,
+    FieldMatches,
+    FieldPrefix,
+    FieldSearchDetail,
+    FilterLike,
+    SearchDetail,
+    all_of,
+    any_of,
+    as_filter,
     UnknownIndexedFieldError,
     BroadSearchUnavailableError,
     code_token,
@@ -251,29 +270,42 @@ See [Conformance testing](../plugins/conformance.md).
 
 ### `parsimony.indexes`
 
-The low-level FAISS helpers used by `VectorIndex` / `HybridIndex` (the `catalog` extra). `faiss`
-imports lazily inside these functions, so importing the module itself does not require it.
+Pure ranking/index helpers used by `BM25Index` / `VectorIndex` / `HybridIndex` and
+`Catalog.search`. FAISS imports lazily inside the FAISS helpers, so importing the module itself
+does not require it.
 
 | Name | Kind |
 |---|---|
+| `rrf` / `rrf_traced` | function — reciprocal-rank fusion (optionally with per-source competition ranks) |
+| `RRF_K` | constant — default RRF `k` (60) |
+| `competition_ranks` | function — dense 1-based ranks from a score map (ties share a rank) |
 | `tokenize` | function — tokenize text for BM25 |
 | `build_faiss` | function — build an adaptive Flat/HNSW/IVF FAISS index |
 | `read_faiss` / `write_faiss` | function — load/save a FAISS index |
 
 ```python
-from parsimony.indexes import tokenize, build_faiss, read_faiss, write_faiss
+from parsimony.indexes import (
+    RRF_K,
+    competition_ranks,
+    rrf,
+    rrf_traced,
+    tokenize,
+    build_faiss,
+    read_faiss,
+    write_faiss,
+)
 ```
 
-See [Indexes](../catalog/indexes.md) and [Environment variables](environment.md) for
-`PARSIMONY_FAISS_IVF_THRESHOLD`.
+See [Ranking and fusion](../catalog/ranking-and-fusion.md), [Indexes](../catalog/indexes.md),
+and [Environment variables](environment.md) for `PARSIMONY_FAISS_IVF_THRESHOLD`.
 
 ## Lazy imports
 
 `import parsimony` is intentionally cheap. The catalog and store names
 (`Catalog`, `Entity`, `CatalogMatch`, `BM25Index`, `VectorIndex`, `HybridIndex`, `CatalogIndex`,
-`auto_catalog`, `InMemoryDataStore`, `LoadResult`) are resolved lazily through the module's
-`__getattr__` on first access. Only then is the underlying submodule — and any heavy dependency
-it pulls (FAISS, sentence-transformers, huggingface-hub) — imported.
+`Filter`, `F`, `auto_catalog`, `InMemoryDataStore`, `LoadResult`) are resolved lazily through
+the module's `__getattr__` on first access. Only then is the underlying submodule — and any
+heavy dependency it pulls (FAISS, sentence-transformers, huggingface-hub) — imported.
 
 ```python
 import parsimony

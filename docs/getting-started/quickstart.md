@@ -180,7 +180,7 @@ catalog.build()
 print(sorted(catalog.indexes))  # ["code", "region", "title"]
 ```
 
-For structured queries, snapshot persistence (`save` / `load` over `file://` and `hf://`), and the index types in depth, see [Building and searching](../catalog/search.md), [Indexes](../catalog/indexes.md), and [Snapshots and persistence](../catalog/snapshots.md).
+For exact filters, weighted multi-field ranking, snapshot persistence (`save` / `load` over `file://` and `hf://`), and the index types in depth, see [Building and searching](../catalog/search.md), [Indexes](../catalog/indexes.md), and [Snapshots and persistence](../catalog/snapshots.md).
 
 ## Using a real provider plugin
 

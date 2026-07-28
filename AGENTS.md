@@ -12,9 +12,10 @@ make format   # ruff format + auto-fix
 | What | Where |
 |------|-------|
 | Decorators, `Connectors` | `parsimony/connector.py` |
-| Result types, `OutputConfig` | `parsimony/result.py` |
+| Result types, `OutputSpec` | `parsimony/result.py` |
 | `Catalog` | `parsimony/catalog/catalog.py` (package `parsimony.catalog`) |
 | Catalog search helpers | `parsimony/catalog/search.py` |
+| Composable catalog filters | `parsimony/catalog/filters.py` |
 | FAISS/BM25 pure functions | `parsimony/indexes.py` |
 | Catalog index types | `parsimony/catalog/indexes.py` |
 | Plugin discovery | `parsimony/discover.py` |

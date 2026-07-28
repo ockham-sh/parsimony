@@ -278,16 +278,17 @@ print(f"\nto_llm() excerpt (first 300 chars):\n{llm_text[:300]}…")
 # Index types:
 #   BM25Index   — keyword matching (no embedding model required)
 #   VectorIndex — semantic similarity via sentence-transformers + FAISS
-#   HybridIndex — BM25 + vector components fused with z-score normalization
+#   HybridIndex — BM25 + vector components fused with Reciprocal Rank Fusion (RRF)
 #
 # indexes=None  → framework auto-creates BM25 indexes for code, title, and
 #                 every metadata key observed in the entries at build time.
-# Plain-text (broad) queries target the "title" index by convention — no
-# constructor argument needed. Any catalog with a "title" index supports
-# broad search automatically; other fields are reached with fields=[...].
+# A query is always literal text. It targets the "title" index by convention —
+# no constructor argument needed — and any other indexed field is reached with
+# field="name". Exact constraints are never expressed in the query text: they go
+# in filter=, which excludes non-matching rows instead of merely re-ranking them.
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n" + "=" * 70)
-print("Stage 6 — Building a Catalog (BM25, broad search, structured queries)")
+print("Stage 6 — Building a Catalog (BM25, literal queries, exact filters)")
 print("=" * 70)
 
 entries = [
@@ -321,13 +322,14 @@ cat.build()
 hits = cat.search("inflation rate", limit=5)
 assert hits and hits[0].code == "INFL"
 
-# Structured query — DSL "field: value"
-hits2 = cat.search("freq: daily", limit=5)
-assert {"YIELD", "FOREX"}.issubset({h.code for h in hits2})
+# Exact constraint — filter=, the replacement for any "field: value" spelling
+hits2 = cat.search(filter={"freq": "daily"}, limit=5)
+assert {"YIELD", "FOREX"} == {h.code for h in hits2}
 
-hits3 = cat.search("code: GDP", limit=3)
+# Score one named field instead of the default
+hits3 = cat.search("GDP", field="code", limit=3)
 assert hits3 and hits3[0].code == "GDP"
-print(f"structured 'code: GDP':   {[(h.code, round(h.score, 2)) for h in hits3]}")
+print(f"field='code' 'GDP':       {[(h.code, round(h.score, 2)) for h in hits3]}")
 
 # Point lookup
 e = cat.get("acme", "GDP")
@@ -440,11 +442,12 @@ hits_e = cat2.search("payrolls", limit=3)
 assert any(h.code == "NONFARM" for h in hits_e)
 print(f"\ncatalog search 'payrolls': {[h.code for h in hits_e]}")
 
-# Metadata indexes are auto-created because indexes=None
-hits_cat = cat2.search("category: prices", limit=5)
+# Metadata indexes are auto-created because indexes=None, so every metadata key
+# is addressable — as a filter column here, or as field= for scoring.
+hits_cat = cat2.search(filter={"category": "prices"}, limit=5)
 price_codes = sorted(h.code for h in hits_cat)
 assert set(price_codes) == {"CORE_CPI", "CORE_PCE"}
-print(f"structured 'category: prices': {price_codes}")
+print(f"filter category=prices:   {price_codes}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 9 — Full search-then-fetch pattern with make_local_search_connector
@@ -503,14 +506,17 @@ with tempfile.TemporaryDirectory() as tmp2:
         catalog_url_env_var="ACME2_CATALOG_URL",
         tags=["acme2", "tool"],
         description="Search the Acme2 catalog for economic series.",
-        metadata_columns=["category", "update_freq"],
-        # coverage/score/matched are appended automatically — declare only the
-        # provider-specific columns here.
-        output_columns=[
-            Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
-            Column(name="title", role=ColumnRole.TITLE),
-            Column(name="category", role=ColumnRole.DATA),
-        ],
+        # score/search_detail are appended automatically — declare only the
+        # provider-specific columns here. METADATA roles are projected from
+        # each match's metadata bag onto the hit table.
+        output=OutputSpec(
+            columns=[
+                Column(name="code", role=ColumnRole.KEY, namespace="acme2"),
+                Column(name="title", role=ColumnRole.TITLE),
+                Column(name="category", role=ColumnRole.METADATA),
+                Column(name="update_freq", role=ColumnRole.METADATA),
+            ]
+        ),
     )
     print(f"search connector: {acme_search_v2!r}")
     print(f"tags: {acme_search_v2.tags}")

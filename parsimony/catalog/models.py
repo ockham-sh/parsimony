@@ -10,27 +10,74 @@ from parsimony.entity import Entity, field_text, field_values, normalize_entity_
 from parsimony.errors import InvalidParameterError
 
 
+class ComponentSearchDetail(BaseModel):
+    """One index component's contribution to a ranked value or field hit.
+
+    ``raw_score`` is component-native (BM25 magnitude, cosine, …) and is **not**
+    comparable across kinds. ``rank`` is the 1-based competition rank within that
+    component's own candidate table for this query.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["bm25", "vector"]
+    raw_score: float
+    rank: int
+
+
+class FieldSearchDetail(BaseModel):
+    """How one searched field contributed evidence for a ranked row (or value)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    field: str
+    value: str
+    weight: float
+    relevance: float
+    exact: bool
+    fused_rank: int
+    components: list[ComponentSearchDetail] = Field(default_factory=list)
+
+
+class SearchDetail(BaseModel):
+    """Inspectable ranking evidence for one match — not a correctness signal.
+
+    Absence of a component means the value was not retained in that component's
+    top-k for this query, not that there is no relationship. Commit from provider
+    metadata; use this only to explain ordering.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    candidate_limit: int
+    fields: list[FieldSearchDetail] = Field(default_factory=list)
+
+
 class CatalogValueMatch(BaseModel):
     """One distinct indexed value from :meth:`Catalog.search_values`.
 
-    Results order by (coverage desc, score desc): *coverage* is the fraction of
-    the query's tokens this value consumes when the value's own tokens are all
-    present in the query (1.0 = exact hit), else 0.0; *score* is the honest
-    fuzzy relevance within a coverage band. *matched* labels the evidence
-    origin, exactly as on :class:`CatalogMatch`.
+    Results order by (exact desc, score desc). *exact* is the fact: this value is
+    the one the query literally names (case-folded equality), so it outranks every
+    fuzzy candidate. *score* is query-relative rank relevance in ``(0, 1]`` for
+    this field — ``1.0`` is the best value returned for this query.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     value: str
     score: float
-    coverage: float = 0.0
-    matched: Literal["lexical", "semantic", "both"] | None = None
+    exact: bool = False
+    search_detail: SearchDetail | None = None
     linked_value: str | None = None
 
 
 class UnknownIndexedFieldError(InvalidParameterError):
-    """Structured query references a field with no configured index."""
+    """A caller named a field to score that has no configured index.
+
+    Raised for ``field=`` and for a ``fields=`` key on ``multi_field_search``.
+    Filter keys name row columns rather than indexes, so an unknown one
+    surfaces from the filter layer instead.
+    """
 
     def __init__(self, message: str) -> None:
         super().__init__("catalog", message)
@@ -44,25 +91,19 @@ class BroadSearchUnavailableError(InvalidParameterError):
 
 
 class CatalogMatch(BaseModel):
-    """Resolved search result: entity fields plus the ranking evidence.
+    """Resolved search result: entity fields plus ranking evidence.
 
-    Two evidence channels plus a label. *coverage* is the fact channel: a
-    field value is consumed only when every token it contains appears in the
-    query (all-or-nothing per value), and coverage is the fraction of the
-    query's tokens covered by the union of the row's consumed values — 1.0
-    means the query is literally satisfied by this row's values, 0.0 means no
-    value is contained in the query. *score* is the guess channel: per-field
-    similarity (lexical + semantic), normalized 0..1 against the field's best
-    hit and summed across the searched fields, so agreeing evidence
-    accumulates and no single field's raw magnitude dominates; it is relative
-    to this query's best hit, never absolute, never comparable across queries
-    or catalogs. *matched* labels the evidence origin: "lexical" (token
-    overlap), "semantic" (vector proximity), or "both" — an all-"semantic"
-    result page means nothing lexically real matched, so rephrase the query
-    rather than trust the order. Facts outrank guesses: on a multi-field
-    surface rows order by (coverage desc, score desc); on a single-field
-    surface only coverage 1.0 outranks the score order. A high-score row
-    below a full-coverage row is the contract, not an anomaly.
+    *score* is a guess: independently produced rankings are fused by weighted
+    Reciprocal Rank Fusion — ranks, never raw magnitudes — then divided by this
+    query's best retained hit so every ranked score sits in ``(0, 1]`` with the
+    top row at ``1.0``. It is never absolute, never comparable across queries or
+    catalogs. A filter-only (unranked) read leaves *score* and *search_detail*
+    as ``None``.
+
+    Ranked rows order by (score desc, namespace, code). Ranking policy beyond
+    relevance belongs to the caller: pin what you know with a filter, and commit
+    from provider metadata rather than treating *score* or *search_detail* as
+    correctness.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -70,9 +111,8 @@ class CatalogMatch(BaseModel):
     namespace: str
     code: str
     title: str
-    score: float
-    coverage: float = 0.0
-    matched: Literal["lexical", "semantic", "both"] | None = None
+    score: float | None
+    search_detail: SearchDetail | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("namespace")
@@ -97,9 +137,8 @@ class CatalogMatch(BaseModel):
 def catalog_match_from_entity(
     entity: Entity,
     *,
-    score: float,
-    coverage: float = 0.0,
-    matched: Literal["lexical", "semantic", "both"] | None = None,
+    score: float | None,
+    search_detail: SearchDetail | None = None,
 ) -> CatalogMatch:
     """Build a :class:`CatalogMatch` from a stored entity."""
 
@@ -108,8 +147,7 @@ def catalog_match_from_entity(
         code=entity.code,
         title=entity.title,
         score=score,
-        coverage=coverage,
-        matched=matched,
+        search_detail=search_detail,
         metadata=dict(entity.metadata),
     )
 
@@ -118,6 +156,9 @@ __all__ = [
     "BroadSearchUnavailableError",
     "CatalogMatch",
     "CatalogValueMatch",
+    "ComponentSearchDetail",
+    "FieldSearchDetail",
+    "SearchDetail",
     "UnknownIndexedFieldError",
     "catalog_match_from_entity",
     "field_text",

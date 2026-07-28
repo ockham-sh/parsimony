@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from parsimony.catalog import BM25Index, Entity, VectorIndex
-from parsimony.catalog.indexes import IndexBuildContext, embed_query_vectors, search_index_values
+from parsimony.catalog.indexes import IndexBuildContext, QueryContext, search_index_values
 from parsimony.embedder import EmbedderInfo
 
 
@@ -44,14 +46,14 @@ def test_vector_index_assigns_equal_score_to_equal_neighbours() -> None:
     ctx = IndexBuildContext(field="label", vector_cache={})
     index.build(entries, ctx=ctx)
 
-    query_vectors = embed_query_vectors("query", [index])
-    scored = search_index_values(index, "query", limit=10, query_vectors=query_vectors)
-    by_text = {text: score for text, score, _, _ in scored}
+    scored = search_index_values(index, QueryContext(query="query"), limit=10)
+    by_text = {sv.text: sv.relevance for sv in scored}
 
     # "alpha" and "beta" both embed onto the query's axis, so they tie exactly.
     assert by_text["alpha"] == by_text["beta"]
     # A less-similar neighbour scores strictly below the tied pair.
     assert by_text["other gamma"] < by_text["alpha"]
+    assert by_text["alpha"] == pytest.approx(1.0)
 
 
 def test_vector_index_embeds_duplicate_field_text_once_per_build() -> None:
@@ -90,8 +92,8 @@ def test_bm25_index_assigns_equal_score_to_equal_matches() -> None:
     ctx = IndexBuildContext(field="label", vector_cache={})
     index.build(entries, ctx=ctx)
 
-    scored = search_index_values(index, "instantaneous forward rate one year", limit=10)
-    by_text = {text: score for text, score, _, _ in scored}
+    scored = search_index_values(index, QueryContext(query="instantaneous forward rate one year"), limit=10)
+    by_text = {sv.text: sv.relevance for sv in scored}
 
     # The two labels differ only in the token the query doesn't carry ("1"/"2"
     # vs "one"), so they share the same four matched tokens and tie exactly.

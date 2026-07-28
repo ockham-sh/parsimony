@@ -287,7 +287,8 @@ for the full optional-extras matrix.
 A `VectorIndex` takes an embedder via `VectorIndex(embedder=...)`. When you leave it `None`, the
 index lazily constructs a default `SentenceTransformerEmbedder` (from the stored model identity on
 load, or the default MiniLM model otherwise). The same default is shared process-wide by the
-adaptive index policy, so a catalog built without an explicit embedder still gets one. Building or
+role-based discovery index policy (`discovery_indexes`), so a catalog built without an
+explicit embedder still gets one. Building or
 querying a `VectorIndex` requires the `catalog` extra (FAISS plus the embedder's runtime).
 
 ```python

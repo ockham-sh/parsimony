@@ -122,8 +122,7 @@ institution or source it names, not just the short code. Once you've picked a ma
 1. Install it into the active environment the same safe way as bootstrap above (`python -m pip
    install <package>` or `uv pip install <package>`; never `--break-system-packages`; stop and ask
    the user on a PEP 668 or permissions failure).
-2. If the package is not `keyless`, resolving a credential also needs the user — ask them to set
-   the env var(s) named in `c.requires` (e.g. `FRED_API_KEY`) rather than guessing a name.
+2. If `c.requires` is non-empty, ask the user to set those env vars so the connector becomes usable.
 3. Reload and verify: re-run `discover.load_all()` (or `discover.load(entry_point)`) and confirm
    the new provider now appears before calling any of its connectors.
 

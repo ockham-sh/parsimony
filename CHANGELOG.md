@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-07-30
+
 ### Added
 
 - **Declarative credential requirement**: `@connector`, `@loader`, and `@enumerator`

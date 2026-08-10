@@ -2,7 +2,7 @@
 
 Exercises the ONNX-backed embedding path end-to-end (export → quantize →
 encode → roundtrip through Catalog). Skipped when the optional
-``parsimony-core[standard-onnx]`` dependency chain is not installed —
+``parsimony[standard-onnx]`` dependency chain is not installed —
 the kernel's default test profile does not pull onnxruntime/optimum.
 """
 
@@ -19,8 +19,8 @@ from parsimony.embedder import (
     SentenceTransformerEmbedder,
 )
 
-pytest.importorskip("onnxruntime", reason="parsimony-core[standard-onnx] not installed")
-pytest.importorskip("optimum", reason="parsimony-core[standard-onnx] not installed")
+pytest.importorskip("onnxruntime", reason="parsimony[standard-onnx] not installed")
+pytest.importorskip("optimum", reason="parsimony[standard-onnx] not installed")
 
 
 def test_onnx_embedder_satisfies_protocol() -> None:

@@ -626,7 +626,7 @@ def _load_cross_encoder(model_name: str, device: str | None) -> Any:
             "sentence-transformers is required. Install it with:\n"
             "    uv sync --extra standard\n"
             "or:\n"
-            "    pip install 'parsimony-core[catalog]'"
+            "    pip install 'parsimony[catalog]'"
         ) from exc
     kwargs: dict[str, str] = {}
     if device is not None:

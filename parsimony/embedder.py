@@ -7,13 +7,13 @@ implementations (or write their own conforming class) and pass it to
 
 * :class:`SentenceTransformerEmbedder` — local model
   (``sentence-transformers/all-MiniLM-L6-v2`` by default, 384-dim, 6 layers).
-  Requires ``parsimony-core[catalog]``.
+  Requires ``parsimony[catalog]``.
 * :class:`OnnxEmbedder` — same model via ONNX Runtime with dynamic int8
   quantization. 2-3× faster than the PyTorch path on x86 CPUs with AVX2 /
-  AVX_VNNI; ~4× smaller on disk. Requires ``parsimony-core[standard-onnx]``.
+  AVX_VNNI; ~4× smaller on disk. Requires ``parsimony[standard-onnx]``.
 * :class:`LiteLLMEmbeddingProvider` — hosted embeddings via the
   `litellm <https://github.com/BerriAI/litellm>`_ unified API (OpenAI,
-  Gemini, Cohere, Voyage, …). Requires ``parsimony-core[litellm]``.
+  Gemini, Cohere, Voyage, …). Requires ``parsimony[litellm]``.
 
 All classes import their heavy dependencies lazily so that
 ``import parsimony`` does not pull torch, onnxruntime, or litellm into
@@ -40,9 +40,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
-PARSIMONY_CATALOG_PACKAGE = "parsimony-core[catalog]"
-PARSIMONY_STANDARD_ONNX_PACKAGE = "parsimony-core[standard-onnx]"
-PARSIMONY_LITELLM_PACKAGE = "parsimony-core[litellm]"
+PARSIMONY_CATALOG_PACKAGE = "parsimony[catalog]"
+PARSIMONY_STANDARD_ONNX_PACKAGE = "parsimony[standard-onnx]"
+PARSIMONY_LITELLM_PACKAGE = "parsimony[litellm]"
 
 _LITELLM_BATCH_SIZE = 100
 _ONNX_DEFAULT_BATCH_SIZE = 64
@@ -59,7 +59,7 @@ class EmbedderInfo(BaseModel):
         description=(
             "Optional install hint surfaced in error messages when a catalog "
             "is loaded without the dependencies needed to instantiate its "
-            "embedder (e.g. ``parsimony-core[catalog]``). Not used for resolution."
+            "embedder (e.g. ``parsimony[catalog]``). Not used for resolution."
         ),
     )
 
@@ -98,9 +98,9 @@ def _load_shared_model(model_name: str, device: str | None) -> SentenceTransform
     model, so the cache keys on ``(model, device)`` only.
 
     This in-memory cache is intentionally ``SentenceTransformerEmbedder``-only — it is the
-    default embedder (``parsimony-core[catalog]``) and the PyTorch constructor re-reads the
+    default embedder (``parsimony[catalog]``) and the PyTorch constructor re-reads the
     full model into memory on every instantiation, with nothing cached between instances.
-    ``OnnxEmbedder`` (the opt-in ``parsimony-core[standard-onnx]`` path, used for a 2-3×
+    ``OnnxEmbedder`` (the opt-in ``parsimony[standard-onnx]`` path, used for a 2-3×
     faster int8 inference) deliberately has no analogue here: its one genuinely expensive
     step — exporting the model to ONNX and quantizing it — is cached on *disk* by
     ``OnnxEmbedder._prepare_cache`` and reused across every instance and process, so building

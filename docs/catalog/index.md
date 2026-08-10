@@ -18,7 +18,7 @@ from parsimony.catalog import BM25Index, Catalog, Entity
     The catalog runtime is lazy. `import parsimony` and constructing a `Catalog` pull in no
     heavy dependencies. `BM25Index` keyword search works on the base install (`rank-bm25` is a
     base dependency). Only the vector/hybrid backends need the heavy stack — FAISS and an
-    embedder — via the `catalog` extra: `pip install "parsimony-core[catalog]"`. See
+    embedder — via the `catalog` extra: `pip install "parsimony[catalog]"`. See
     [Installation](../getting-started/installation.md).
 
 ## The lifecycle
@@ -66,7 +66,7 @@ mutation.
 
 This example constructs a catalog with a single BM25 index over the `title` field, loads two
 entities, builds, and runs a plain-text (broad) search. `BM25Index` (`rank-bm25`) is in the base
-install, so a plain `pip install parsimony-core` is enough — no extra needed.
+install, so a plain `pip install parsimony` is enough — no extra needed.
 
 ```python
 from parsimony.catalog import BM25Index, Catalog, Entity
@@ -174,7 +174,7 @@ both dispatch on a URL scheme:
 
 | Scheme | Example | Notes |
 | --- | --- | --- |
-| `file://` (or a bare path) | `file:///srv/catalogs/fred` | Local directory snapshot. Works with only `parsimony-core` plus the index backends used. |
+| `file://` (or a bare path) | `file:///srv/catalogs/fred` | Local directory snapshot. Works with only `parsimony` plus the index backends used. |
 | `hf://` | `hf://acme/economic-catalog` | Hugging Face dataset. Lazily imports `huggingface_hub`; needs the `catalog` extra. |
 
 Any other scheme raises `ValueError`. A snapshot is a directory of `entries.parquet`

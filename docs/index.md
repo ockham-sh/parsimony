@@ -9,7 +9,7 @@ error taxonomy, a four-role column schema) exist because those specific things g
 slightly differently, by every connector that skips them. Everything else stays in your own
 code, where you can see it.
 
-The distribution is published to PyPI as `parsimony-core` (import name `parsimony`,
+The distribution is published to PyPI as `parsimony` (import name `parsimony`,
 Apache-2.0). It runs on Python `>=3.11` (3.11, 3.12, 3.13).
 
 ## The two pillars
@@ -67,7 +67,7 @@ provider at once — that's the entire case for `OutputSpec` existing.
 ## Install
 
 ```bash
-pip install parsimony-core
+pip install parsimony
 ```
 
 The base install pulls only a small kernel (pydantic, pandas, pyarrow, httpx,
@@ -76,14 +76,14 @@ is an optional extra that loads lazily — a plain `import parsimony` never impo
 faiss.
 
 ```bash
-pip install "parsimony-core[catalog]"
+pip install "parsimony[catalog]"
 ```
 
 See [Installation](getting-started/installation.md) for the full optional-extras matrix.
 
 ## A 60-second taste
 
-This runs with only `parsimony-core` installed. Define a `@connector`, attach an output
+This runs with only `parsimony` installed. Define a `@connector`, attach an output
 schema, call it, and read the typed `Result`.
 
 ```python

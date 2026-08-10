@@ -6,7 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
-## [0.0.2] - 2026-07-30
+## [0.0.1] - 2026-08-10
+
+First release under the `parsimony` distribution name. Previously published as
+`parsimony-core`, which is discontinued — the import name is unchanged, so only
+the install command differs:
+
+```bash
+pip install parsimony          # was: pip install parsimony-core
+```
+
+### Changed
+
+- **Distribution renamed** `parsimony-core` → `parsimony`. Connector packages now
+  depend on `parsimony`; `parsimony-core` will receive no further releases.
 
 ### Added
 

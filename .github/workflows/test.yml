@@ -48,7 +48,7 @@ jobs:
     # import-time platform breakage (a module-level reference to a Linux-only
     # stdlib constant, say) — that class shipped in parsimony-sdmx 0.0.1 as an
     # AttributeError on macOS/Windows (parsimony-connectors#44). A bare
-    # `pip install parsimony-core` + `import parsimony` on the two OSes the
+    # `pip install parsimony` + `import parsimony` on the two OSes the
     # Linux matrix omits is the whole gate: `import parsimony` is deliberately
     # cheap (heavy deps are lazy via PEP 562), so no extras are needed and
     # pytest is not run. py3.12 only — import-time breakage is not

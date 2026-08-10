@@ -1,11 +1,11 @@
 # Installation
 
-Parsimony is published to PyPI as **`parsimony-core`** and imported as `parsimony`. The base
+Parsimony is published to PyPI as **`parsimony`** and imported as `parsimony`. The base
 install is a small, dependency-light kernel: the [connector framework](../connectors/index.md),
 the [typed errors](../connectors/errors.md), the data carriers, and the cache helpers. The heavy
 [catalog](../catalog/index.md) runtime (FAISS vectors, sentence-transformers embedders,
 Hugging Face snapshots) lives behind the `catalog` extra. Catalog-backed connector packages
-declare `parsimony-core[catalog]` so a plain `pip install parsimony-<name>` pulls the full
+declare `parsimony[catalog]` so a plain `pip install parsimony-<name>` pulls the full
 discovery stack.
 
 ## Requirements
@@ -17,7 +17,7 @@ discovery stack.
 ## Base install
 
 ```bash
-pip install parsimony-core
+pip install parsimony
 ```
 
 The base distribution pulls a deliberately small set of runtime dependencies — the mandatory
@@ -31,7 +31,7 @@ kernel footprint for validation, data carriers, HTTP, and cache-directory resolu
 | `httpx` (>=0.28.1) | The HTTP layer connector authors build on |
 | `platformdirs` (>=4.0.0, <5) | Resolves the on-disk [cache](../caching.md) root |
 
-That is everything `pip install parsimony-core` installs. It is enough to define and call fetch-only
+That is everything `pip install parsimony` installs. It is enough to define and call fetch-only
 connectors and work with results, provenance, and errors.
 
 !!! note "No connectors ship in core"
@@ -51,34 +51,34 @@ with an extra installed, `import parsimony` stays cheap (see
 
 | Extra | `pip install` | Adds | Enables |
 | --- | --- | --- | --- |
-| `catalog` | `parsimony-core[catalog]` | `faiss-cpu`, `sentence-transformers`, `huggingface_hub` | The **vector** catalog runtime: FAISS vector search, the default sentence-transformers embedder, and `hf://` snapshot load/save. (BM25 keyword search — `rank-bm25` — is in the base install, no extra needed.) |
-| `standard-onnx` | `parsimony-core[standard-onnx]` | everything in `catalog`, plus `optimum[onnxruntime]`, `onnxruntime` | The int8-quantized [`OnnxEmbedder`](../catalog/embedders.md) — a faster CPU embedding path; a superset of `catalog` |
-| `litellm` | `parsimony-core[litellm]` | `litellm` | The hosted-API [`LiteLLMEmbeddingProvider`](../catalog/embedders.md) (OpenAI, Gemini, Cohere, Voyage, Bedrock) |
-| `all` | `parsimony-core[all]` | `catalog`, `standard-onnx`, `litellm` | Everything above in one shot |
+| `catalog` | `parsimony[catalog]` | `faiss-cpu`, `sentence-transformers`, `huggingface_hub` | The **vector** catalog runtime: FAISS vector search, the default sentence-transformers embedder, and `hf://` snapshot load/save. (BM25 keyword search — `rank-bm25` — is in the base install, no extra needed.) |
+| `standard-onnx` | `parsimony[standard-onnx]` | everything in `catalog`, plus `optimum[onnxruntime]`, `onnxruntime` | The int8-quantized [`OnnxEmbedder`](../catalog/embedders.md) — a faster CPU embedding path; a superset of `catalog` |
+| `litellm` | `parsimony[litellm]` | `litellm` | The hosted-API [`LiteLLMEmbeddingProvider`](../catalog/embedders.md) (OpenAI, Gemini, Cohere, Voyage, Bedrock) |
+| `all` | `parsimony[all]` | `catalog`, `standard-onnx`, `litellm` | Everything above in one shot |
 
 ```bash
 # The usual choice for searchable catalogs (also pulled by catalog-backed connectors):
-pip install "parsimony-core[catalog]"
+pip install "parsimony[catalog]"
 
 # Faster CPU embeddings (superset of catalog):
-pip install "parsimony-core[standard-onnx]"
+pip install "parsimony[standard-onnx]"
 
 # Hosted embedding APIs:
-pip install "parsimony-core[litellm]"
+pip install "parsimony[litellm]"
 
 # Everything:
-pip install "parsimony-core[all]"
+pip install "parsimony[all]"
 ```
 
 !!! tip "Catalog-backed connectors declare `[catalog]`"
-    Packages such as `parsimony-riksbank` and `parsimony-sdmx` depend on `parsimony-core[catalog]`,
+    Packages such as `parsimony-riksbank` and `parsimony-sdmx` depend on `parsimony[catalog]`,
     so `pip install parsimony-riksbank` already pulls the full hybrid-search stack. Install
-    `parsimony-core[catalog]` directly only when you are building catalogs or using the catalog API
+    `parsimony[catalog]` directly only when you are building catalogs or using the catalog API
     without a catalog-backed connector.
 
 ### The `standard-onnx` superset
 
-`standard-onnx` *includes* `catalog` — it depends on `parsimony-core[catalog]` and then adds
+`standard-onnx` *includes* `catalog` — it depends on `parsimony[catalog]` and then adds
 `optimum[onnxruntime]` and `onnxruntime`. Installing it therefore also gives you
 sentence-transformers, FAISS, BM25, and Hugging Face Hub. Use it when you want the
 [`OnnxEmbedder`](../catalog/embedders.md) fast path on x86 CPUs with AVX2/AVX-VNNI; you do not
@@ -94,14 +94,14 @@ FAISS, sentence-transformers, or litellm into memory. Those backends load only w
 actually needs them (for example `catalog.build()` on a `HybridIndex`).
 
 If you call a catalog method without the `catalog` extra installed, the failure is an actionable
-`ConnectorError` pointing at `pip install 'parsimony-core[catalog]'`.
+`ConnectorError` pointing at `pip install 'parsimony[catalog]'`.
 
 ## Installing connectors
 
 Each connector is its own PyPI distribution:
 
 ```bash
-pip install parsimony-core parsimony-fred parsimony-sdmx
+pip install parsimony parsimony-fred parsimony-sdmx
 ```
 
 `parsimony list` enumerates what is installed; `parsimony.discover.load_all()` composes their

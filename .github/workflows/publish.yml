@@ -64,7 +64,7 @@ jobs:
         run: |
           set -euo pipefail
           # Gate publish on the artifact a user actually installs: a venv with no
-          # source tree resolves parsimony-core's deps from PyPI, then we install
+          # source tree resolves parsimony's deps from PyPI, then we install
           # the freshly-built wheel and exercise import + the discovery entry
           # point. Mirrors the release gate in parsimony-connectors / parsimony-agents
           # — PR CI tracks trunk, the release gate tracks PyPI.
@@ -72,7 +72,7 @@ jobs:
           python3 -m venv "$venv"
           "$venv/bin/python" -m pip install --quiet --upgrade pip
           "$venv/bin/python" -m pip install "$(ls dist/*.whl)"
-          "$venv/bin/python" -c "import parsimony; from parsimony.discover import load_all; load_all(); print('published-resolution smoke OK: parsimony-core')"
+          "$venv/bin/python" -c "import parsimony; from parsimony.discover import load_all; load_all(); print('published-resolution smoke OK: parsimony')"
           # The bundled connectors.json fallback (parsimony/_data/) is a wheel
           # asset, not a source-tree file — confirm it actually made it into
           # the built artifact and that parsimony.registry can load it with
@@ -120,7 +120,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/p/parsimony-core
+      url: https://pypi.org/p/parsimony
     permissions:
       id-token: write
     steps:
@@ -142,7 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/parsimony-core
+      url: https://test.pypi.org/p/parsimony
     permissions:
       id-token: write
     steps:

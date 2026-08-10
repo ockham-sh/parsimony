@@ -151,15 +151,18 @@ def load_all() -> Connectors:
         return Connectors([])
     items: list[Connector] = []
     failures = 0
+    first_exc: Exception | None = None
     for p in providers:
         try:
             items.extend(p.load())
         except Exception as exc:
             failures += 1
+            if first_exc is None:
+                first_exc = exc
             _logger.warning("failed to load %s: %s", p.name, exc)
     if failures == len(providers):
         raise RuntimeError(
             f"all {failures} installed parsimony provider(s) failed to load; "
             "check logs on the parsimony.discover logger for details"
-        )
+        ) from first_exc
     return Connectors(items)

@@ -155,7 +155,7 @@ Individual connectors live in the `parsimony-connectors` monorepo.
 
 For bugs in the kernel itself, open a GitHub issue with:
 
-- The `parsimony-core` version (`pip show parsimony-core`).
+- The `parsimony` version (`pip show parsimony`).
 - A minimal reproduction (ideally a failing test).
 - The full traceback.
 

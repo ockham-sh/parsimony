@@ -1,12 +1,12 @@
 # Development
 
-This page is for contributors to `parsimony-core` itself: how to set up a development
+This page is for contributors to `parsimony` itself: how to set up a development
 environment, run the quality gates locally, and what continuous integration enforces on every
 push. Everything here is derived from the repository's `Makefile`, `pyproject.toml`, and the
 GitHub Actions workflows — run the same commands locally before opening a pull request and CI
 will have nothing left to complain about.
 
-Parsimony is **`parsimony-core`**, Apache-2.0 licensed, and supports **Python >=3.11**
+Parsimony is **`parsimony`**, Apache-2.0 licensed, and supports **Python >=3.11**
 (tested on 3.11, 3.12, and 3.13). The build backend is `hatchling`; the package builds from the
 `parsimony` directory.
 
@@ -31,7 +31,7 @@ This is exactly what `make install` runs. The `dev` extra is defined as:
 | `mypy` | `>=1.10` | static type checker |
 | `types-requests` | `>=2.31` | stubs |
 | `pip-audit` | `>=2.7` | dependency vulnerability audit |
-| `parsimony-core[standard,litellm]` | — | the FAISS + BM25 + sentence-transformers + litellm surface |
+| `parsimony[standard,litellm]` | — | the FAISS + BM25 + sentence-transformers + litellm surface |
 
 !!! warning "The full test suite needs the `standard` extra"
     A bare `pip install -e .` installs only the mandatory kernel (`pydantic`, `pandas`,
@@ -252,7 +252,7 @@ manual `workflow_dispatch` with a `target` input (`testpypi` by default, or `pyp
 - The `build` job runs `uv build` to produce the sdist and wheel and uploads them as an
   artifact.
 - `publish-pypi` runs on a release (or a `pypi` dispatch) and publishes to
-  `https://pypi.org/p/parsimony-core` with `pypa/gh-action-pypi-publish`.
+  `https://pypi.org/p/parsimony` with `pypa/gh-action-pypi-publish`.
 - `publish-testpypi` runs on a `testpypi` dispatch and publishes to TestPyPI.
 
 ### `Deploy Docs` (deploy-docs.yml) — on docs changes

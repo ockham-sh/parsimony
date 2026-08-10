@@ -18,9 +18,9 @@ FAISS/tokenizer helpers in `parsimony.indexes`.
 !!! note "Optional `catalog` extra"
     `BM25Index` lazily imports `rank_bm25`, and `VectorIndex` lazily imports `faiss` and a
     sentence-transformers embedder. Both are pulled in by the `catalog` extra:
-    `pip install "parsimony-core[catalog]"`. The imports happen inside `build`/`load`/`search`,
+    `pip install "parsimony[catalog]"`. The imports happen inside `build`/`load`/`search`,
     so a missing dependency surfaces only when you actually run one of those — not at import.
-    Index *construction* and the policy *selection* logic below run with only `parsimony-core`.
+    Index *construction* and the policy *selection* logic below run with only `parsimony`.
 
 ## The `CatalogIndex` protocol
 

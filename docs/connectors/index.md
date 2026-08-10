@@ -163,7 +163,7 @@ appearing in agent-facing cards or recorded provenance — see
 ## A compact end-to-end example
 
 Define a connector, attach an output schema, bind a secret, collect it into a
-`Connectors` bundle, and call it by name. This runs with only `parsimony-core`
+`Connectors` bundle, and call it by name. This runs with only `parsimony`
 installed — no network, no plugins, no optional extras.
 
 ```python

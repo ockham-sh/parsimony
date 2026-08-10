@@ -12,7 +12,7 @@ Parsimony has two pillars:
 - **The [Catalog](../catalog/index.md)** — a portable, searchable index over normalized
   entity records, used to discover *what* you can fetch.
 
-The core package (`parsimony-core`, Python `>=3.11`) ships the framework and
+The core package (`parsimony`, Python `>=3.11`) ships the framework and
 the catalog. It ships **no connectors** — every connector is published as its own
 `parsimony-<name>` plugin and discovered at runtime.
 
@@ -203,7 +203,7 @@ one broken plugin is logged and skipped, the rest still load. Both return a `Con
 you compose loaded bundles with `+` exactly like any other collection.
 
 !!! tip "A bare install discovers nothing"
-    `pip install parsimony-core` discovers zero providers — there are no in-tree connectors.
+    `pip install parsimony` discovers zero providers — there are no in-tree connectors.
     Install at least one `parsimony-<name>` distribution for `discover.load_all()` to return
     anything. See [Installation](installation.md) and [Plugins and providers](../plugins/index.md).
 
@@ -239,8 +239,8 @@ print(hits[0].code, round(hits[0].score, 3))  # -> alpha …
 
 !!! note "This catalog example needs the `catalog` extra"
     `BM25Index` builds against `rank-bm25`, which ships in the optional `catalog` extra
-    (`pip install "parsimony-core[catalog]"`). Defining connectors and using a data store
-    above run with only `parsimony-core` installed; building or searching a catalog requires
+    (`pip install "parsimony[catalog]"`). Defining connectors and using a data store
+    above run with only `parsimony` installed; building or searching a catalog requires
     `catalog`. See [Installation](installation.md).
 
 The key invariant is the **build gate**: any mutation (`set_entities`, `set_indexes`)

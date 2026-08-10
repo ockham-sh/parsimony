@@ -95,7 +95,7 @@ def auto_catalog(df: pd.DataFrame, *, name: str = "output") -> Catalog:
     Entity's own fields (row position / joined row text), not the source column.
     Duplicate column names are rejected — they cannot be distinct metadata keys.
 
-    Search is BM25 only — which works on a bare ``pip install parsimony-core`` (no
+    Search is BM25 only — which works on a bare ``pip install parsimony`` (no
     extra). Semantic (vector) search is intentionally unavailable: a runtime frame
     is fresh data with no prebuilt vector index, and the typical caller (a sandboxed
     agent) has neither network nor an embedder. To build a curated, persistable,

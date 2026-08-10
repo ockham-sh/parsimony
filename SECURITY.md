@@ -4,7 +4,7 @@
 
 | Package | Version | Supported |
 |---------|---------|-----------|
-| parsimony-core | latest minor | Yes |
+| parsimony | latest minor | Yes |
 
 ## Reporting a Vulnerability
 
@@ -28,7 +28,7 @@ We will coordinate with you on disclosure timing. We follow responsible disclosu
 ## Scope
 
 This policy covers the open-source packages in the parsimony ecosystem:
-- `parsimony-core`
+- `parsimony`
 - `parsimony-connectors` (all first-party connector distributions)
 - `parsimony-agents`
 

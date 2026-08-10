@@ -19,6 +19,10 @@ Agents + code execution is the best way to automate financial workflows.
 
 [Parsimony](https://parsimony.dev) is a coding-agent skill, backed by an eponymous [Python framework](https://docs.parsimony.dev), that gives your agent one interface to find, fetch, organize, and navigate financial data across sources.
 
+<p align="center">
+  <img src="docs/assets/parsimony-hero.webp" alt="A coding agent is asked to compare unemployment and inflation in the US and the euro area since 2015. It reads the parsimony skill, installs the BLS and SDMX connectors, resolves each series id from the provider catalogs, catches that the ECB's ICP flow is frozen and switches to HICP, and writes a notebook that runs to two charts." width="900" />
+</p>
+
 
 ## Install
 

@@ -43,6 +43,85 @@ jobs:
       - run: uv pip install --system -e ".[dev]"
       - run: pytest tests/ -v -m "not integration" --cov=parsimony --cov-report=term-missing --cov-fail-under=80
 
+  connector-surface:
+    # The gate behind the connectors' `parsimony~=0.0.1` pin.
+    #
+    # Every published connector accepts any 0.0.x kernel. That is a promise
+    # this repo makes and nothing here checked: `pytest tests/` only exercises
+    # the kernel against itself, so a change that breaks the connector-facing
+    # surface (a moved import, a renamed decorator kwarg, a stricter
+    # conformance rule) went green here and only surfaced downstream. That is
+    # the shape of the break that shipped in connectors 0.0.1 — the kernel
+    # moved, the pin let the new kernel in, and every provider failed to
+    # import at `load_all()`.
+    #
+    # `parsimony-connectors` CI already checks this repo out at `main` and
+    # runs its matrix against it, so the pair is tested — but only when
+    # someone opens a *connectors* PR. This job moves that signal to where
+    # the breaking change is actually authored, before it merges.
+    #
+    # The assertion is deliberately narrow. It does not re-run the connectors'
+    # test suites (their CI owns that, against this same `main`); it imports
+    # every installed provider and conformance-checks it. `load_all()` is not
+    # usable as the gate — it is the forgiving path, and only raises when
+    # *every* provider fails, so 21 of 22 could break and it would still
+    # return. `iter_providers()` + per-provider `load()` is the strict form.
+    #
+    # A kernel change that deliberately breaks connectors (which takes a minor
+    # bump, not a 0.0.x patch) reddens this job and the connectors' own CI by
+    # design. Land that pair with an override and republish the packages.
+    name: Connector surface (connectors@main)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: parsimony-connectors
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: parsimony
+      # Sibling layout: the connectors workspace resolves the kernel through a
+      # `[tool.uv.sources]` override pointing at `../parsimony`, so this PR's
+      # kernel is what gets installed. The override lives in the `workbench`
+      # dependency group, which a plain `uv sync` enables — `--no-dev` would
+      # silently resolve the kernel from PyPI and test nothing.
+      - uses: actions/checkout@v4
+        with:
+          repository: ockham-sh/parsimony-connectors
+          ref: main
+          path: parsimony-connectors
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: |
+            parsimony-connectors/uv.lock
+            parsimony-connectors/packages/*/pyproject.toml
+      - run: uv sync --all-extras --all-packages
+      - name: Every installed provider imports and conforms
+        run: |
+          uv run python -c "
+          import importlib, sys
+          from parsimony.discover import iter_providers
+          from parsimony.testing import assert_plugin_valid
+
+          providers = sorted(iter_providers(), key=lambda p: p.name)
+          if not providers:
+              sys.exit('no parsimony.providers entry points installed — the workspace sync did not take')
+
+          failures = []
+          for p in providers:
+              try:
+                  p.load()
+                  assert_plugin_valid(importlib.import_module(p.module_path))
+              except Exception as exc:
+                  failures.append(f'{p.name}: {type(exc).__name__}: {exc}')
+
+          for f in failures:
+              print(f'::error::{f}')
+          print(f'{len(providers) - len(failures)}/{len(providers)} providers OK')
+          sys.exit(1 if failures else 0)
+          "
+
   import-smoke:
     # Cross-platform import gate. The Linux `test` matrix never catches
     # import-time platform breakage (a module-level reference to a Linux-only

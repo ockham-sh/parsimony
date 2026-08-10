@@ -154,8 +154,8 @@ def _validate_manifest(raw: bytes) -> _Manifest:
     manifest = _Manifest.model_validate_json(raw)
     if manifest.schema_version != _MANIFEST_SCHEMA_VERSION:
         raise ValueError(
-            f"unsupported manifest schema_version {manifest.schema_version!r}; this parsimony-core "
-            f"release understands schema_version {_MANIFEST_SCHEMA_VERSION}. Upgrade parsimony-core."
+            f"unsupported manifest schema_version {manifest.schema_version!r}; this parsimony "
+            f"release understands schema_version {_MANIFEST_SCHEMA_VERSION}. Upgrade parsimony."
         )
     return manifest
 

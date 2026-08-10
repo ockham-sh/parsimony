@@ -20,7 +20,7 @@ from parsimony.embedder import (
 !!! note "Not a top-level import"
     Embedder symbols are **not** re-exported from the top-level `parsimony` package — always
     import them from `parsimony.embedder`. Most of them also need an optional extra (see the
-    table below), so the base `pip install parsimony-core` deliberately does not pull torch,
+    table below), so the base `pip install parsimony` deliberately does not pull torch,
     onnxruntime, or litellm.
 
 ## The `EmbeddingProvider` protocol
@@ -41,7 +41,7 @@ whether or not it inherits from anything. You instantiate one of the bundled imp
 synchronous as well.
 
 Because the protocol is `runtime_checkable`, you can verify a custom object structurally with
-`isinstance`. This example needs only `parsimony-core`:
+`isinstance`. This example needs only `parsimony`:
 
 ```python
 from parsimony.embedder import EmbeddingProvider, EmbedderInfo
@@ -128,7 +128,7 @@ Instantiation is cheap. The model loads lazily on the first attribute access tha
 `.dimension`, `.info()`, or an `embed_*` call triggers the load, but bare construction does not.
 `dimension` reads `model.get_sentence_embedding_dimension()` (raising `RuntimeError` if the model
 reports no dimension). `embed_texts([])` returns `[]` without loading anything. `info()` reports
-`package="parsimony-core[catalog]"`.
+`package="parsimony[catalog]"`.
 
 ```python
 from parsimony.embedder import SentenceTransformerEmbedder
@@ -139,16 +139,16 @@ print(emb.dimension)                      # 384 (loads the model on first access
 
 info = emb.info()
 print(info.model, info.dim, info.normalize, info.package)
-# sentence-transformers/all-MiniLM-L6-v2 384 True parsimony-core[catalog]
+# sentence-transformers/all-MiniLM-L6-v2 384 True parsimony[catalog]
 
 vectors = emb.embed_texts(["10 year euro area yield curve", "apple stock price"])
 print(len(vectors), len(vectors[0]))      # 2 384
 ```
 
 !!! warning "Needs the `catalog` extra"
-    This example loads a real model. Install with `pip install 'parsimony-core[catalog]'` and
+    This example loads a real model. Install with `pip install 'parsimony[catalog]'` and
     expect a one-time model download. The empty-input and structural-protocol examples above run
-    on `parsimony-core` alone.
+    on `parsimony` alone.
 
 ## `OnnxEmbedder` — local quantized ONNX
 
@@ -188,7 +188,7 @@ not `None`, otherwise the runtime's default is used.
     call runs the model once to measure the output width. Both `dimension` and `info()` therefore
     force the full export → (quantize) → load on a cold cache. Only bare construction is lazy.
     Exporting/quantizing additionally needs `optimum`; inference alone needs `onnxruntime` and
-    `transformers`. A missing dependency raises an `ImportError` naming `parsimony-core[standard-onnx]`.
+    `transformers`. A missing dependency raises an `ImportError` naming `parsimony[standard-onnx]`.
 
 ```python
 import math
@@ -206,7 +206,7 @@ assert all(len(v) == 384 for v in vecs)
 for v in vecs:                                        # outputs are L2-normalized
     assert math.isclose(math.sqrt(sum(x * x for x in v)), 1.0, abs_tol=1e-3)
 
-print(emb.info().package)                             # parsimony-core[standard-onnx]
+print(emb.info().package)                             # parsimony[standard-onnx]
 ```
 
 !!! tip "Pointing the model cache elsewhere"
@@ -259,7 +259,7 @@ emb = LiteLLMEmbeddingProvider(model="text-embedding-3-small", dimension=1536)
 print(emb.dimension)         # 1536 (no remote call)
 print(emb.info().normalize)  # True (always)
 
-# Needs parsimony-core[litellm] plus provider creds in the environment (e.g. OPENAI_API_KEY).
+# Needs parsimony[litellm] plus provider creds in the environment (e.g. OPENAI_API_KEY).
 qvec = emb.embed_query("euro area 10Y bond yield")
 print(len(qvec))             # 1536, L2-normalized
 ```

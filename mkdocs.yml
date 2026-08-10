@@ -104,4 +104,4 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/ockham-sh/parsimony
     - icon: fontawesome/brands/python
-      link: https://pypi.org/project/parsimony-core/
+      link: https://pypi.org/project/parsimony/

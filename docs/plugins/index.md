@@ -1,6 +1,6 @@
 # Plugins and providers
 
-Parsimony's core package — `parsimony-core` — ships **zero connectors**. The framework, the
+Parsimony's core package — `parsimony` — ships **zero connectors**. The framework, the
 data carriers, the typed errors, and the [Catalog](../catalog/index.md) all live in core, but
 every actual data source is published separately as its own `parsimony-<name>` distribution
 and discovered at runtime. This page explains that plugin model: how a provider registers
@@ -14,11 +14,11 @@ its pagination, its quirks. Keeping those out of the core package means the fram
 small, stable, and dependency-light while the connector ecosystem grows independently. You
 install only the sources you need, and a bug in one provider can never destabilize the rest.
 
-A bare `pip install parsimony-core` therefore discovers nothing. To get any connectors you
+A bare `pip install parsimony` therefore discovers nothing. To get any connectors you
 install one or more provider distributions:
 
 ```bash
-pip install parsimony-core parsimony-fred
+pip install parsimony parsimony-fred
 ```
 
 !!! note
@@ -116,7 +116,7 @@ for provider in discover.iter_providers():
     print("  homepage:", provider.homepage)
 ```
 
-With only `parsimony-core` installed this prints nothing — there are no providers to find.
+With only `parsimony` installed this prints nothing — there are no providers to find.
 
 !!! warning
     `iter_providers()` refuses to guess between conflicting plugins. If two installed
@@ -143,7 +143,7 @@ print(result.raw)  # the connector's payload (a DataFrame for a tabular fetch)
 
 !!! note
     This example needs the `parsimony-fred` distribution installed and a FRED API key, so it
-    will not run on a bare `parsimony-core` install. `result.raw` holds the payload the
+    will not run on a bare `parsimony` install. `result.raw` holds the payload the
     framework wrapped in a [`Result`](../connectors/results.md). Because the real `fred_fetch`
     returns a DataFrame, `result.is_tabular` is `True` and the tabular accessor `result.frame`
     applies; a connector that returns a scalar or dict yields a `Result` whose `raw` is that

@@ -2,7 +2,7 @@
 
 This document is the authoritative specification for `parsimony.providers` plugins —
 the `parsimony-<name>` distributions that register connectors at runtime. The kernel
-(`parsimony-core`) ships zero connectors; every data source is a separate installable
+(`parsimony`) ships zero connectors; every data source is a separate installable
 package that implements this contract.
 
 For step-by-step authoring guidance, see [Authoring a provider](plugins/authoring.md).
@@ -16,7 +16,7 @@ For the conformance toolkit, see [Conformance testing](plugins/conformance.md).
 | Python package | `parsimony_<name>` (underscored) |
 | Entry point | `[project.entry-points."parsimony.providers"]` mapping a **provider name** → dotted module path |
 | Module export | `CONNECTORS: parsimony.Connectors` (non-empty) |
-| Kernel pin | `parsimony-core>=0.0.1` (use `[catalog]` extra only when the package needs hybrid search) |
+| Kernel pin | `parsimony>=0.0.1` (use `[catalog]` extra only when the package needs hybrid search) |
 
 Consumers discover plugins via `parsimony.discover`:
 
@@ -99,7 +99,7 @@ Not all `_search` connectors work the same way:
   catalog is required.
 - **Catalog-backed search** (e.g. `riksbank_search`, `sdmx_series_search`) loads a published
   hybrid-search `Catalog` snapshot (typically from Hugging Face). These require
-  `parsimony-core[catalog]` at runtime and fail clearly when the snapshot is missing or
+  `parsimony[catalog]` at runtime and fail clearly when the snapshot is missing or
   has an unsupported `schema_version`.
 
 On both paths, `query=` is **literal text** — there is no `FIELD: value` / `&&` grammar.

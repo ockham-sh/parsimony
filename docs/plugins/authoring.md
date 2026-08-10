@@ -10,7 +10,7 @@ declaration, and a minimal conformant module you can copy.
 The contract is intentionally small. A plugin is *just* a Python module that defines
 connectors with the standard decorators and binds them into a `Connectors` collection
 named `CONNECTORS`. Everything else — typed errors, HTTP transport, identity helpers —
-is reused from `parsimony-core`, so your plugin stays thin.
+is reused from `parsimony`, so your plugin stays thin.
 
 ## What the kernel requires
 
@@ -64,7 +64,7 @@ group name `parsimony.providers` is fixed; the kernel queries exactly this group
 name = "parsimony-acme"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["parsimony-core>=0.0.1"]
+dependencies = ["parsimony>=0.0.1"]
 
 [project.urls]
 Homepage = "https://github.com/acme/parsimony-acme"
@@ -268,7 +268,7 @@ skill's directory name.
 ## A minimal conformant module
 
 This module exports a fetch connector and an enumerator, binds them into `CONNECTORS`,
-and passes all five conformance checks. It runs with only `parsimony-core` installed (no
+and passes all five conformance checks. It runs with only `parsimony` installed (no
 network is involved — the bodies return synthetic frames).
 
 ```python

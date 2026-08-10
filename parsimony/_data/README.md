@@ -9,7 +9,7 @@ first. This file is only the offline / network-failure floor, read via
 refreshed, or invalidated after install. It is not a runtime cache.
 
 **Refresh procedure (once per core release):** copy the connectors repo's committed
-`connectors.json` over this file verbatim before tagging a `parsimony-core` release:
+`connectors.json` over this file verbatim before tagging a `parsimony` release:
 
 ```bash
 cp ../parsimony-connectors/connectors.json parsimony/_data/connectors.json

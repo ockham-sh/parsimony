@@ -6,12 +6,12 @@ symbols that live only in submodules. When a name is not in the top-level list b
 from its submodule — the explicit path always works and is the convention this documentation
 follows.
 
-The distribution is `parsimony-core`; the import name is `parsimony`; Python `>=3.11`.
+The distribution is `parsimony`; the import name is `parsimony`; Python `>=3.11`.
 
 ```python
 import parsimony
 
-print(parsimony.__version__)  # the installed parsimony-core version
+print(parsimony.__version__)  # the installed parsimony version
 print(len(parsimony.__all__))  # number of top-level exports
 ```
 

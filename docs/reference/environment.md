@@ -4,7 +4,7 @@ Parsimony's core library reads exactly **two** environment variables, both prefi
 `PARSIMONY_`. They tune where the on-disk cache lives and when the FAISS vector index
 switches build strategies. Everything else — provider API keys, embedding-service
 credentials — is read by the optional dependencies or the `parsimony-<name>` plugins, not
-by `parsimony-core` itself.
+by `parsimony` itself.
 
 This page is the one-stop reference for those tunables. For the systems they configure, see
 [Caching](../caching.md), [Indexes](../catalog/indexes.md), and [Embedders](../catalog/embedders.md).
@@ -114,7 +114,7 @@ print(IVF_THRESHOLD)  # 1000000
 !!! note "Only the FAISS build path uses it"
     This variable affects `build_faiss`, which backs `VectorIndex` (and the vector half of a
     `HybridIndex`). It is therefore only relevant when you build vector-backed catalog indexes,
-    which require the `catalog` extra (`pip install "parsimony-core[catalog]"`). BM25-only
+    which require the `catalog` extra (`pip install "parsimony[catalog]"`). BM25-only
     catalogs never touch FAISS and so never consult this threshold. See
     [Indexes](../catalog/indexes.md).
 
@@ -135,7 +135,7 @@ them through their own environment variables:
   name is configurable per connector, not a fixed `PARSIMONY_*` name).
 
 !!! note "Core stays credential-free"
-    Because no connectors ship in `parsimony-core`, the core package never needs a data-source
+    Because no connectors ship in `parsimony`, the core package never needs a data-source
     secret. Keep provider keys in your deployment's secret store and let `litellm` or the
     plugin pick them up from the environment.
 

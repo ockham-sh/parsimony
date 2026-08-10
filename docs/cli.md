@@ -1,6 +1,6 @@
 # Command-line interface
 
-`parsimony-core` installs a single console script, `parsimony`, for inspecting your
+`parsimony` installs a single console script, `parsimony`, for inspecting your
 environment from the shell: which provider plugins are installed and conformant, and what the
 on-disk cache holds. It is a thin operator front-end — there is no connector-calling or
 catalog-building verb. Use the Python API for that.

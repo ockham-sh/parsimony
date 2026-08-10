@@ -28,8 +28,8 @@ collection. Discovery reads provider metadata (distribution name, version, homep
 from `importlib.metadata` — plugins do not export a `__version__` or a metadata dict.
 
 !!! note "A bare install discovers nothing"
-    `parsimony-core` declares no `parsimony.providers` entry points and ships no in-tree
-    connectors. After `pip install parsimony-core`, `iter_providers()` yields zero providers
+    `parsimony` declares no `parsimony.providers` entry points and ships no in-tree
+    connectors. After `pip install parsimony`, `iter_providers()` yields zero providers
     and `load_all()` returns an empty collection. You must install at least one
     `parsimony-<name>` distribution for discovery to return anything.
 
@@ -203,7 +203,7 @@ substitutes for the other:
 | | `parsimony.discover` | `parsimony.registry` |
 |---|---|---|
 | Question | What's already installed in **this** environment? | What official `parsimony-<name>` package **could** I install to cover a source? |
-| Reads | `parsimony.providers` entry points via `importlib.metadata` | The versioned manifest at `https://parsimony.dev/connectors.json`, falling back to a read-only snapshot bundled in the `parsimony-core` wheel on any failure |
+| Reads | `parsimony.providers` entry points via `importlib.metadata` | The versioned manifest at `https://parsimony.dev/connectors.json`, falling back to a read-only snapshot bundled in the `parsimony` wheel on any failure |
 | Returns | `Provider` records — `iter_providers()`, `load()`, `load_all()` | `ConnectorRegistry` — `list_available()` |
 | CLI | `parsimony list` | `parsimony list --available` |
 

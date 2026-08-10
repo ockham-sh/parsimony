@@ -6,9 +6,9 @@
 
 **Financial data access skill for coding agents.**
 
-[![PyPI](https://img.shields.io/pypi/v/parsimony-core.svg)](https://pypi.org/project/parsimony-core/)
+[![PyPI](https://img.shields.io/pypi/v/parsimony.svg)](https://pypi.org/project/parsimony/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python](https://img.shields.io/pypi/pyversions/parsimony-core.svg)](https://pypi.org/project/parsimony-core/)
+[![Python](https://img.shields.io/pypi/pyversions/parsimony.svg)](https://pypi.org/project/parsimony/)
 
 </div>
 
@@ -75,7 +75,7 @@ See the [development guide](docs/development.md) and [contribution guidelines](C
 
 ## The Stack
 
-- [parsimony-core](https://github.com/ockham-sh/parsimony) provides the framework and agent skill.
+- [parsimony](https://github.com/ockham-sh/parsimony) provides the framework and agent skill.
 - [parsimony-connectors](https://github.com/ockham-sh/parsimony-connectors) provides a curated set of connector plugins.
 - [parsimony-agents](https://github.com/ockham-sh/parsimony-agents) provides a framework for building data retrieval and analysis agents on Parsimony.
 - Open-format catalogs are hosted on [Hugging Face](https://huggingface.co/parsimony-dev). They power functions for sources without native discovery APIs.

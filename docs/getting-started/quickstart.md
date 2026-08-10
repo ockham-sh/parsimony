@@ -1,11 +1,11 @@
 # Quickstart
 
-This page walks you through three hands-on flows with `parsimony-core` (Python `>=3.11`): define and call your own [connector](../connectors/index.md), compose two connectors into a [collection](../connectors/calling-binding-composing.md), and build a tiny searchable [Catalog](../catalog/index.md). The first two flows run with only the base install; the catalog flow needs one optional extra, which is called out below.
+This page walks you through three hands-on flows with `parsimony` (Python `>=3.11`): define and call your own [connector](../connectors/index.md), compose two connectors into a [collection](../connectors/calling-binding-composing.md), and build a tiny searchable [Catalog](../catalog/index.md). The first two flows run with only the base install; the catalog flow needs one optional extra, which is called out below.
 
 If you have not installed the package yet, start with [Installation](installation.md):
 
 ```bash
-pip install parsimony-core
+pip install parsimony
 ```
 
 !!! note "No connectors ship in core"
@@ -13,7 +13,7 @@ pip install parsimony-core
     connectors. Every real data source is published as its own
     `parsimony-<name>` distribution (a [provider plugin](../plugins/index.md))
     and discovered at runtime. The examples below define their own connectors
-    so they run with nothing but `parsimony-core` installed.
+    so they run with nothing but `parsimony` installed.
 
 ## 1. Define and call a connector
 
@@ -161,7 +161,7 @@ for match in matches:
 !!! note "BM25 needs the `catalog` extra"
     `BM25Index` builds and scores with `rank-bm25`, which ships in the
     `catalog` optional extra, not the base install. Run this flow after
-    `pip install "parsimony-core[catalog]"`. That extra also unlocks the
+    `pip install "parsimony[catalog]"`. That extra also unlocks the
     FAISS vector indexes, the default sentence-transformers embedder, and the
     `hf://` snapshot loader. See [Installation](installation.md).
 

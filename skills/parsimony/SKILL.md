@@ -20,9 +20,9 @@ caps), and parsing, and hands back a typed result. That is the point of the libr
 ## Install
 
 ```bash
-pip install parsimony-core                 # the kernel: discovery, results, errors
-pip install 'parsimony-core[catalog]'      # + hybrid search (needed for catalog search)
-pip install parsimony-fred parsimony-sdmx  # one distribution per connector — install what you need
+pip install parsimony                       # the kernel: discovery, results, errors
+pip install 'parsimony[catalog]'            # + hybrid search (needed for catalog search)
+pip install parsimony-fred parsimony-sdmx   # one distribution per connector — install what you need
 ```
 
 ## The core idiom
@@ -51,7 +51,7 @@ connector, **inspect** it, **find** the id.
 
 ## 0. Bootstrap — make sure the framework itself is present
 
-Confirm `parsimony-core` is importable in the active environment before anything else:
+Confirm `parsimony` is importable in the active environment before anything else:
 
 ```python
 import importlib.util
@@ -61,7 +61,7 @@ if importlib.util.find_spec("parsimony") is None:
 
 If it is missing, install it into the **active** environment — the same interpreter or virtualenv
 the task is already running in, not a new one — with whichever of `python -m pip install
-parsimony-core` or `uv pip install parsimony-core` matches how the project manages dependencies.
+parsimony` or `uv pip install parsimony` matches how the project manages dependencies.
 Never add `--break-system-packages` to force past a refusal. If the install fails with a PEP 668
 "externally-managed-environment" guard, or with a permissions error, **stop and tell the user**
 that the environment needs a virtualenv (or an explicit override they choose to run themselves)
@@ -276,7 +276,7 @@ result = fred(series_id="UNRATE")
 
 ---
 
-In short: **bootstrap** `parsimony-core` if it's missing, **route** with
+In short: **bootstrap** `parsimony` if it's missing, **route** with
 `discover.load_all().describe()` — falling back to `parsimony.registry.list_available()` and a
 safe install when nothing installed covers it — **inspect** the chosen connector with
 `connectors["x"].describe()`, **search** the catalog for the opaque id, then **fetch**. And when

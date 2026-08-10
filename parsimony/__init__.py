@@ -64,7 +64,7 @@ from parsimony.namespace import Namespace
 from parsimony.result import Column, ColumnRole, OutputSpec, Provenance, Result
 
 try:
-    __version__ = version("parsimony-core")
+    __version__ = version("parsimony")
 except PackageNotFoundError:
     __version__ = "0.0.0-dev"
 

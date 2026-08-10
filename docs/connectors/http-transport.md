@@ -33,7 +33,7 @@ from parsimony.transport.helpers import (
 ```
 
 The layer is built on [`httpx`](https://www.python-httpx.org/), a base dependency
-of `parsimony-core`, so everything on this page runs with only the core install
+of `parsimony`, so everything on this page runs with only the core install
 (no `standard`/`litellm` extras and no plugin).
 
 ## `HttpClient`

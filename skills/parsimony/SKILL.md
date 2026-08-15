@@ -46,8 +46,8 @@ result.to_llm()              # a bounded, schema-aware text preview to drop into
   empty bundle. `discover.load("fred")` is strict (raises `LookupError` if not installed);
   `discover.iter_providers()` lists installed packages without importing them.
 
-Each task runs four discovery moves before the fetch: **bootstrap** the framework, **route** to a
-connector, **inspect** it, **find** the id.
+Each task runs these moves before the fetch: **bootstrap** the framework, **route** to a
+connector, **select** among plausible ones, **inspect** it, **find** the id.
 
 ## 0. Bootstrap — make sure the framework itself is present
 
@@ -134,6 +134,18 @@ confirm a choice the registry data already answers.
 Only when no installed, local, *or* registry entry covers the source at all, author a
 project-local connector: read [the authoring guide](references/authoring.md) for the contract and
 the conventions. Author and test the connector first, then run the analysis through it.
+
+## Select a connector
+
+When several connectors are plausible, choose the route most likely to deliver relevant, reliable
+data with the least total effort and risk.
+
+Consider the available evidence about source authority, data fit and freshness, setup, credentials,
+discovery work, latency, quotas, and likely number of calls. Do not prefer a connector merely
+because it is installed or keyless.
+
+Inspect the strongest candidate first and revise the choice if new information changes the
+trade-off. If the preferred route needs user input, ask before falling back.
 
 ## 2. Inspect a connector before you call it
 
@@ -278,7 +290,7 @@ result = fred(series_id="UNRATE")
 
 In short: **bootstrap** `parsimony` if it's missing, **route** with
 `discover.load_all().describe()` — falling back to `parsimony.registry.list_available()` and a
-safe install when nothing installed covers it — **inspect** the chosen connector with
-`connectors["x"].describe()`, **search** the catalog for the opaque id, then **fetch**. And when
-no connector — installed, local, or in the registry — covers the source, **author** a local one
-([authoring guide](references/authoring.md)).
+safe install when nothing installed covers it — **select** among plausible connectors, **inspect**
+the chosen one with `connectors["x"].describe()`, **search** the catalog for the opaque id, then
+**fetch**. And when no connector — installed, local, or in the registry — covers the source,
+**author** a local one ([authoring guide](references/authoring.md)).

@@ -17,6 +17,8 @@ import json
 import logging
 import os
 import sys
+import threading
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 _run: Path | None = None
 _recorded: tuple[str, dict[str, Path]] | None = None  # (replayed folder, key -> file)
+_lock = threading.Lock()  # connector calls fanned out over threads must share one run folder
 
 
 def _key(source: str, params: dict[str, Any]) -> str:
@@ -37,9 +40,14 @@ def _key(source: str, params: dict[str, Any]) -> str:
 
 
 def _run_dir() -> Path:
+    with _lock:
+        return _create_run_dir()
+
+
+def _create_run_dir() -> Path:
     global _run
     if _run is None or not _run.is_dir():  # first call, or the folder was deleted under us
-        root = Path(os.environ.get("PARSIMONY_RECORD") or Path(user_data_dir("parsimony")) / "runs")
+        root = Path(os.environ.get("PARSIMONY_RECORD") or Path(user_data_dir("parsimony")) / "runs").expanduser()
         _run = root / f"{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{os.urandom(3).hex()}"
         _run.mkdir(parents=True)
         ipython = getattr(sys.modules.get("IPython"), "get_ipython", lambda: None)()
@@ -52,6 +60,16 @@ def _run_dir() -> Path:
     return _run
 
 
+def _write(path: Path, write: Callable[[Path], object]) -> None:
+    """Write through a hidden temporary file, so a reader never sees half a file."""
+    tmp = path.with_name(f".{path.name}.{os.urandom(3).hex()}.tmp")
+    try:
+        write(tmp)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 def save(result: Result) -> None:
     """Save a fetched result in this process's run folder. Never raises."""
     if os.environ.get("PARSIMONY_RECORD") == "off":
@@ -60,9 +78,10 @@ def save(result: Result) -> None:
         p = result.provenance
         stem = _run_dir() / f"{p.source}-{_key(p.source, p.params)}"
         if result.is_tabular:
-            result.to_parquet(f"{stem}.parquet")
+            _write(Path(f"{stem}.parquet"), result.to_parquet)
         else:  # dict, list, str, number: anything JSON can hold
-            Path(f"{stem}.json").write_text(json.dumps({"provenance": p.safe_dump(), "raw": result.raw}))
+            text = json.dumps({"provenance": p.safe_dump(), "raw": result.raw})
+            _write(Path(f"{stem}.json"), lambda tmp: tmp.write_text(text))
     except Exception as exc:  # noqa: BLE001 - recording must not break a fetch
         logger.warning("parsimony: call not recorded (%s: %s)", type(exc).__name__, exc)
 
@@ -70,11 +89,13 @@ def save(result: Result) -> None:
 def load(source: str, params: dict[str, Any]) -> Result | None:
     """The recorded result for this call when PARSIMONY_REPLAY is set, else None."""
     global _recorded
-    run = os.environ.get("PARSIMONY_REPLAY")
-    if not run:
+    setting = os.environ.get("PARSIMONY_REPLAY")
+    if not setting:
         return None
+    run = str(Path(setting).expanduser())
     if _recorded is None or _recorded[0] != run:
-        _recorded = (run, {f.stem.rsplit("-", 1)[1]: f for f in sorted(Path(run).glob("*-*.*"))})
+        files = [f for f in sorted(Path(run).glob("*-*.*")) if f.suffix in (".parquet", ".json")]
+        _recorded = (run, {f.stem.rsplit("-", 1)[1]: f for f in files if not f.name.startswith(".")})
         logger.warning("parsimony: replaying %s", run)
     key = _key(source, params)
     if key not in _recorded[1]:

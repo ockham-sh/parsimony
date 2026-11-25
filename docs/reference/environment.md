@@ -155,11 +155,11 @@ PARSIMONY_REPLAY=~/.local/share/parsimony/runs/20261116T135412Z-0ea389 python an
 A call the run does not hold raises `LookupError`; recorded and live data are never mixed.
 Replay saves nothing and creates no run folder, whatever `PARSIMONY_RECORD` says.
 
-!!! note "Read on every call, used verbatim"
+!!! note "Read on every call"
     Both variables are read on every connector call, not captured at import, so they can be
-    changed mid-process (and set with `monkeypatch.setenv` in tests). Unlike
-    `PARSIMONY_CACHE_DIR`, the value is not `~`-expanded by Parsimony: an unquoted `~` in a
-    shell assignment is expanded by the shell, but a value set from Python should be absolute.
+    changed mid-process (and set with `monkeypatch.setenv` in tests). As with
+    `PARSIMONY_CACHE_DIR`, a leading `~` is expanded via `Path.expanduser()`; a relative path
+    resolves against the current working directory.
 
 ## Provider and embedding-service credentials
 

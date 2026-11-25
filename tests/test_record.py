@@ -286,6 +286,77 @@ def test_no_call_no_folder(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_threads_share_one_run_folder(runs: Path) -> None:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(16)  # every fetch finishes together, so the first saves race
+
+    @connector
+    def racing(i: int) -> dict[str, int]:
+        """Return its argument."""
+        barrier.wait()
+        return {"i": i}
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        results = list(pool.map(racing, range(16)))
+    assert [r.raw["i"] for r in results] == list(range(16))
+    assert len(_result_files(_only_run(runs))) == 16
+
+
+def test_same_call_from_many_threads_leaves_one_valid_file(runs: Path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    _frames["big"] = pd.DataFrame({"value": np.arange(200_000.0)})
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(lambda _: shaped("big"), range(8)))
+    run = _only_run(runs)
+    (f,) = _result_files(run)
+    pd.testing.assert_frame_equal(Result.from_parquet(f).frame, _frames["big"])
+    assert not [p for p in run.iterdir() if p.name.startswith(".")]
+
+
+def test_failed_write_leaves_no_partial_file(
+    runs: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def half_write(self: Result, path: str | Path) -> None:
+        Path(path).write_bytes(b"PAR1 truncated")
+        raise KeyError("disk went away")
+
+    monkeypatch.setattr(Result, "to_parquet", half_write)
+    series("GDP")
+    run = _only_run(runs)
+    assert sorted(p.name for p in run.iterdir()) == ["run.json"]
+    assert "parsimony: call not recorded (KeyError: " in caplog.text
+
+
+def test_replay_ignores_stray_temporary_files(runs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    original = series("GDP")
+    run = _only_run(runs)
+    (f,) = _result_files(run)
+    (run / f".{f.name}.0a1b2c.tmp").write_bytes(b"PAR1 truncated")
+    _replay(monkeypatch, run)
+    pd.testing.assert_frame_equal(series("GDP").frame, original.frame)
+
+
+def test_tilde_in_both_variables_is_expanded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from parsimony import record
+
+    monkeypatch.setattr(record, "_run", None)
+    monkeypatch.setattr(record, "_recorded", None)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("PARSIMONY_RECORD", "~/runs")
+    monkeypatch.delenv("PARSIMONY_REPLAY", raising=False)
+    original = series("GDP")
+    run = _only_run(tmp_path / "runs")
+    assert not (tmp_path / "~").exists()
+
+    monkeypatch.setenv("PARSIMONY_REPLAY", f"~/runs/{run.name}")
+    calls.clear()
+    pd.testing.assert_frame_equal(series("GDP").frame, original.frame)
+    assert calls == {}
+
+
 def test_replay_returns_saved_frame_without_calling_source(runs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     original = series("GDP")
     run = _only_run(runs)

@@ -1,13 +1,14 @@
 # Environment variables
 
-Parsimony's core library reads exactly **two** environment variables, both prefixed
-`PARSIMONY_`. They tune where the on-disk cache lives and when the FAISS vector index
-switches build strategies. Everything else — provider API keys, embedding-service
+Parsimony's core library reads exactly **four** environment variables, all prefixed
+`PARSIMONY_`. They tune where the on-disk cache lives, when the FAISS vector index
+switches build strategies, and where connector calls are recorded or replayed from. Everything else — provider API keys, embedding-service
 credentials — is read by the optional dependencies or the `parsimony-<name>` plugins, not
 by `parsimony` itself.
 
 This page is the one-stop reference for those tunables. For the systems they configure, see
-[Caching](../caching.md), [Indexes](../catalog/indexes.md), and [Embedders](../catalog/embedders.md).
+[Caching](../caching.md), [Indexes](../catalog/indexes.md), [Embedders](../catalog/embedders.md), and
+[Recording and replay](../recording.md).
 
 ## Reference table
 
@@ -15,10 +16,12 @@ This page is the one-stop reference for those tunables. For the systems they con
 |---|---|---|---|
 | `PARSIMONY_CACHE_DIR` | `parsimony.cache` (transitively: catalogs, embedders) | `platformdirs.user_cache_dir("parsimony")` | Relocates the entire cache root. `~` is expanded. |
 | `PARSIMONY_FAISS_IVF_THRESHOLD` | `parsimony.indexes` | `500000` | Row count at which `build_faiss` switches from HNSW to IVFFlat. Captured **at import time**. |
+| `PARSIMONY_RECORD` | `parsimony.record` (every connector call) | `platformdirs.user_data_dir("parsimony")/runs` | `off` saves nothing; a folder path moves where run folders are written. |
+| `PARSIMONY_REPLAY` | `parsimony.record` (every connector call) | unset | A run folder: connector calls return its saved results and never contact the source. |
 
-Both are optional. With neither set, Parsimony works out of the box: the cache root falls
-back to the platform-correct user cache directory, and the FAISS threshold uses its built-in
-default.
+All are optional. With none set, Parsimony works out of the box: the cache root falls
+back to the platform-correct user cache directory, the FAISS threshold uses its built-in
+default, and every connector call is recorded under the user data directory.
 
 ## `PARSIMONY_CACHE_DIR`
 
@@ -118,6 +121,46 @@ print(IVF_THRESHOLD)  # 1000000
     catalogs never touch FAISS and so never consult this threshold. See
     [Indexes](../catalog/indexes.md).
 
+## `PARSIMONY_RECORD`
+
+Every connector call saves its `Result` in a run folder for the current process (see
+[Recording and replay](../recording.md)). This variable controls where, or switches it off:
+
+| Value | Effect |
+|---|---|
+| unset | Run folders go to `platformdirs.user_data_dir("parsimony")/runs` |
+| `off` | Nothing is saved |
+| any other value | Run folders go to that folder, which is created if missing |
+
+The default root is the user **data** directory, not the cache root, so `PARSIMONY_CACHE_DIR`
+does not move it and `parsimony cache clear` does not erase runs:
+
+| Platform | Default runs root |
+|---|---|
+| Linux | `~/.local/share/parsimony/runs` |
+| macOS | `~/Library/Application Support/parsimony/runs` |
+| Windows | `%LOCALAPPDATA%\parsimony\parsimony\runs` |
+
+Set `PARSIMONY_RECORD=off` for test suites, CI, catalog rebuilds and long-running services.
+
+## `PARSIMONY_REPLAY`
+
+Set to a run folder, connector calls return that run's saved results instead of contacting
+the source, so the same script reproduces its earlier output:
+
+```bash
+PARSIMONY_REPLAY=~/.local/share/parsimony/runs/20261116T135412Z-0ea389 python analysis.py
+```
+
+A call the run does not hold raises `LookupError`; recorded and live data are never mixed.
+Replay saves nothing and creates no run folder, whatever `PARSIMONY_RECORD` says.
+
+!!! note "Read on every call, used verbatim"
+    Both variables are read on every connector call, not captured at import, so they can be
+    changed mid-process (and set with `monkeypatch.setenv` in tests). Unlike
+    `PARSIMONY_CACHE_DIR`, the value is not `~`-expanded by Parsimony: an unquoted `~` in a
+    shell assignment is expanded by the shell, but a value set from Python should be absolute.
+
 ## Provider and embedding-service credentials
 
 Parsimony core does not read provider credentials. Two layers above it do, and you configure
@@ -144,4 +187,5 @@ them through their own environment variables:
 - [Caching](../caching.md) — the cache subsystem `PARSIMONY_CACHE_DIR` relocates.
 - [Indexes](../catalog/indexes.md) — `build_faiss` and the FAISS index ladder `PARSIMONY_FAISS_IVF_THRESHOLD` controls.
 - [Embedders](../catalog/embedders.md) — `OnnxEmbedder`'s model cache and `LiteLLMEmbeddingProvider`'s credentials.
+- [Recording and replay](../recording.md) — run folders, `PARSIMONY_RECORD` and `PARSIMONY_REPLAY`.
 - [Command-line interface](../cli.md) — `parsimony cache path` / `parsimony cache info` to inspect the resolved root.

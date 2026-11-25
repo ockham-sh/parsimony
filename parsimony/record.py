@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ from typing import Any
 from platformdirs import user_data_dir
 
 from parsimony.result import Provenance, Result
+
+logger = logging.getLogger(__name__)
 
 _run: Path | None = None
 _recorded: tuple[str, dict[str, Path]] | None = None  # (replayed folder, key -> file)
@@ -61,7 +64,7 @@ def save(result: Result) -> None:
         else:  # dict, list, str, number: anything JSON can hold
             Path(f"{stem}.json").write_text(json.dumps({"provenance": p.safe_dump(), "raw": result.raw}))
     except Exception as exc:  # noqa: BLE001 - recording must not break a fetch
-        print(f"parsimony: call not recorded ({type(exc).__name__}: {exc})", file=sys.stderr)
+        logger.warning("parsimony: call not recorded (%s: %s)", type(exc).__name__, exc)
 
 
 def load(source: str, params: dict[str, Any]) -> Result | None:
@@ -72,7 +75,7 @@ def load(source: str, params: dict[str, Any]) -> Result | None:
         return None
     if _recorded is None or _recorded[0] != run:
         _recorded = (run, {f.stem.rsplit("-", 1)[1]: f for f in sorted(Path(run).glob("*-*.*"))})
-        print(f"parsimony: replaying {run}", file=sys.stderr)
+        logger.warning("parsimony: replaying %s", run)
     key = _key(source, params)
     if key not in _recorded[1]:
         raise LookupError(f"{source}({params}) is not in the recorded run {run}; unset PARSIMONY_REPLAY to fetch live")

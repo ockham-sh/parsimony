@@ -108,4 +108,6 @@ same permissions as the data itself.
 - Matching is exact: a script that computes dates from today makes different calls on a later day
   and misses on replay. Write dates explicitly.
 - A repeated call keeps only its latest result.
+- Parquet keeps a `DatetimeIndex`'s dates but not its `freq` label, so a replayed index has
+  `freq=None` even when the original was built with `pd.date_range(..., freq="MS")`.
 - Calls made in worker processes may land in other run folders.

@@ -206,13 +206,12 @@ def test_dict_result_saved_as_json(runs: Path) -> None:
     assert saved["provenance"]["params"] == {"coin": "btc"}
 
 
-def test_unserialisable_result_is_not_saved_but_returned(runs: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_unserialisable_result_is_not_saved_but_returned(runs: Path, caplog: pytest.LogCaptureFixture) -> None:
     result = blob("x")
     assert result.raw == b"\x00\x01"
     assert _result_files(_only_run(runs)) == []
-    err = capsys.readouterr().err
-    assert err.count("parsimony: call not recorded") == 1
-    assert "TypeError" in err
+    (message,) = [r.getMessage() for r in caplog.records if r.name == "parsimony.record"]
+    assert message.startswith("parsimony: call not recorded (TypeError: ")
 
 
 def test_failing_connector_leaves_no_run_folder(runs: Path) -> None:
@@ -222,14 +221,14 @@ def test_failing_connector_leaves_no_run_folder(runs: Path) -> None:
 
 
 def test_unwritable_record_root_does_not_break_fetch(
-    tmp_path: Path, runs: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, runs: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     not_a_dir = tmp_path / "plain-file"
     not_a_dir.write_text("x")
     monkeypatch.setenv("PARSIMONY_RECORD", str(not_a_dir))
     result = series("GDP")
     assert list(result.frame["value"]) == [1.0, 2.0]
-    assert capsys.readouterr().err.count("parsimony: call not recorded") == 1
+    assert caplog.text.count("parsimony: call not recorded") == 1
 
 
 def test_record_off_writes_nothing(runs: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -333,16 +332,16 @@ def test_replay_creates_no_run_folder(runs: Path, monkeypatch: pytest.MonkeyPatc
     assert len(_result_files(run)) == 1
 
 
-def test_replay_announced_once(runs: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+def test_replay_announced_once(runs: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
     series("GDP")
     series("CPI")
     run = _only_run(runs)
     _replay(monkeypatch, run)
-    capsys.readouterr()
+    caplog.clear()
     series("GDP")
     series("CPI")
     series("GDP")
-    assert capsys.readouterr().err.count(f"parsimony: replaying {run}") == 1
+    assert caplog.text.count(f"parsimony: replaying {run}") == 1
 
 
 def _datetime_index() -> pd.DataFrame:
@@ -431,9 +430,8 @@ _SCRIPT = textwrap.dedent(
 
 
 def _env(root: Path, **extra: str) -> dict[str, str]:
-    env = {**os.environ, "PARSIMONY_RECORD": str(root), **extra}
-    env.pop("PARSIMONY_REPLAY", None)
-    return env
+    env = {k: v for k, v in os.environ.items() if k != "PARSIMONY_REPLAY"}
+    return {**env, "PARSIMONY_RECORD": str(root), **extra}
 
 
 def test_run_json_names_script(tmp_path: Path) -> None:
@@ -462,16 +460,67 @@ def test_concurrent_processes_get_separate_folders(tmp_path: Path) -> None:
     assert all(_RUN_NAME.fullmatch(f.name) for f in folders)
 
 
-def test_run_json_names_notebook(tmp_path: Path) -> None:
-    pytest.importorskip("nbformat")
-    pytest.importorskip("nbconvert")
-    pytest.importorskip("ipykernel")
-    import nbformat
-
-    nb_path = tmp_path / "analysis.ipynb"
-    nbformat.write(nbformat.v4.new_notebook(cells=[nbformat.v4.new_code_cell(_SCRIPT)]), nb_path)
+def test_messages_reach_stderr_without_logging_config(tmp_path: Path) -> None:
+    """A plain script configures no logging; the lines still appear on stderr, unprefixed."""
+    script = tmp_path / "analysis.py"
+    script.write_text(_SCRIPT.replace('return {"x": x}', "return b'bytes'"))
     root = tmp_path / "runs"
-    cmd = [sys.executable, "-m", "jupyter", "nbconvert", "--to", "notebook", "--execute", "--stdout", str(nb_path)]
-    subprocess.run(cmd, env=_env(root, JPY_SESSION_NAME=str(nb_path)), check=True, cwd=tmp_path, capture_output=True)
-    info = json.loads((_only_run(root) / "run.json").read_text())
-    assert info["entry"] == str(nb_path.resolve())
+    proc = subprocess.run([sys.executable, str(script)], env=_env(root), cwd=tmp_path, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stderr.startswith("parsimony: call not recorded (TypeError: ")
+
+    script.write_text(_SCRIPT)
+    subprocess.run([sys.executable, str(script)], env=_env(root), check=True, cwd=tmp_path)
+    run = next(r for r in _run_folders(root) if any(r.glob("f-*.json")))
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        env=_env(root, PARSIMONY_REPLAY=str(run)),
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stderr == f"parsimony: replaying {run}\n"
+
+
+# ---------------------------------------------------------------------------
+# run.json for notebooks: the detection is faked in-process, so it runs without Jupyter installed.
+# ---------------------------------------------------------------------------
+
+
+def test_run_json_names_jupyter_notebook(runs: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    nb = tmp_path / "analysis.ipynb"
+    nb.write_text("{}")
+    monkeypatch.setenv("JPY_SESSION_NAME", str(nb))
+    detail("btc")
+    info = json.loads((_only_run(runs) / "run.json").read_text())
+    assert info == {"entry": str(nb.resolve()), "sha256": hashlib.sha256(nb.read_bytes()).hexdigest()}
+
+
+class _FakeShell:
+    def __init__(self, user_ns: dict[str, Any]) -> None:
+        self.user_ns = user_ns
+
+
+def _fake_ipython(monkeypatch: pytest.MonkeyPatch, user_ns: dict[str, Any]) -> None:
+    import types
+
+    module = types.ModuleType("IPython")
+    module.get_ipython = lambda: _FakeShell(user_ns)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "IPython", module)
+    monkeypatch.delenv("JPY_SESSION_NAME", raising=False)
+
+
+def test_run_json_names_vscode_notebook(runs: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    nb = tmp_path / "analysis.ipynb"
+    nb.write_text("{}")
+    _fake_ipython(monkeypatch, {"__vsc_ipynb_file__": str(nb)})
+    detail("btc")
+    assert json.loads((_only_run(runs) / "run.json").read_text())["entry"] == str(nb.resolve())
+
+
+def test_run_json_null_entry_in_plain_ipython(runs: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Inside IPython sys.argv[0] is the ipython launcher, not the user's code.
+    _fake_ipython(monkeypatch, {})
+    detail("btc")
+    assert json.loads((_only_run(runs) / "run.json").read_text()) == {"entry": None}

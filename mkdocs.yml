@@ -73,6 +73,7 @@ nav:
       - Data stores: catalog/data-store.md
   - CLI: cli.md
   - Caching: caching.md
+  - Recording and replay: recording.md
   - Reference:
       - Public API & import map: reference/api.md
       - Environment variables: reference/environment.md

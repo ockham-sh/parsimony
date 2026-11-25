@@ -276,6 +276,17 @@ agent-loop directives. Programmer mistakes stay as `TypeError` / `ValueError`.
 | `InvalidParameterError` | bad call-time args | Fix the arguments; retrying the same call won't help. |
 | `CatalogNotFoundError` | catalog snapshot missing | Install the connector's catalog extra / data. |
 
+## Runs and replay
+
+Every connector call is saved under `~/.local/share/parsimony/runs/<run>/`, one folder per Python
+process; `run.json` there names the script or notebook that made the calls.
+
+- Read a saved call with `Result.from_parquet(path)`, or `json.load` for `.json` files.
+- To reproduce an earlier result, rerun the same script with `PARSIMONY_REPLAY=<run folder>`.
+  Never edit the script to load the files instead.
+- Write dates in scripts explicitly, not computed from today, so replay can match the call.
+- Never edit or delete files inside a run folder unless the user asks.
+
 ## Credentials
 
 Keyless connectors just work. Keyed ones take the key as a normal parameter — `bind` it once so it

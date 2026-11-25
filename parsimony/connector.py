@@ -24,6 +24,7 @@ from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Any, get_args, get_type_hints, overload
 
+from parsimony import record
 from parsimony.errors import ParseError
 from parsimony.namespace import Namespace
 from parsimony.result import ColumnRole, OutputSpec, Provenance, Result
@@ -234,11 +235,15 @@ class Connector:
     def __call__(self, *args: Any, **kwargs: Any) -> Result:
         """Execute the connector with call-time parameters."""
         all_params, call_params = self._bind_call(args, kwargs)
+        recorded = record.load(self.name, {k: v for k, v in call_params.items() if k not in self.secrets})
+        if recorded is not None:
+            return recorded
         raw = self.call_raw(**all_params)
         try:
             result = self._wrap_result(raw, call_params)
         except ValueError as exc:
             raise ParseError(self.name, str(exc)) from exc
+        record.save(result)
         return result
 
     def describe(self) -> str:

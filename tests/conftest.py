@@ -21,4 +21,5 @@ def _pin_parsimony_cache_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     """
     cache_root = tmp_path / "parsimony_cache"
     monkeypatch.setenv("PARSIMONY_CACHE_DIR", str(cache_root))
+    monkeypatch.setenv("PARSIMONY_RECORD", "off")  # tests must not write run folders into the real home
     return cache_root

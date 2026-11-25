@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **Run recording and replay**: every connector call saves its `Result` in a run folder for the
+  current process (`platformdirs.user_data_dir("parsimony")/runs/<run>/`). `PARSIMONY_RECORD=off`
+  switches it off and `PARSIMONY_RECORD=<folder>` moves it; `PARSIMONY_REPLAY=<run folder>` makes
+  connector calls return that run's saved results without contacting the source. See
+  [Recording and replay](docs/recording.md).
+
+### Changed
+
+- `Result.to_arrow` keeps the frame's index (`preserve_index=None`), so Parquet files written by
+  `to_parquet` now include a non-default index (a `DatetimeIndex`, a `MultiIndex`, a filtered
+  `RangeIndex`) and `from_parquet` restores it.
+
 ## [0.0.1] - 2026-08-10
 
 First release under the `parsimony` distribution name. Previously published as

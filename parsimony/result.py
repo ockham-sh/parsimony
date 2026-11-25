@@ -673,7 +673,7 @@ class Result(BaseModel):
 
     def to_arrow(self) -> pa.Table:
         """Serialize a tabular result to Arrow with embedded provenance and schema."""
-        table = pa.Table.from_pandas(self.frame, preserve_index=False)
+        table = pa.Table.from_pandas(self.frame, preserve_index=None)
         payload: dict[str, Any] = {
             "provenance": self.provenance.safe_dump(),
         }
